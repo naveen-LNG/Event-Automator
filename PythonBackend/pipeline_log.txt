@@ -1,0 +1,12 @@
+[PythonBackend] Executing Python Step 11 | Sim2507 -> Sim2605
+[PythonBackend] Step 12: Updating item.xlsx for Sim2605 (cloning from Sim2507)
+[PythonBackend] item_sheet: Found 3 items for Sim2507. Cloning...
+[PythonBackend] item_sheet: Map ID 9558 -> 9705
+[PythonBackend] item_sheet: Map ID 9559 -> 9706
+[PythonBackend] item_sheet: Map ID 9560 -> 9707
+[PythonBackend] item_sheet: Inserted item 9707 at row 1437
+[PythonBackend] item_sheet: Inserted item 9706 at row 1437
+[PythonBackend] item_sheet: Inserted item 9705 at row 1437
+[PythonBackend] item.xlsx updated for Sim2605.
+[PythonBackend] events.xlsx: Updated drop ID for Sim2605: 9558 -> 9705
+[PythonBackend] events.xlsx successfully synchronized with new item IDs for Sim2605.

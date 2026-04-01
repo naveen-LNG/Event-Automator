@@ -1,0 +1,90 @@
+<ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements" xsi="http://www.w3.org/2001/XMLSchema-instance" engine="UnityEngine.UIElements" editor="UnityEditor.UIElements" noNamespaceSchemaLocation="../../../../../UIElementsSchema/UIElements.xsd" editor-extension-mode="True">
+    <Style src="EventAutomationWindow.uss" />
+    
+    <ui:ScrollView class="main-container">
+        
+        <!-- Header Section -->
+        <ui:VisualElement class="header-section">
+            <ui:Label text="Event Automation Tool" class="header-title" />
+            <ui:Label text="Streamline event generation and deployment" class="header-subtitle" />
+        </ui:VisualElement>
+
+        <!-- Configuration Section -->
+        <ui:VisualElement class="card">
+            <ui:Label text="1. Configuration" class="card-title" />
+            
+            <ui:VisualElement class="form-row">
+                <ui:Label text="Operation Mode" class="form-label" />
+                <ui:VisualElement class="radio-group" name="mode-radio-group">
+                    <ui:RadioButton name="radio-reopen" text="Reopen Existing Event" value="true" class="radio-btn" />
+                    <ui:RadioButton name="radio-new" text="Create New Event" class="radio-btn" />
+                </ui:VisualElement>
+            </ui:VisualElement>
+
+            <ui:VisualElement class="form-row" name="source-row">
+                <ui:Label name="source-label" text="Source Event Name" class="form-label" />
+                <ui:TextField name="source-event-input" placeholder="e.g. merge2603" class="text-input" />
+            </ui:VisualElement>
+
+            <ui:VisualElement class="form-row" name="target-row">
+                <ui:Label text="Target Event Name" class="form-label" />
+                <ui:TextField name="target-event-input" placeholder="e.g. blocks2601" class="text-input" />
+            </ui:VisualElement>
+            
+            <ui:VisualElement name="new-event-settings" style="display: none;">
+                <ui:VisualElement class="form-row">
+                    <ui:Label text="Event ID" class="form-label" />
+                    <ui:TextField name="event-id-input" placeholder="e.g. 20260501" class="text-input" tooltip="8-digit ID: yyyymmNN" />
+                </ui:VisualElement>
+                <ui:VisualElement class="form-row">
+                    <ui:Label text="Start Time (UTC0)" class="form-label" />
+                    <ui:TextField name="start-time-input" placeholder="yyyy-mm-dd hh:mm:ss" class="text-input" />
+                </ui:VisualElement>
+                <ui:VisualElement class="form-row">
+                    <ui:Label text="End Time (UTC0)" class="form-label" />
+                    <ui:TextField name="end-time-input" placeholder="yyyy-mm-dd hh:mm:ss" class="text-input" />
+                </ui:VisualElement>
+                <ui:VisualElement class="form-row">
+                    <ui:Label text="Near-End Time" class="form-label" />
+                    <ui:TextField name="near-end-time-input" placeholder="yyyy-mm-dd hh:mm:ss" class="text-input" />
+                </ui:VisualElement>
+                <ui:VisualElement class="form-row">
+                    <ui:Label text="Entry Close Time" class="form-label" />
+                    <ui:TextField name="close-time-input" placeholder="yyyy-mm-dd hh:mm:ss" class="text-input" />
+                </ui:VisualElement>
+            </ui:VisualElement>
+            
+            <ui:Foldout text="Advanced Settings" class="settings-foldout" value="false">
+                <ui:VisualElement class="form-row">
+                    <ui:Label text="Workspace Path" class="form-label" />
+                    <ui:TextField name="workspace-path-input" value="MN04\trunk\design\DesignData\WorkSpace_Design" class="text-input" />
+                </ui:VisualElement>
+            </ui:Foldout>
+        </ui:VisualElement>
+
+        <!-- Pipeline Execution Section -->
+        <ui:VisualElement class="card flex-grow">
+            <ui:Label text="2. Pipeline Checklist" class="card-title" />
+            
+            <!-- We will build this list dynamically in C# so we can track status -->
+            <ui:ScrollView name="checklist-container" class="checklist-container">
+                <!-- Checklist Items injected here via C# -->
+            </ui:ScrollView>
+
+            <ui:VisualElement class="execution-footer">
+                <ui:Button name="undo-all-btn" text="Undo All Executed" class="danger-btn" />
+                <ui:VisualElement style="flex-grow: 1;" />
+                <ui:Button name="execute-btn" text="Run All Pipeline Steps" class="primary-btn" />
+                <ui:Button name="view-logs-btn" text="View Detailed Logs" class="secondary-btn" />
+            </ui:VisualElement>
+        </ui:VisualElement>
+
+        <!-- Console Section -->
+        <ui:VisualElement class="card console-section">
+            <ui:Label text="Pipeline Output" class="console-title" />
+            <ui:ScrollView name="console-scrollview" class="console-scroll-container">
+            </ui:ScrollView>
+        </ui:VisualElement>
+
+    </ui:ScrollView>
+</ui:UXML>

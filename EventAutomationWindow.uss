@@ -1,0 +1,314 @@
+/* Ultra-Modern Dark Theme Variables */
+:root {
+    --bg-color: #0E0E12; /* Deepest dark slate/blue background */
+    --card-bg: #15151A;  /* Elevated card background */
+    --card-border: #23232C; /* Subtle border */
+    --border-radius: 12px;
+    
+    --text-color: #E2E2E2;
+    --text-muted: #80808C;
+    
+    /* Vibrant Neon Accents */
+    --accent-color: #00F0FF; /* Neon Cyan */
+    --accent-hover: #5CFFFF; 
+    --accent-active: #00B1BC;
+
+    --btn-secondary-bg: #21212A;
+    --btn-secondary-hover: #2F2F3D;
+    
+    --btn-danger-bg: #FF2A55;
+    --btn-danger-hover: #FF5A7C;
+    --btn-danger-active: #CC1035;
+    
+    --success-color: #10FF8B; /* Neon Green */
+    --warning-color: #FFD400;
+    --error-color: #FF2A55;
+}
+
+/* Base structural layout */
+.main-container {
+    background-color: var(--bg-color);
+    flex-grow: 1;
+    padding: 24px;
+    font-size: 14px;
+    color: var(--text-color);
+}
+
+/* Header */
+.header-section {
+    margin-bottom: 24px;
+    padding-bottom: 16px;
+    border-bottom-width: 1px;
+    border-bottom-color: var(--card-border);
+}
+
+.header-title {
+    font-size: 28px;
+    -unity-font-style: bold;
+    color: #FFFFFF;
+    margin-bottom: 4px;
+    letter-spacing: 1px;
+}
+
+.header-subtitle {
+    font-size: 13px;
+    color: var(--text-muted);
+}
+
+/* Card layout for sections */
+.card {
+    background-color: var(--card-bg);
+    border-radius: var(--border-radius);
+    border-width: 1px;
+    border-color: var(--card-border);
+    padding: 20px;
+    margin-bottom: 24px;
+}
+
+.card-title {
+    font-size: 15px;
+    -unity-font-style: bold;
+    color: var(--accent-color);
+    margin-bottom: 16px;
+    padding-bottom: 10px;
+    border-bottom-width: 1px;
+    border-bottom-color: rgba(255,255,255,0.05);
+    text-shadow: 0 0 8px rgba(0, 240, 255, 0.4);
+}
+
+/* Forms */
+.form-row {
+    flex-direction: row;
+    align-items: center;
+    margin-bottom: 16px;
+}
+
+.form-label {
+    width: 160px;
+    -unity-font-style: bold;
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+.text-input {
+    flex-grow: 1;
+    height: 36px;
+    border-radius: 8px;
+}
+
+/* Styling the underlying text field input directly */
+.text-input > .unity-base-text-field__input {
+    background-color: #0B0B0E;
+    border-width: 1px;
+    border-color: #262630;
+    border-radius: 8px;
+    color: white;
+    padding: 8px 12px;
+    font-size: 13px;
+}
+
+.text-input > .unity-base-text-field__input:focus {
+    border-color: var(--accent-color);
+}
+
+/* Radio buttons container */
+.radio-group {
+    flex-direction: row;
+    flex-grow: 1;
+}
+
+.radio-btn {
+    margin-right: 28px;
+    font-size: 13px;
+    color: #C0C0C0;
+}
+
+.settings-foldout {
+    margin-top: 16px;
+    -unity-font-style: bold;
+    color: var(--text-muted);
+}
+
+.settings-foldout > .unity-foldout__content {
+    padding-top: 16px;
+    padding-left: 12px;
+}
+
+/* Checklist UI */
+.checklist-container {
+    height: 320px;
+    background-color: #0A0A0D;
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: #1A1A22;
+    padding: 12px;
+    margin-bottom: 20px;
+}
+
+.checklist-item {
+    flex-direction: row;
+    align-items: center;
+    padding: 12px 10px;
+    border-bottom-width: 1px;
+    border-bottom-color: rgba(255,255,255,0.03);
+}
+
+.checklist-item-status-icon {
+    width: 12px;
+    height: 12px;
+    border-radius: 6px;
+    background-color: var(--text-muted);
+    margin-right: 16px;
+}
+
+.status-pending { background-color: var(--text-muted); }
+.status-running { background-color: var(--warning-color); box-shadow: 0 0 10px rgba(255, 212, 0, 0.5); }
+.status-success { background-color: var(--success-color); box-shadow: 0 0 10px rgba(16, 255, 139, 0.5); }
+.status-error { background-color: var(--error-color); box-shadow: 0 0 10px rgba(255, 42, 85, 0.5); }
+
+.checklist-item-text {
+    flex-grow: 1;
+    font-size: 13px;
+    color: #DBDBDB;
+}
+
+/* Step Buttons */
+.checklist-item-btn {
+    width: 60px;
+    height: 28px;
+    font-size: 12px;
+    border-radius: 6px;
+    background-color: var(--btn-secondary-bg);
+    color: #FFFFFF;
+    border-width: 1px;
+    border-color: #383845;
+    -unity-font-style: bold;
+}
+
+.checklist-item-btn:hover {
+    background-color: var(--accent-hover);
+    color: #000000;
+    border-color: var(--accent-hover);
+}
+
+.checklist-item-undo-btn {
+    width: 50px;
+    height: 28px;
+    margin-left: 8px;
+    font-size: 12px;
+    border-radius: 6px;
+    background-color: #271419;
+    color: #FF708C;
+    border-width: 1px;
+    border-color: #4A1B25;
+}
+
+.checklist-item-undo-btn:hover {
+    background-color: #FF2A55;
+    color: #FFFFFF;
+    border-color: #FF2A55;
+}
+
+/* Footer Buttons */
+.execution-footer {
+    flex-direction: row;
+    justify-content: flex-end;
+    margin-top: 12px;
+}
+
+.primary-btn {
+    background-color: var(--accent-color);
+    color: #000000;
+    -unity-font-style: bold;
+    border-radius: 10px;
+    padding: 14px 28px;
+    font-size: 14px;
+    border-width: 0;
+    cursor: link;
+    transition-duration: 0.2s;
+}
+
+.primary-btn:hover {
+    background-color: var(--accent-hover);
+}
+
+.primary-btn:active {
+    background-color: var(--accent-active);
+}
+
+.secondary-btn {
+    background-color: var(--btn-secondary-bg);
+    color: var(--text-color);
+    border-radius: 10px;
+    padding: 14px 20px;
+    margin-right: 16px;
+    font-size: 13px;
+    border-width: 1px;
+    border-color: #383845;
+    cursor: link;
+    transition-duration: 0.2s;
+}
+
+.secondary-btn:hover {
+    background-color: var(--btn-secondary-hover);
+    border-color: #4B4B5C;
+}
+
+.danger-btn {
+    background-color: transparent;
+    color: var(--btn-danger-bg);
+    -unity-font-style: bold;
+    border-radius: 10px;
+    padding: 12px 20px;
+    font-size: 13px;
+    border-width: 1px;
+    border-color: var(--btn-danger-bg);
+    cursor: link;
+    transition-duration: 0.2s;
+}
+
+.danger-btn:hover {
+    background-color: var(--btn-danger-bg);
+    color: #FFFFFF;
+}
+
+.danger-btn:active {
+    background-color: var(--btn-danger-active);
+    color: #FFFFFF;
+    border-color: var(--btn-danger-active);
+}
+
+/* Console details */
+.console-section {
+    margin-top: 12px;
+}
+
+.console-title {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-bottom: 12px;
+    -unity-font-style: bold;
+}
+
+.console-scroll-container {
+    height: 200px;
+    background-color: #050508;
+    border-width: 1px;
+    border-color: #1A1A23;
+    border-radius: 8px;
+    padding: 10px;
+}
+
+.console-log-line {
+    color: #10FF8B;
+    font-size: 12px;
+    white-space: normal;
+    margin-bottom: 2px;
+}
+
+.console-log-error {
+    color: #FF2A55;
+    font-size: 12px;
+    white-space: normal;
+    margin-bottom: 2px;
+}
