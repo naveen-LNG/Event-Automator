@@ -5,6 +5,8 @@ import json
 import traceback
 import re
 
+
+WORKSPACE_NAME = "WorkSpcae_Design"
 UNDO_LOG_FILE = "undo_log.json"
 
 def log(msg):
@@ -276,7 +278,7 @@ def clone_workspace3_to_design(proj_root, step_index):
     
     design_dir = os.path.join(proj_root, r"design\DesignData")
     workspace3 = os.path.join(design_dir, "WorkSpcae3")
-    workspace_design = os.path.join(design_dir, "WorkSpcae_Design")
+    workspace_design = os.path.join(design_dir, WORKSPACE_NAME)
     
     if not os.path.exists(workspace3):
         log(f"Error: WorkSpcae3 not found at {workspace3}")
@@ -288,13 +290,13 @@ def clone_workspace3_to_design(proj_root, step_index):
         subprocess.run(["svn", "cleanup", "."], cwd=design_dir, shell=True, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         subprocess.run(["svn", "up", ".", "--non-interactive", "--trust-server-cert"], cwd=design_dir, shell=True, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         
-        # 2. rmdir /s/q WorkSpcae_Design (same as original bat)
+        # 2. rmdir /s/q [CurrentWorkspace] (same as original bat)
         if os.path.exists(workspace_design):
-            log("Removing old WorkSpcae_Design directory...")
+            log(f"Removing old {WORKSPACE_NAME} directory...")
             subprocess.run(["cmd", "/c", "rmdir", "/s", "/q", workspace_design], check=False)
             
-        # 3. xcopy WorkSpcae3 -> WorkSpcae_Design
-        log("Cloning WorkSpcae3 -> WorkSpcae_Design...")
+        # 3. xcopy WorkSpcae3 -> [CurrentWorkspace]
+        log(f"Cloning WorkSpcae3 -> {WORKSPACE_NAME}...")
         shutil.copytree(workspace3, workspace_design)
         
         # Record creation for undo - FIX: Use provided root_path for central undo_log.json
@@ -307,10 +309,10 @@ def clone_workspace3_to_design(proj_root, step_index):
         # 4. SVN revert local utility bats in the new folder
         log("Reverting base bat files via SVN...")
         files_to_revert = [
-            r"WorkSpcae_Design\PostConvert\Lua\lua_converter.lua",
-            r"WorkSpcae_Design\copy_data.bat",
-            r"WorkSpcae_Design\a_design_commit.bat",
-            r"WorkSpcae_Design\a_design_commit_with_convert.bat"
+            os.path.join(WORKSPACE_NAME, "PostConvert", "Lua", "lua_converter.lua"),
+            os.path.join(WORKSPACE_NAME, "copy_data.bat"),
+            os.path.join(WORKSPACE_NAME, "a_design_commit.bat"),
+            os.path.join(WORKSPACE_NAME, "a_design_commit_with_convert.bat")
         ]
         for f in files_to_revert:
             subprocess.run(["svn", "revert", f], cwd=design_dir, shell=True, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -326,8 +328,8 @@ def clone_event_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
     """Step 6: Clone Event Excel configuration tables."""
     import openpyxl
     
-    design_dir = os.path.join(proj_root, "design", "DesignData", workspace_name, "design")
-    backup_dir = os.path.join(proj_root, r"design\DesignData\WorkSpcae_Design\backup_xlsx")
+    design_dir = os.path.join(proj_root, "design", "DesignData", WORKSPACE_NAME, "design")
+    backup_dir = os.path.join(proj_root, os.path.join("design", "DesignData", WORKSPACE_NAME, "backup_xlsx"))
     
     src_xlsx = src_evt.lower() + ".xlsx"
     tgt_xlsx = tgt_evt.lower() + ".xlsx"
@@ -419,8 +421,8 @@ def clone_event_descriptors(proj_root, src_evt, tgt_evt, root_path, step_index):
     """Step 7: Copy event descriptor JSON(s) to app_client directory."""
     import glob
     
-    app_client_dir = os.path.join(proj_root, r"design\DesignData\WorkSpcae_Design\descriptor\app_client")
-    backup_dir = os.path.join(proj_root, r"design\DesignData\WorkSpcae_Design\descriptor\backup")
+    app_client_dir = os.path.join(proj_root, os.path.join("design", "DesignData", WORKSPACE_NAME, "descriptor", "app_client"))
+    backup_dir = os.path.join(proj_root, os.path.join("design", "DesignData", WORKSPACE_NAME, "descriptor", "backup"))
     
     src_lower = src_evt.lower()
     tgt_lower = tgt_evt.lower()
@@ -490,7 +492,7 @@ def inject_convert_references(proj_root, src_evt, tgt_evt, root_path, step_index
     """Step 8: Modify convert_layout.lua and convert.json to register the new event."""
     import json
     
-    design_base = os.path.join(proj_root, r"design\DesignData\WorkSpcae_Design")
+    design_base = os.path.join(proj_root, os.path.join("design", "DesignData", WORKSPACE_NAME))
     convert_json_path = os.path.join(design_base, r"descriptor\app_client\convert.json")
     convert_layout_path = os.path.join(design_base, r"PostConvert\Lua\convert_layout.lua")
     
@@ -733,7 +735,7 @@ def update_bi_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
     import openpyxl
     import re
     
-    design_dir = os.path.join(proj_root, "design", "DesignData", workspace_name, "design")
+    design_dir = os.path.join(proj_root, "design", "DesignData", WORKSPACE_NAME, "design")
     bi_path = os.path.join(design_dir, "bi.xlsx")
     
     if not os.path.exists(bi_path):
@@ -926,7 +928,7 @@ def update_events_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
     import openpyxl
     import stat
     
-    design_dir = os.path.join(proj_root, "design", "DesignData", workspace_name, "design")
+    design_dir = os.path.join(proj_root, "design", "DesignData", WORKSPACE_NAME, "design")
     events_path = os.path.join(design_dir, "events.xlsx")
     
     if not os.path.exists(events_path):
@@ -1466,7 +1468,7 @@ def update_item_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
     """
     log(f"Step 12: Updating item.xlsx for {tgt_evt} (cloning from {src_evt})")
     
-    design_data_path = os.path.join(proj_root, "design", "DesignData", workspace_name, "design")
+    design_data_path = os.path.join(proj_root, "design", "DesignData", WORKSPACE_NAME, "design")
     file_path = os.path.join(design_data_path, "item.xlsx")
     
     if not os.path.exists(file_path):
@@ -1621,7 +1623,7 @@ def sync_events_excel_item_ids(proj_root, tgt_evt, id_map, log_dir, step_index):
     import os
     import stat
     
-    events_path = os.path.join(proj_root, r"design\DesignData\WorkSpcae_Design\design\events.xlsx")
+    events_path = os.path.join(proj_root, "design", "DesignData", WORKSPACE_NAME, "design", "events.xlsx")
     if not os.path.exists(events_path):
         log(f"Warning: events.xlsx not found for ID sync at {events_path}")
         return True
@@ -1682,7 +1684,7 @@ def update_event_shop_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
     import openpyxl
     import stat
     
-    design_dir = os.path.join(proj_root, "design", "DesignData", workspace_name, "design")
+    design_dir = os.path.join(proj_root, "design", "DesignData", WORKSPACE_NAME, "design")
     shop_path = os.path.join(design_dir, "event_shop.xlsx")
     
     if not os.path.exists(shop_path):
@@ -1885,7 +1887,7 @@ def update_icon_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
     import stat
     import os
     
-    design_dir = os.path.join(proj_root, "design", "DesignData", workspace_name, "design")
+    design_dir = os.path.join(proj_root, "design", "DesignData", WORKSPACE_NAME, "design")
     icon_path = os.path.join(design_dir, "icon.xlsx")
     item_path = os.path.join(design_dir, "item.xlsx")
     
@@ -2188,7 +2190,7 @@ def get_quiz_date_prefix(proj_root, event_name):
     import openpyxl
     import os
     
-    events_path = os.path.join(proj_root, r"design\DesignData\WorkSpcae_Design\design\events.xlsx")
+    events_path = os.path.join(proj_root, "design", "DesignData", WORKSPACE_NAME, "design", "events.xlsx")
     if not os.path.exists(events_path):
         log(f"Warning: events.xlsx not found at {events_path}")
         return None
@@ -2241,7 +2243,7 @@ def update_localization_main_excel(proj_root, src_evt, tgt_evt, log_dir, step_in
     import os
     import re
     
-    design_dir = os.path.join(proj_root, "design", "DesignData", workspace_name, "design")
+    design_dir = os.path.join(proj_root, "design", "DesignData", WORKSPACE_NAME, "design")
     file_path = os.path.join(design_dir, "localization.xlsx")
     
     if not os.path.exists(file_path):
@@ -2451,7 +2453,7 @@ def update_localization_quiz_excel(proj_root, src_evt, tgt_evt, log_dir, step_in
     import os
     import json
     
-    design_dir = os.path.join(proj_root, "design", "DesignData", workspace_name, "design")
+    design_dir = os.path.join(proj_root, "design", "DesignData", WORKSPACE_NAME, "design")
     file_path = os.path.join(design_dir, "localization_quiz.xlsx")
     
     if not os.path.exists(file_path):
@@ -2587,7 +2589,7 @@ def update_answer_challenge_excel(proj_root, src_evt, tgt_evt, log_dir, step_ind
     import re
     import json
     
-    design_dir = os.path.join(proj_root, "design", "DesignData", workspace_name, "design")
+    design_dir = os.path.join(proj_root, "design", "DesignData", WORKSPACE_NAME, "design")
     file_path = os.path.join(design_dir, "answer_challenge.xlsx")
     
     if not os.path.exists(file_path):
@@ -2827,7 +2829,7 @@ def update_asset_ref_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
     import os
     import re
     
-    design_dir = os.path.join(proj_root, "design", "DesignData", workspace_name, "design")
+    design_dir = os.path.join(proj_root, "design", "DesignData", WORKSPACE_NAME, "design")
     file_path = os.path.join(design_dir, "asset_ref.xlsx")
     
     if not os.path.exists(file_path):
@@ -3031,7 +3033,7 @@ def update_store_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
     import re
     import shutil
     
-    design_dir = os.path.join(proj_root, "design", "DesignData", workspace_name, "design")
+    design_dir = os.path.join(proj_root, "design", "DesignData", WORKSPACE_NAME, "design")
     file_path = os.path.join(design_dir, "store.xlsx")
     
     if not os.path.exists(file_path):
@@ -3422,7 +3424,7 @@ def update_pack_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
     import re
     import shutil
     
-    design_dir = os.path.join(proj_root, "design", "DesignData", workspace_name, "design")
+    design_dir = os.path.join(proj_root, "design", "DesignData", WORKSPACE_NAME, "design")
     file_path = os.path.join(design_dir, "pack.xlsx")
     
     if not os.path.exists(file_path):
@@ -3531,7 +3533,7 @@ def update_guide_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
     import os
     import shutil
     
-    design_dir = os.path.join(proj_root, "design", "DesignData", workspace_name, "design")
+    design_dir = os.path.join(proj_root, "design", "DesignData", WORKSPACE_NAME, "design")
     file_path = os.path.join(design_dir, "guide.xlsx")
     
     if not os.path.exists(file_path):
@@ -3837,7 +3839,7 @@ def update_sys_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
     import os
     import shutil
     
-    design_dir = os.path.join(proj_root, "design", "DesignData", workspace_name, "design")
+    design_dir = os.path.join(proj_root, "design", "DesignData", WORKSPACE_NAME, "design")
     sys_path = os.path.join(design_dir, "sys.xlsx")
     events_path = os.path.join(design_dir, "events.xlsx")
     tgt_evt_xlsx = os.path.join(design_dir, f"{tgt_evt}.xlsx")
@@ -4026,7 +4028,8 @@ def main():
     src_evt = sys.argv[2]
     tgt_evt = sys.argv[3]
     proj_root = sys.argv[4]
-    workspace_name = sys.argv[6] if len(sys.argv) > 6 else "WorkSpcae_Design"
+    global WORKSPACE_NAME
+    WORKSPACE_NAME = sys.argv[6] if len(sys.argv) > 6 else WORKSPACE_NAME
     
     # Optional 5th arg indicating revert mode
     is_revert = True if sys.argv[5] == "1" else False
@@ -4060,7 +4063,7 @@ def main():
         success = clone_workspace3_to_design(proj_root, step_index)
         if success:
             design_dir = os.path.join(proj_root, r"design\DesignData")
-            workspace_design = os.path.join(design_dir, "WorkSpcae_Design")
+            workspace_design = os.path.join(design_dir, WORKSPACE_NAME)
             record_file_creation(log_dir, step_index, workspace_design)
         if not success: sys.exit(1)
     elif step_index == 5:
