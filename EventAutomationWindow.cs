@@ -53,7 +53,6 @@ public class EventAutomationWindow : EditorWindow
 {
     private TextField sourceEventInput;
     private TextField targetEventInput;
-    private TextField workspacePathInput;
     private TextField eventIdInput;
     private TextField startTimeInput;
     private TextField endTimeInput;
@@ -174,7 +173,6 @@ public class EventAutomationWindow : EditorWindow
         // Bind UI Elements
         sourceEventInput = rootVisualElement.Q<TextField>("source-event-input");
         targetEventInput = rootVisualElement.Q<TextField>("target-event-input");
-        workspacePathInput = rootVisualElement.Q<TextField>("workspace-path-input");
         eventIdInput = rootVisualElement.Q<TextField>("event-id-input");
         startTimeInput = rootVisualElement.Q<TextField>("start-time-input");
         endTimeInput = rootVisualElement.Q<TextField>("end-time-input");
@@ -290,6 +288,8 @@ public class EventAutomationWindow : EditorWindow
         if (mainEventsView != null) mainEventsView.style.display = DisplayStyle.None;
         if (minigamesView != null) minigamesView.style.display = DisplayStyle.None;
         if (battlepassView != null) battlepassView.style.display = DisplayStyle.None;
+        if (holidayBPView != null) holidayBPView.style.display = DisplayStyle.None;
+        if (settingsView != null) settingsView.style.display = DisplayStyle.None;
         if (placeholderView != null) placeholderView.style.display = DisplayStyle.None;
 
         if (viewType == "main")

@@ -103,12 +103,6 @@
                                 </ui:VisualElement>
                             </ui:VisualElement>
                             
-                            <ui:Foldout text="Advanced Settings" class="settings-foldout" value="false">
-                                <ui:VisualElement class="form-row">
-                                    <ui:Label text="Workspace Path" class="form-label" />
-                                    <ui:TextField name="workspace-path-input" value="MN04\trunk\design\DesignData\WorkSpace_Design" class="text-input" />
-                                </ui:VisualElement>
-                            </ui:Foldout>
                         </ui:VisualElement>
 
                         <!-- Pipeline Execution Section -->
