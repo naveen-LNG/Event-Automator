@@ -1,90 +1,349 @@
 <ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements" xsi="http://www.w3.org/2001/XMLSchema-instance" engine="UnityEngine.UIElements" editor="UnityEditor.UIElements" noNamespaceSchemaLocation="../../../../../UIElementsSchema/UIElements.xsd" editor-extension-mode="True">
     <Style src="EventAutomationWindow.uss" />
     
-    <ui:ScrollView class="main-container">
-        
-        <!-- Header Section -->
-        <ui:VisualElement class="header-section">
-            <ui:Label text="Event Automation Tool" class="header-title" />
-            <ui:Label text="Streamline event generation and deployment" class="header-subtitle" />
-        </ui:VisualElement>
-
-        <!-- Configuration Section -->
-        <ui:VisualElement class="card">
-            <ui:Label text="1. Configuration" class="card-title" />
-            
-            <ui:VisualElement class="form-row">
-                <ui:Label text="Operation Mode" class="form-label" />
-                <ui:VisualElement class="radio-group" name="mode-radio-group">
-                    <ui:RadioButton name="radio-reopen" text="Reopen Existing Event" value="true" class="radio-btn" />
-                    <ui:RadioButton name="radio-new" text="Create New Event" class="radio-btn" />
-                </ui:VisualElement>
-            </ui:VisualElement>
-
-            <ui:VisualElement class="form-row" name="source-row">
-                <ui:Label name="source-label" text="Source Event Name" class="form-label" />
-                <ui:TextField name="source-event-input" placeholder="e.g. merge2603" class="text-input" />
-            </ui:VisualElement>
-
-            <ui:VisualElement class="form-row" name="target-row">
-                <ui:Label text="Target Event Name" class="form-label" />
-                <ui:TextField name="target-event-input" placeholder="e.g. blocks2601" class="text-input" />
-            </ui:VisualElement>
-            
-            <ui:VisualElement name="new-event-settings" style="display: none;">
-                <ui:VisualElement class="form-row">
-                    <ui:Label text="Event ID" class="form-label" />
-                    <ui:TextField name="event-id-input" placeholder="e.g. 20260501" class="text-input" tooltip="8-digit ID: yyyymmNN" />
-                </ui:VisualElement>
-                <ui:VisualElement class="form-row">
-                    <ui:Label text="Start Time (UTC0)" class="form-label" />
-                    <ui:TextField name="start-time-input" placeholder="yyyy-mm-dd hh:mm:ss" class="text-input" />
-                </ui:VisualElement>
-                <ui:VisualElement class="form-row">
-                    <ui:Label text="End Time (UTC0)" class="form-label" />
-                    <ui:TextField name="end-time-input" placeholder="yyyy-mm-dd hh:mm:ss" class="text-input" />
-                </ui:VisualElement>
-                <ui:VisualElement class="form-row">
-                    <ui:Label text="Near-End Time" class="form-label" />
-                    <ui:TextField name="near-end-time-input" placeholder="yyyy-mm-dd hh:mm:ss" class="text-input" />
-                </ui:VisualElement>
-                <ui:VisualElement class="form-row">
-                    <ui:Label text="Entry Close Time" class="form-label" />
-                    <ui:TextField name="close-time-input" placeholder="yyyy-mm-dd hh:mm:ss" class="text-input" />
-                </ui:VisualElement>
-            </ui:VisualElement>
-            
-            <ui:Foldout text="Advanced Settings" class="settings-foldout" value="false">
-                <ui:VisualElement class="form-row">
-                    <ui:Label text="Workspace Path" class="form-label" />
-                    <ui:TextField name="workspace-path-input" value="MN04\trunk\design\DesignData\WorkSpace_Design" class="text-input" />
-                </ui:VisualElement>
-            </ui:Foldout>
-        </ui:VisualElement>
-
-        <!-- Pipeline Execution Section -->
-        <ui:VisualElement class="card flex-grow">
-            <ui:Label text="2. Pipeline Checklist" class="card-title" />
-            
-            <!-- We will build this list dynamically in C# so we can track status -->
-            <ui:ScrollView name="checklist-container" class="checklist-container">
-                <!-- Checklist Items injected here via C# -->
-            </ui:ScrollView>
-
-            <ui:VisualElement class="execution-footer">
-                <ui:Button name="undo-all-btn" text="Undo All Executed" class="danger-btn" />
+    <ui:VisualElement class="app-container">
+        <!-- Sidebar Menu -->
+        <ui:VisualElement class="sidebar-wrapper">
+            <ui:VisualElement class="sidebar-board">
+                <ui:VisualElement class="logo-img" />
+                
+                <ui:Button name="menu-main-events" class="menu-btn btn-green active-btn">
+                    <ui:VisualElement class="btn-icon-calendar" />
+                    <ui:Label text="Main Events" class="btn-text" />
+                </ui:Button>
+                
+                <ui:Button name="menu-minigames" class="menu-btn btn-teal">
+                    <ui:VisualElement class="btn-icon-minigame" />
+                    <ui:Label text="Minigame Configs" class="btn-text" />
+                </ui:Button>
+                
+                <ui:Button name="menu-pet-bp" class="menu-btn btn-purple">
+                    <ui:VisualElement class="btn-icon-pet" />
+                    <ui:Label text="Pet Battlepass" class="btn-text" />
+                </ui:Button>
+                
+                <ui:Button name="menu-holiday-bp" class="menu-btn btn-orange">
+                    <ui:VisualElement class="btn-icon-holiday" />
+                    <ui:Label text="Holiday Battlepass" class="btn-text" />
+                </ui:Button>
+                
+                <ui:Button name="menu-deco-shop" class="menu-btn btn-blue">
+                    <ui:VisualElement class="btn-icon-shop" />
+                    <ui:Label text="Decoration Shop" class="btn-text" />
+                </ui:Button>
+                
+                <ui:Button name="menu-streak" class="menu-btn btn-yellow">
+                    <ui:VisualElement class="btn-icon-streak" />
+                    <ui:Label text="Streak Challenge" class="btn-text" />
+                </ui:Button>
+                
                 <ui:VisualElement style="flex-grow: 1;" />
-                <ui:Button name="execute-btn" text="Run All Pipeline Steps" class="primary-btn" />
-                <ui:Button name="view-logs-btn" text="View Detailed Logs" class="secondary-btn" />
+                
+                <ui:Button name="menu-settings" class="menu-btn btn-green-dark">
+                    <ui:VisualElement class="btn-icon-settings" />
+                    <ui:Label text="Settings" class="btn-text" />
+                </ui:Button>
             </ui:VisualElement>
         </ui:VisualElement>
 
-        <!-- Console Section -->
-        <ui:VisualElement class="card console-section">
-            <ui:Label text="Pipeline Output" class="console-title" />
-            <ui:ScrollView name="console-scrollview" class="console-scroll-container">
-            </ui:ScrollView>
-        </ui:VisualElement>
+        <!-- Right Content Area -->
+        <ui:VisualElement class="content-area">
+            
+            <!-- MAIN EVENTS VIEW -->
+            <ui:ScrollView name="main-events-view" class="main-container" style="padding: 20px;">
+                        
+                <!-- Header Section -->
+                <ui:VisualElement class="header-section">
+                    <ui:Label text="Event Automation Tool" class="header-title" />
+                    <ui:Label text="Streamline event generation and deployment" class="header-subtitle" />
+                </ui:VisualElement>
 
-    </ui:ScrollView>
+                <!-- Configuration Section -->
+                <ui:VisualElement class="stacked-card">
+                    <ui:Label text="1. Configuration" class="card-title" />
+                            
+                            <ui:VisualElement class="form-row">
+                                <ui:Label text="Operation Mode" class="form-label" />
+                                <ui:VisualElement class="radio-group" name="mode-radio-group">
+                                    <ui:RadioButton name="radio-reopen" text="Reopen Existing Event" value="true" class="radio-btn" />
+                                    <ui:RadioButton name="radio-new" text="Create New Event" class="radio-btn" />
+                                </ui:VisualElement>
+                            </ui:VisualElement>
+
+                            <ui:VisualElement class="form-row" name="source-row">
+                                <ui:Label name="source-label" text="Source Event Name" class="form-label" />
+                                <ui:TextField name="source-event-input" placeholder="e.g. merge2603" class="text-input" />
+                            </ui:VisualElement>
+
+                            <ui:VisualElement class="form-row" name="target-row">
+                                <ui:Label text="Target Event Name" class="form-label" />
+                                <ui:TextField name="target-event-input" placeholder="e.g. blocks2601" class="text-input" />
+                            </ui:VisualElement>
+                            
+                            <ui:VisualElement name="new-event-settings" style="display: none;">
+                                <ui:VisualElement class="form-row">
+                                    <ui:Label text="Event ID" class="form-label" />
+                                    <ui:TextField name="event-id-input" placeholder="e.g. 20260501" class="text-input" tooltip="8-digit ID: yyyymmNN" />
+                                </ui:VisualElement>
+                                <ui:VisualElement class="form-row">
+                                    <ui:Label text="Start Time (UTC0)" class="form-label" />
+                                    <ui:TextField name="start-time-input" placeholder="yyyy-mm-dd hh:mm:ss" class="text-input" />
+                                </ui:VisualElement>
+                                <ui:VisualElement class="form-row">
+                                    <ui:Label text="End Time (UTC0)" class="form-label" />
+                                    <ui:TextField name="end-time-input" placeholder="yyyy-mm-dd hh:mm:ss" class="text-input" />
+                                </ui:VisualElement>
+                                <ui:VisualElement class="form-row">
+                                    <ui:Label text="Near-End Time" class="form-label" />
+                                    <ui:TextField name="near-end-time-input" placeholder="yyyy-mm-dd hh:mm:ss" class="text-input" />
+                                </ui:VisualElement>
+                                <ui:VisualElement class="form-row">
+                                    <ui:Label text="Entry Close Time" class="form-label" />
+                                    <ui:TextField name="close-time-input" placeholder="yyyy-mm-dd hh:mm:ss" class="text-input" />
+                                </ui:VisualElement>
+                            </ui:VisualElement>
+                            
+                            <ui:Foldout text="Advanced Settings" class="settings-foldout" value="false">
+                                <ui:VisualElement class="form-row">
+                                    <ui:Label text="Workspace Path" class="form-label" />
+                                    <ui:TextField name="workspace-path-input" value="MN04\trunk\design\DesignData\WorkSpace_Design" class="text-input" />
+                                </ui:VisualElement>
+                            </ui:Foldout>
+                        </ui:VisualElement>
+
+                        <!-- Pipeline Execution Section -->
+                        <ui:VisualElement class="stacked-card flex-grow">
+                            <ui:Label text="2. Pipeline Checklist" class="card-title" />
+                            
+                            <!-- We will build this list dynamically in C# so we can track status -->
+                            <ui:ScrollView name="checklist-container" class="checklist-container">
+                                <!-- Checklist Items injected here via C# -->
+                            </ui:ScrollView>
+
+                            <ui:VisualElement class="execution-footer">
+                                <ui:Button name="undo-all-btn" text="Undo All Executed" class="danger-btn" />
+                                <ui:VisualElement style="flex-grow: 1;" />
+                                <ui:Button name="execute-btn" text="Run All Pipeline Steps" class="primary-btn" />
+                                <ui:Button name="view-logs-btn" text="View Detailed Logs" class="secondary-btn" />
+                            </ui:VisualElement>
+                        </ui:VisualElement>
+
+                        <!-- Console Section -->
+                        <ui:VisualElement class="stacked-card console-section">
+                            <ui:Label text="Pipeline Output" class="console-title" />
+                            <ui:ScrollView name="console-scrollview" class="console-scroll-container">
+                            </ui:ScrollView>
+                        </ui:VisualElement>
+
+            </ui:ScrollView>
+
+            <!-- MINIGAMES VIEW -->
+            <ui:ScrollView name="minigames-view" class="main-container" style="display: none; padding: 20px;">
+                <!-- Header Section -->
+                <ui:VisualElement class="header-section">
+                    <ui:Label text="Minigame Configurations" class="header-title" />
+                    <ui:Label text="Add and manage multiple minigame runs" class="header-subtitle" />
+                </ui:VisualElement>
+
+                <!-- Input Multi-Row Editor -->
+                <ui:VisualElement class="stacked-card">
+                    <ui:VisualElement style="flex-direction: row; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                        <ui:Label text="Minigame Run Entries" class="card-title" style="margin-bottom: 0;" />
+                        <ui:Button name="add-minigame-row-btn" text="+ Add Run" class="primary-btn" style="padding: 10px 16px; font-size: 14px; border-bottom-width: 4px;" />
+                    </ui:VisualElement>
+                    
+                    <!-- Dynamic Rows Container -->
+                    <ui:VisualElement name="minigame-rows-container" style="margin-top: 10px;" />
+                </ui:VisualElement>
+
+                <!-- Execution Block -->
+                <ui:VisualElement class="stacked-card" style="margin-top: 20px;">
+                    <ui:Label text="Pipeline Action" class="card-title" />
+                    <ui:VisualElement class="execution-footer" style="justify-content: flex-end;">
+                        <ui:Button name="minigame-undo-btn" text="Revert Local File" class="danger-btn" style="margin-right: auto;" />
+                        <ui:Button name="minigame-execute-btn" text="Commit to mini_mgr.xlsx" class="primary-btn" />
+                    </ui:VisualElement>
+                </ui:VisualElement>
+            </ui:ScrollView>
+
+            <!-- BATTLEPASS VIEW -->
+            <ui:ScrollView name="battlepass-view" class="main-container" style="display: none; padding: 20px;">
+                <!-- Header Section -->
+                <ui:VisualElement class="header-section">
+                    <ui:Label text="Battle Pass Configuration" class="header-title" />
+                    <ui:Label text="Automate multi-sheet updates for the next BP cycle" class="header-subtitle" />
+                </ui:VisualElement>
+
+                <!-- Configuration Section -->
+                <ui:VisualElement class="stacked-card">
+                    <ui:Label text="1. Schedule &amp; Duration" class="card-title" />
+                    
+                    <ui:VisualElement class="form-row">
+                        <ui:Label text="Start Time (UTC0)" class="form-label" />
+                        <ui:TextField name="bp-start-time" placeholder="yyyy-mm-dd hh:mm:ss" class="text-input" />
+                    </ui:VisualElement>
+
+                    <ui:VisualElement class="form-row">
+                        <ui:Label text="End Time (UTC0)" class="form-label" />
+                        <ui:TextField name="bp-end-time" placeholder="yyyy-mm-dd hh:mm:ss" class="text-input" />
+                    </ui:VisualElement>
+                </ui:VisualElement>
+
+                <!-- Preview Strategy Section -->
+                <ui:VisualElement class="stacked-card">
+                    <ui:Label text="2. Configuration Preview" class="card-title" />
+                    
+                    <ui:VisualElement class="form-row">
+                        <ui:Label text="Point Mode" class="form-label" />
+                        <ui:Label name="bp-point-mode" text="Calculating..." class="form-label" style="-unity-font-style: bold; color: #00ffff;" />
+                    </ui:VisualElement>
+
+                    <ui:VisualElement style="flex-direction: row; flex-wrap: wrap; margin-top: 10px;">
+                        <ui:VisualElement style="width: 33%; padding: 10px;">
+                             <ui:Label text="Next Cycle ID" style="color: #888; font-size: 11px;" />
+                             <ui:Label name="bp-prev-cycle" text="..." style="color: #fff; font-size: 14px; -unity-font-style: bold;" />
+                        </ui:VisualElement>
+                        <ui:VisualElement style="width: 33%; padding: 10px;">
+                             <ui:Label text="Next Plan ID" style="color: #888; font-size: 11px;" />
+                             <ui:Label name="bp-prev-plan" text="..." style="color: #fff; font-size: 14px; -unity-font-style: bold;" />
+                        </ui:VisualElement>
+                        <ui:VisualElement style="width: 33%; padding: 10px;">
+                             <ui:Label text="Next Month (YYMM)" style="color: #888; font-size: 11px;" />
+                             <ui:Label name="bp-prev-yymm" text="..." style="color: #fff; font-size: 14px; -unity-font-style: bold;" />
+                        </ui:VisualElement>
+                        <ui:VisualElement style="width: 33%; padding: 10px;">
+                             <ui:Label text="Template Target" style="color: #888; font-size: 11px;" />
+                             <ui:Label name="bp-prev-template" text="..." style="color: #fff; font-size: 14px; -unity-font-style: bold;" />
+                        </ui:VisualElement>
+                        <ui:VisualElement style="width: 33%; padding: 10px;">
+                             <ui:Label text="Related Item ID" style="color: #888; font-size: 11px;" />
+                             <ui:Label name="bp-prev-item" text="..." style="color: #fff; font-size: 14px; -unity-font-style: bold;" />
+                        </ui:VisualElement>
+                    </ui:VisualElement>
+
+                    <ui:VisualElement class="board-divider" style="margin: 20px 0;" />
+                    
+                    <ui:Label text="* Automation will duplicate the 800/900 point rewards group from the Template Target and update all cross-sheet and cross-file references." class="header-subtitle" style="font-size: 11px; -unity-font-style: italic;" />
+                </ui:VisualElement>
+
+                <!-- Execution Block -->
+                <ui:VisualElement class="stacked-card">
+                    <ui:VisualElement class="execution-footer" style="justify-content: flex-end;">
+                         <ui:Button name="bp-execute-btn" text="Commit BattlePass Config" class="primary-btn" style="background-color: #a333c8; border-bottom-color: #7b1fa2;" />
+                    </ui:VisualElement>
+                </ui:VisualElement>
+            </ui:ScrollView>
+
+            <!-- HOLIDAY BATTLEPASS VIEW -->
+            <ui:ScrollView name="holiday-bp-view" class="main-container" style="display: none; padding: 20px;">
+                <!-- Header Section -->
+                <ui:VisualElement class="header-section">
+                    <ui:Label text="Holiday Battle Pass Configuration" class="header-title" />
+                    <ui:Label text="Automate complex 4-variant variants for festive events" class="header-subtitle" />
+                </ui:VisualElement>
+
+                <!-- Configuration Section -->
+                <ui:VisualElement class="stacked-card">
+                    <ui:Label text="1. Event Configuration" class="card-title" />
+                    
+                    <ui:VisualElement class="form-row">
+                        <ui:Label text="Holiday ID" class="form-label" />
+                        <ui:TextField name="hbp-holiday-id" placeholder="e.g. 260509" class="text-input" tooltip="Used for Aliases like 260509节日BP1" />
+                    </ui:VisualElement>
+
+                    <ui:VisualElement class="form-row">
+                        <ui:Label text="Start Time (UTC0)" class="form-label" />
+                        <ui:TextField name="hbp-start-time" placeholder="yyyy-mm-dd hh:mm:ss" class="text-input" />
+                    </ui:VisualElement>
+
+                    <ui:VisualElement class="form-row">
+                        <ui:Label text="End Time (UTC0)" class="form-label" />
+                        <ui:TextField name="hbp-end-time" placeholder="yyyy-mm-dd hh:mm:ss" class="text-input" />
+                    </ui:VisualElement>
+                </ui:VisualElement>
+
+                <!-- Preview Area -->
+                <ui:VisualElement class="stacked-card">
+                    <ui:Label text="2. Meta &amp; ID Preview" class="card-title" />
+                    
+                    <ui:VisualElement style="flex-direction: row; flex-wrap: wrap;">
+                         <ui:VisualElement style="width: 25%; padding: 10px;">
+                             <ui:Label text="Next Cycle ID" style="color: #888; font-size: 11px;" />
+                             <ui:Label name="hbp-next-cycle" text="..." style="color: #fff; font-size: 14px; -unity-font-style: bold;" />
+                         </ui:VisualElement>
+                         <ui:VisualElement style="width: 25%; padding: 10px;">
+                             <ui:Label text="Next Recommend ID" style="color: #888; font-size: 11px;" />
+                             <ui:Label name="hbp-next-recommend" text="..." style="color: #fff; font-size: 14px; -unity-font-style: bold;" />
+                         </ui:VisualElement>
+                         <ui:VisualElement style="width: 25%; padding: 10px;">
+                             <ui:Label text="Next Item ID" style="color: #888; font-size: 11px;" />
+                             <ui:Label name="hbp-next-item" text="..." style="color: #fff; font-size: 14px; -unity-font-style: bold;" />
+                         </ui:VisualElement>
+                         <ui:VisualElement style="width: 25%; padding: 10px;">
+                             <ui:Label text="Next Scheme ID" style="color: #888; font-size: 11px;" />
+                             <ui:Label name="hbp-next-scheme" text="..." style="color: #fff; font-size: 14px; -unity-font-style: bold;" />
+                         </ui:VisualElement>
+                    </ui:VisualElement>
+
+                    <ui:VisualElement class="board-divider" style="margin: 15px 0;" />
+                    <ui:Label text="Suffix Format Mirroring:" style="color: #888; font-size: 11px; margin-bottom: 5px;" />
+                    <ui:Label name="hbp-suffix-preview" text="Detecting previous group..." style="color: #fca311; font-size: 12px; -unity-font-style: italic;" />
+                </ui:VisualElement>
+
+                <!-- Execution Block -->
+                <ui:VisualElement class="stacked-card">
+                    <ui:VisualElement class="execution-footer" style="justify-content: flex-end;">
+                         <ui:Button name="hbp-execute-btn" text="Commit Holiday BP" class="primary-btn" style="background-color: #fca311; border-bottom-color: #e8920b;" />
+                    </ui:VisualElement>
+                </ui:VisualElement>
+            </ui:ScrollView>
+
+            <!-- SETTINGS VIEW -->
+            <ui:ScrollView name="settings-view" class="main-container" style="display: none; padding: 20px;">
+                <!-- Header Section -->
+                <ui:VisualElement class="header-section">
+                    <ui:Label text="Tool Settings" class="header-title" />
+                    <ui:Label text="Configure workspace paths and environment options" class="header-subtitle" />
+                </ui:VisualElement>
+
+                <!-- Workspace Section -->
+                <ui:VisualElement class="stacked-card">
+                    <ui:Label text="Workspace Selection" class="card-title" />
+                    
+                    <ui:VisualElement class="form-row">
+                        <ui:Label text="Active Workspace" class="form-label" />
+                        <ui:DropdownField name="workspace-dropdown" tooltip="Select which data workspace directory to target" class="text-input" />
+                    </ui:VisualElement>
+                    
+                    <ui:VisualElement class="board-divider" style="margin: 20px 0;" />
+                    
+                    <ui:VisualElement class="info-box" style="background-color: rgba(0, 255, 255, 0.05); padding: 15px; border-radius: 8px; border-left-width: 4px; border-left-color: #00ffff;">
+                        <ui:Label text="Resolved Path:" style="color: #00ffff; font-size: 11px; -unity-font-style: bold; margin-bottom: 4px;" />
+                        <ui:Label name="resolved-path-label" text="..." style="color: #fff; font-size: 11px; opacity: 0.8;" />
+                    </ui:VisualElement>
+                </ui:VisualElement>
+            </ui:ScrollView>
+
+            <!-- PLACEHOLDER VIEW -->
+            <ui:VisualElement name="placeholder-view" class="main-container" style="display: none; align-items: center; justify-content: center; padding: 40px;">
+                <ui:VisualElement class="huge-blue-board">
+                    <ui:VisualElement class="board-inner">
+                        <ui:VisualElement class="card-icon-container">
+                        </ui:VisualElement>
+                        
+                        <ui:VisualElement class="text-container">
+                            <ui:Label name="placeholder-title" text="Streak Challenge" class="board-title" />
+                            <ui:Label text="(Under Development)" class="board-subtitle" />
+                        </ui:VisualElement>
+                        
+                        <ui:Label name="placeholder-desc" text="Advanced automation for this flow is currently in development. Keep an eye out for updates!" class="board-description" />
+                        
+                        <ui:VisualElement class="board-divider" />
+                        <ui:Label text="Event Automation Team" class="board-footer" />
+                    </ui:VisualElement>
+                </ui:VisualElement>
+            </ui:VisualElement>
+
+        </ui:VisualElement>
+    </ui:VisualElement>
 </ui:UXML>

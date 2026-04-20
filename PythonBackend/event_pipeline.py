@@ -326,7 +326,7 @@ def clone_event_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
     """Step 6: Clone Event Excel configuration tables."""
     import openpyxl
     
-    design_dir = os.path.join(proj_root, r"design\DesignData\WorkSpcae_Design\design")
+    design_dir = os.path.join(proj_root, "design", "DesignData", workspace_name, "design")
     backup_dir = os.path.join(proj_root, r"design\DesignData\WorkSpcae_Design\backup_xlsx")
     
     src_xlsx = src_evt.lower() + ".xlsx"
@@ -733,7 +733,7 @@ def update_bi_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
     import openpyxl
     import re
     
-    design_dir = os.path.join(proj_root, r"design\DesignData\WorkSpcae_Design\design")
+    design_dir = os.path.join(proj_root, "design", "DesignData", workspace_name, "design")
     bi_path = os.path.join(design_dir, "bi.xlsx")
     
     if not os.path.exists(bi_path):
@@ -926,7 +926,7 @@ def update_events_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
     import openpyxl
     import stat
     
-    design_dir = os.path.join(proj_root, r"design\DesignData\WorkSpcae_Design\design")
+    design_dir = os.path.join(proj_root, "design", "DesignData", workspace_name, "design")
     events_path = os.path.join(design_dir, "events.xlsx")
     
     if not os.path.exists(events_path):
@@ -1466,7 +1466,7 @@ def update_item_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
     """
     log(f"Step 12: Updating item.xlsx for {tgt_evt} (cloning from {src_evt})")
     
-    design_data_path = os.path.join(proj_root, r"design\DesignData\WorkSpcae_Design\design")
+    design_data_path = os.path.join(proj_root, "design", "DesignData", workspace_name, "design")
     file_path = os.path.join(design_data_path, "item.xlsx")
     
     if not os.path.exists(file_path):
@@ -1682,7 +1682,7 @@ def update_event_shop_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
     import openpyxl
     import stat
     
-    design_dir = os.path.join(proj_root, r"design\DesignData\WorkSpcae_Design\design")
+    design_dir = os.path.join(proj_root, "design", "DesignData", workspace_name, "design")
     shop_path = os.path.join(design_dir, "event_shop.xlsx")
     
     if not os.path.exists(shop_path):
@@ -1885,7 +1885,7 @@ def update_icon_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
     import stat
     import os
     
-    design_dir = os.path.join(proj_root, r"design\DesignData\WorkSpcae_Design\design")
+    design_dir = os.path.join(proj_root, "design", "DesignData", workspace_name, "design")
     icon_path = os.path.join(design_dir, "icon.xlsx")
     item_path = os.path.join(design_dir, "item.xlsx")
     
@@ -2241,7 +2241,7 @@ def update_localization_main_excel(proj_root, src_evt, tgt_evt, log_dir, step_in
     import os
     import re
     
-    design_dir = os.path.join(proj_root, r"design\DesignData\WorkSpcae_Design\design")
+    design_dir = os.path.join(proj_root, "design", "DesignData", workspace_name, "design")
     file_path = os.path.join(design_dir, "localization.xlsx")
     
     if not os.path.exists(file_path):
@@ -2451,7 +2451,7 @@ def update_localization_quiz_excel(proj_root, src_evt, tgt_evt, log_dir, step_in
     import os
     import json
     
-    design_dir = os.path.join(proj_root, r"design\DesignData\WorkSpcae_Design\design")
+    design_dir = os.path.join(proj_root, "design", "DesignData", workspace_name, "design")
     file_path = os.path.join(design_dir, "localization_quiz.xlsx")
     
     if not os.path.exists(file_path):
@@ -2587,7 +2587,7 @@ def update_answer_challenge_excel(proj_root, src_evt, tgt_evt, log_dir, step_ind
     import re
     import json
     
-    design_dir = os.path.join(proj_root, r"design\DesignData\WorkSpcae_Design\design")
+    design_dir = os.path.join(proj_root, "design", "DesignData", workspace_name, "design")
     file_path = os.path.join(design_dir, "answer_challenge.xlsx")
     
     if not os.path.exists(file_path):
@@ -2827,7 +2827,7 @@ def update_asset_ref_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
     import os
     import re
     
-    design_dir = os.path.join(proj_root, r"design\DesignData\WorkSpcae_Design\design")
+    design_dir = os.path.join(proj_root, "design", "DesignData", workspace_name, "design")
     file_path = os.path.join(design_dir, "asset_ref.xlsx")
     
     if not os.path.exists(file_path):
@@ -3031,7 +3031,7 @@ def update_store_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
     import re
     import shutil
     
-    design_dir = os.path.join(proj_root, r"design\DesignData\WorkSpcae_Design\design")
+    design_dir = os.path.join(proj_root, "design", "DesignData", workspace_name, "design")
     file_path = os.path.join(design_dir, "store.xlsx")
     
     if not os.path.exists(file_path):
@@ -3422,7 +3422,7 @@ def update_pack_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
     import re
     import shutil
     
-    design_dir = os.path.join(proj_root, r"design\DesignData\WorkSpcae_Design\design")
+    design_dir = os.path.join(proj_root, "design", "DesignData", workspace_name, "design")
     file_path = os.path.join(design_dir, "pack.xlsx")
     
     if not os.path.exists(file_path):
@@ -3531,7 +3531,7 @@ def update_guide_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
     import os
     import shutil
     
-    design_dir = os.path.join(proj_root, r"design\DesignData\WorkSpcae_Design\design")
+    design_dir = os.path.join(proj_root, "design", "DesignData", workspace_name, "design")
     file_path = os.path.join(design_dir, "guide.xlsx")
     
     if not os.path.exists(file_path):
@@ -3837,7 +3837,7 @@ def update_sys_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
     import os
     import shutil
     
-    design_dir = os.path.join(proj_root, r"design\DesignData\WorkSpcae_Design\design")
+    design_dir = os.path.join(proj_root, "design", "DesignData", workspace_name, "design")
     sys_path = os.path.join(design_dir, "sys.xlsx")
     events_path = os.path.join(design_dir, "events.xlsx")
     tgt_evt_xlsx = os.path.join(design_dir, f"{tgt_evt}.xlsx")
@@ -4026,6 +4026,7 @@ def main():
     src_evt = sys.argv[2]
     tgt_evt = sys.argv[3]
     proj_root = sys.argv[4]
+    workspace_name = sys.argv[6] if len(sys.argv) > 6 else "WorkSpcae_Design"
     
     # Optional 5th arg indicating revert mode
     is_revert = True if sys.argv[5] == "1" else False

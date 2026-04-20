@@ -1,314 +1,176 @@
-/* Ultra-Modern Dark Theme Variables */
+/* Skip-Bo Mobile Theme Exact Spec UI Variables */
 :root {
-    --bg-color: #0E0E12; /* Deepest dark slate/blue background */
-    --card-bg: #15151A;  /* Elevated card background */
-    --card-border: #23232C; /* Subtle border */
-    --border-radius: 12px;
-    
-    --text-color: #E2E2E2;
-    --text-muted: #80808C;
-    
-    /* Vibrant Neon Accents */
-    --accent-color: #00F0FF; /* Neon Cyan */
-    --accent-hover: #5CFFFF; 
-    --accent-active: #00B1BC;
+    /* Colorful Sidebar Buttons Palette */
+    /* Bevel approach: background is normal, top-border light (highlight), bottom-border dark (shadow) */
+    --btn-bg-green: #37C55F; --btn-high-green: #67E38B; --btn-shadow-green: #14712F;
+    --btn-bg-teal: #1DBFBB;  --btn-high-teal: #50E8E4; --btn-shadow-teal: #0C6F6D;
+    --btn-bg-purple: #9536F2; --btn-high-purple: #C27EFF; --btn-shadow-purple: #4E138C;
+    --btn-bg-orange: #F55925; --btn-high-orange: #FF8861; --btn-shadow-orange: #8F2709;
+    --btn-bg-blue: #238DEB;  --btn-high-blue: #61B3FF; --btn-shadow-blue: #0E487E;
+    --btn-bg-yellow: #FABB11; --btn-high-yellow: #FFD459; --btn-shadow-yellow: #B8670A;
 
-    --btn-secondary-bg: #21212A;
-    --btn-secondary-hover: #2F2F3D;
-    
-    --btn-danger-bg: #FF2A55;
-    --btn-danger-hover: #FF5A7C;
-    --btn-danger-active: #CC1035;
-    
-    --success-color: #10FF8B; /* Neon Green */
-    --warning-color: #FFD400;
-    --error-color: #FF2A55;
+    /* Main Stacked Cards Colors */
+    --card-border-gold: #FAC023; /* Bright gold/orange outline */
+    --card-bg-blue: rgba(22, 57, 163, 0.95); /* Deep glossy blue */
+    --card-bg-console: rgba(14, 38, 115, 0.95); /* Darker blue */
+
+    /* Typography Colors */
+    --text-white: #FFFFFF;
+    --text-yellow: #FFD541;
 }
 
-/* Base structural layout */
-.main-container {
-    background-color: var(--bg-color);
-    flex-grow: 1;
-    padding: 24px;
-    font-size: 14px;
-    color: var(--text-color);
-}
-
-/* Header */
-.header-section {
-    margin-bottom: 24px;
-    padding-bottom: 16px;
-    border-bottom-width: 1px;
-    border-bottom-color: var(--card-border);
-}
-
-.header-title {
-    font-size: 28px;
-    -unity-font-style: bold;
-    color: #FFFFFF;
-    margin-bottom: 4px;
-    letter-spacing: 1px;
-}
-
-.header-subtitle {
-    font-size: 13px;
-    color: var(--text-muted);
-}
-
-/* Card layout for sections */
-.card {
-    background-color: var(--card-bg);
-    border-radius: var(--border-radius);
-    border-width: 1px;
-    border-color: var(--card-border);
-    padding: 20px;
-    margin-bottom: 24px;
-}
-
-.card-title {
-    font-size: 15px;
-    -unity-font-style: bold;
-    color: var(--accent-color);
-    margin-bottom: 16px;
-    padding-bottom: 10px;
-    border-bottom-width: 1px;
-    border-bottom-color: rgba(255,255,255,0.05);
-    text-shadow: 0 0 8px rgba(0, 240, 255, 0.4);
-}
-
-/* Forms */
-.form-row {
-    flex-direction: row;
-    align-items: center;
-    margin-bottom: 16px;
-}
-
-.form-label {
-    width: 160px;
-    -unity-font-style: bold;
-    color: var(--text-muted);
-    font-size: 13px;
-}
-
-.text-input {
-    flex-grow: 1;
-    height: 36px;
-    border-radius: 8px;
-}
-
-/* Styling the underlying text field input directly */
-.text-input > .unity-base-text-field__input {
-    background-color: #0B0B0E;
-    border-width: 1px;
-    border-color: #262630;
-    border-radius: 8px;
-    color: white;
-    padding: 8px 12px;
-    font-size: 13px;
-}
-
-.text-input > .unity-base-text-field__input:focus {
-    border-color: var(--accent-color);
-}
-
-/* Radio buttons container */
-.radio-group {
+/* Base Layout */
+.app-container {
     flex-direction: row;
     flex-grow: 1;
+    background-image: url('skipbo_bg.png'); /* The cartoony forest */
+    -unity-background-scale-mode: scale-and-crop;
 }
 
-.radio-btn {
-    margin-right: 28px;
-    font-size: 13px;
-    color: #C0C0C0;
-}
-
-.settings-foldout {
-    margin-top: 16px;
-    -unity-font-style: bold;
-    color: var(--text-muted);
-}
-
-.settings-foldout > .unity-foldout__content {
-    padding-top: 16px;
-    padding-left: 12px;
-}
-
-/* Checklist UI */
-.checklist-container {
-    height: 320px;
-    background-color: #0A0A0D;
-    border-radius: 10px;
-    border-width: 1px;
-    border-color: #1A1A22;
-    padding: 12px;
-    margin-bottom: 20px;
-}
-
-.checklist-item {
-    flex-direction: row;
-    align-items: center;
-    padding: 12px 10px;
-    border-bottom-width: 1px;
-    border-bottom-color: rgba(255,255,255,0.03);
-}
-
-.checklist-item-status-icon {
-    width: 12px;
-    height: 12px;
-    border-radius: 6px;
-    background-color: var(--text-muted);
-    margin-right: 16px;
-}
-
-.status-pending { background-color: var(--text-muted); }
-.status-running { background-color: var(--warning-color); box-shadow: 0 0 10px rgba(255, 212, 0, 0.5); }
-.status-success { background-color: var(--success-color); box-shadow: 0 0 10px rgba(16, 255, 139, 0.5); }
-.status-error { background-color: var(--error-color); box-shadow: 0 0 10px rgba(255, 42, 85, 0.5); }
-
-.checklist-item-text {
+.content-area {
     flex-grow: 1;
-    font-size: 13px;
-    color: #DBDBDB;
-}
-
-/* Step Buttons */
-.checklist-item-btn {
-    width: 60px;
-    height: 28px;
-    font-size: 12px;
-    border-radius: 6px;
-    background-color: var(--btn-secondary-bg);
-    color: #FFFFFF;
-    border-width: 1px;
-    border-color: #383845;
-    -unity-font-style: bold;
-}
-
-.checklist-item-btn:hover {
-    background-color: var(--accent-hover);
-    color: #000000;
-    border-color: var(--accent-hover);
-}
-
-.checklist-item-undo-btn {
-    width: 50px;
-    height: 28px;
-    margin-left: 8px;
-    font-size: 12px;
-    border-radius: 6px;
-    background-color: #271419;
-    color: #FF708C;
-    border-width: 1px;
-    border-color: #4A1B25;
-}
-
-.checklist-item-undo-btn:hover {
-    background-color: #FF2A55;
-    color: #FFFFFF;
-    border-color: #FF2A55;
-}
-
-/* Footer Buttons */
-.execution-footer {
-    flex-direction: row;
-    justify-content: flex-end;
-    margin-top: 12px;
-}
-
-.primary-btn {
-    background-color: var(--accent-color);
-    color: #000000;
-    -unity-font-style: bold;
-    border-radius: 10px;
-    padding: 14px 28px;
-    font-size: 14px;
-    border-width: 0;
-    cursor: link;
-    transition-duration: 0.2s;
-}
-
-.primary-btn:hover {
-    background-color: var(--accent-hover);
-}
-
-.primary-btn:active {
-    background-color: var(--accent-active);
-}
-
-.secondary-btn {
-    background-color: var(--btn-secondary-bg);
-    color: var(--text-color);
-    border-radius: 10px;
-    padding: 14px 20px;
-    margin-right: 16px;
-    font-size: 13px;
-    border-width: 1px;
-    border-color: #383845;
-    cursor: link;
-    transition-duration: 0.2s;
-}
-
-.secondary-btn:hover {
-    background-color: var(--btn-secondary-hover);
-    border-color: #4B4B5C;
-}
-
-.danger-btn {
-    background-color: transparent;
-    color: var(--btn-danger-bg);
-    -unity-font-style: bold;
-    border-radius: 10px;
-    padding: 12px 20px;
-    font-size: 13px;
-    border-width: 1px;
-    border-color: var(--btn-danger-bg);
-    cursor: link;
-    transition-duration: 0.2s;
-}
-
-.danger-btn:hover {
-    background-color: var(--btn-danger-bg);
-    color: #FFFFFF;
-}
-
-.danger-btn:active {
-    background-color: var(--btn-danger-active);
-    color: #FFFFFF;
-    border-color: var(--btn-danger-active);
-}
-
-/* Console details */
-.console-section {
-    margin-top: 12px;
-}
-
-.console-title {
-    font-size: 13px;
-    color: var(--text-muted);
-    margin-bottom: 12px;
-    -unity-font-style: bold;
-}
-
-.console-scroll-container {
-    height: 200px;
-    background-color: #050508;
-    border-width: 1px;
-    border-color: #1A1A23;
-    border-radius: 8px;
     padding: 10px;
 }
 
-.console-log-line {
-    color: #10FF8B;
-    font-size: 12px;
-    white-space: normal;
-    margin-bottom: 2px;
+/* --- Sidebar Container --- */
+.sidebar-wrapper {
+    width: 290px;
+    padding: 70px 10px 10px 10px; /* Space for the floating logo */
+    justify-content: flex-start;
 }
 
-.console-log-error {
-    color: #FF2A55;
-    font-size: 12px;
-    white-space: normal;
-    margin-bottom: 2px;
+.sidebar-board {
+    background-color: transparent; /* Assuming no backing board per some specs, but let's leave it flexible */
+    flex-grow: 1;
+    align-items: stretch;
 }
+
+/* Dynamic Skip-Bo Style Logo */
+.logo-img {
+    background-image: url('logo_skipbo.png');
+    height: 120px;
+    width: 260px;
+    position: absolute;
+    top: -65px; 
+    left: 15px;
+    -unity-background-scale-mode: scale-to-fit;
+}
+
+/* --- 3D Glossy Sidebar Buttons --- */
+.menu-btn {
+    border-radius: 20px;
+    border-width: 3px;
+    border-top-width: 3px; 
+    border-bottom-width: 6px; 
+    padding: 12px;
+    margin-bottom: 12px;
+    flex-direction: row;
+    align-items: center;
+    cursor: link;
+    transition-duration: 0.1s;
+    /* Soft shadow behind the button */
+    box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+}
+
+.menu-btn:hover {
+    scale: 1.03;
+}
+
+.menu-btn:active {
+    scale: 0.97;
+    border-bottom-width: 3px;
+    margin-top: 3px;
+}
+
+/* Text logic */
+.btn-text {
+    font-size: 16px;
+    -unity-font-style: bold;
+    color: white;
+    text-shadow: 0 2px 2px rgba(0,0,0,0.6);
+    margin-left: 12px;
+}
+
+/* Bind Generated Icons */
+.btn-icon-calendar { background-image: url('icon_calendar.png'); width: 28px; height: 28px; -unity-background-scale-mode: scale-to-fit; }
+.btn-icon-minigame { background-image: url('icon_minigame.png'); width: 28px; height: 28px; -unity-background-scale-mode: scale-to-fit; }
+.btn-icon-pet { background-image: url('icon_pet.png'); width: 28px; height: 28px; -unity-background-scale-mode: scale-to-fit; }
+.btn-icon-holiday { background-image: url('icon_holiday.png'); width: 28px; height: 28px; -unity-background-scale-mode: scale-to-fit; }
+.btn-icon-shop { background-image: url('icon_shop.png'); width: 28px; height: 28px; -unity-background-scale-mode: scale-to-fit; }
+.btn-icon-streak { background-image: url('icon_streak.png'); width: 28px; height: 28px; -unity-background-scale-mode: scale-to-fit; }
+.btn-icon-settings { background-image: url('icon_settings.png'); width: 28px; height: 28px; -unity-background-scale-mode: scale-to-fit; }
+
+/* Thick Glossy Color Styling */
+.btn-green { background-color: var(--btn-bg-green); border-color: var(--btn-shadow-green); border-top-color: var(--btn-high-green); border-left-color: var(--btn-shadow-green); border-right-color: var(--btn-shadow-green); }
+.btn-teal { background-color: var(--btn-bg-teal); border-color: var(--btn-shadow-teal); border-top-color: var(--btn-high-teal); }
+.btn-purple { background-color: var(--btn-bg-purple); border-color: var(--btn-shadow-purple); border-top-color: var(--btn-high-purple); }
+.btn-orange { background-color: var(--btn-bg-orange); border-color: var(--btn-shadow-orange); border-top-color: var(--btn-high-orange); }
+.btn-blue { background-color: var(--btn-bg-blue); border-color: var(--btn-shadow-blue); border-top-color: var(--btn-high-blue); }
+.btn-yellow { background-color: var(--btn-bg-yellow); border-color: var(--btn-shadow-yellow); border-top-color: var(--btn-high-yellow); color: white;}
+.btn-green-dark { background-color: #2F9C4A; border-color: #115723; border-top-color: #5ADA7E; border-bottom-width: 6px; }
+
+/* Highlight flare for the active tab */
+.active-btn {
+    border-color: #FFFFFF; /* Highlight flare bounding */
+    border-top-color: #FFFFFF;
+    scale: 1.05;
+}
+
+/* --- MAIN EVENTS Stacked Cards Layout --- */
+.main-container {
+    background-color: transparent; 
+    color: white;
+}
+
+.header-section { margin-top: 30px; margin-bottom: 10px; }
+.header-title { font-size: 36px; -unity-font-style: bold; color: #FFCD00; -unity-text-outline-width: 2px; -unity-text-outline-color: #612700; text-shadow: 0 5px 6px rgba(0,0,0,0.6); align-self: center; margin-bottom: 6px;}
+.header-subtitle { font-size: 16px; -unity-font-style: bold; color: white; background-color: rgba(0,0,0,0.4); padding: 8px 18px; border-radius: 16px; align-self: center; margin-bottom: 24px;}
+
+/* Rebuilt "Configuration" and "Checklist" individual cards */
+.stacked-card { 
+    background-color: var(--card-bg-blue); 
+    border-width: 4px; 
+    border-color: var(--card-border-gold); 
+    border-radius: 20px; 
+    padding: 30px; 
+    margin-bottom: 24px;
+    margin-right: 24px; /* Create healthy gap from scrollbar */
+    margin-left: 10px;
+    box-shadow: 0 10px 20px rgba(0,0,0,0.4);
+}
+
+.card-title { font-size: 22px; -unity-font-style: bold; color: var(--text-yellow); margin-bottom: 20px; text-shadow: 0 2px 4px rgba(0,0,0,0.5);}
+
+/* Shiny form controls */
+.form-row { margin-bottom: 12px; flex-direction: row; align-items: center;}
+.form-label { color: white; -unity-font-style: bold; text-shadow: 0 1px 2px rgba(0,0,0,0.5); width: 160px; font-size: 15px;}
+.text-input > .unity-base-text-field__input { background-color: #122B80; border-width: 2px; border-color: #0B1952; border-top-color: #234ECA; border-radius: 12px; color: white; padding: 10px 14px; font-size: 14px;}
+
+/* Execution Footer / Checklist Items */
+.checklist-container { background-color: rgba(0,0,0,0.3); border-radius: 16px; border-width: 2px; border-color: rgba(255,255,255,0.1); padding: 16px; min-height: 280px; margin-bottom: 16px;}
+.checklist-item { padding: 14px 12px; border-bottom-width: 2px; border-bottom-color: rgba(255,255,255,0.05); flex-direction: row; align-items: center; justify-content: space-between;}
+.checklist-item-text { font-size: 15px; -unity-font-style: bold; color: #FFFFFF; flex-grow: 1; margin-right: 16px; white-space: normal; }
+
+.checklist-item-btn { min-width: 70px; min-height: 36px; background-color: #37C55F; border-width: 2px; border-color: #14712F; border-top-color: #67E38B; border-radius: 10px; color: white; font-size: 13px; -unity-font-style: bold; margin-left: 8px;}
+.checklist-item-undo-btn { min-width: 60px; min-height: 36px; background-color: #A3A3A3; border-width: 2px; border-color: #595959; border-top-color: #D6D6D6; border-radius: 10px; color: white; font-size: 13px; margin-left: 8px;}
+
+/* Primary Bottom CTA Buttons */
+.execution-footer { flex-direction: row; align-items: center; margin-top: 10px;}
+.primary-btn { background-color: #31C753; border-width: 3px; border-bottom-width: 6px; border-color: #136925; border-top-color: #72E88E; border-radius: 16px; padding: 16px 30px; color: white; -unity-font-style: bold; font-size: 18px;}
+.primary-btn:active { border-bottom-width: 3px; margin-top: 3px; }
+.danger-btn { background-color: #8C8C8C; border-width: 3px; border-color: #545454; border-top-color: #BBBBBB; border-radius: 12px; padding: 12px 20px; color: white; -unity-font-style: bold; font-size: 14px;}
+.secondary-btn { background-color: rgba(255,255,255,0.1); border-width: 0; border-radius: 10px; padding: 12px 20px; color: white; margin-right: 16px; font-size: 14px;}
+
+/* End specific bottom console */
+.console-section { background-color: var(--card-bg-console); border-color: #1F45BC; }
+.console-scroll-container { background-color: rgba(0,0,0,0.6); border-radius: 14px; padding: 16px; height: 160px; font-size: 13px;}
+.console-log-line { color: #A0C5FF; }
+
+/* The Empty State Placeholder "Streak Challenge" */
+.huge-blue-board { background-color: var(--card-bg-blue); border-radius: 28px; border-width: 8px; border-color: var(--card-border-gold); padding: 40px; align-items: center; flex-grow: 1; margin: 40px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);}
+.board-inner { align-items: center;}
+.card-icon-container { width: 160px; height: 160px; background-image: url('skipbo_card.png'); -unity-background-scale-mode: scale-to-fit; margin-bottom: 24px;}
+.text-container { align-items: center; margin-bottom: 24px;}
+.board-title { font-size: 46px; -unity-font-style: bold; color: #FFCD00; -unity-text-outline-width: 3px; -unity-text-outline-color: #612700; text-shadow: 0 4px 6px rgba(0,0,0,0.5); margin-bottom: 12px;}
+.board-subtitle { font-size: 28px; -unity-font-style: bold; color: white; text-shadow: 0 2px 4px rgba(0,0,0,0.6);}
+.board-description { font-size: 18px; color: white; white-space: normal; text-align: center; line-height: 26px; padding: 0 60px;}
