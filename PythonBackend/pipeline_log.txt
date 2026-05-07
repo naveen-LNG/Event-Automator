@@ -1,12 +1,8 @@
-[PythonBackend] Executing Python Step 11 | Sim2507 -> Sim2605
-[PythonBackend] Step 12: Updating item.xlsx for Sim2605 (cloning from Sim2507)
-[PythonBackend] item_sheet: Found 3 items for Sim2507. Cloning...
-[PythonBackend] item_sheet: Map ID 9558 -> 9705
-[PythonBackend] item_sheet: Map ID 9559 -> 9706
-[PythonBackend] item_sheet: Map ID 9560 -> 9707
-[PythonBackend] item_sheet: Inserted item 9707 at row 1437
-[PythonBackend] item_sheet: Inserted item 9706 at row 1437
-[PythonBackend] item_sheet: Inserted item 9705 at row 1437
-[PythonBackend] item.xlsx updated for Sim2605.
-[PythonBackend] events.xlsx: Updated drop ID for Sim2605: 9558 -> 9705
-[PythonBackend] events.xlsx successfully synchronized with new item IDs for Sim2605.
+[PythonBackend] Executing Python Step 19 | Sim2604 -> Sim2604
+[PythonBackend] sys.xlsx: Target Achievement DeepLink ID: 20073
+[PythonBackend] sys.xlsx Sections: ShareDivider=1617, InviteDivider=1693
+[PythonBackend] sys.xlsx MaxIDs: Share=12265
+[PythonBackend] Mapping Share IDs: 12231..12255 -> 12266.. (Offset: 35)
+[PythonBackend] Updated Sim2604.xlsx: 25 IDs remapped.
+[PythonBackend] sys.xlsx: Target Share Group for Sim2604 already exists. Ensuring rows are uncommented.
+[PythonBackend] sys.xlsx successfully updated with sections and remapped IDs.

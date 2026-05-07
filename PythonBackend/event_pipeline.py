@@ -102,6 +102,38 @@ def get_last_numeric_id(ws, col=1, start_row=2):
                 pass
     return last_id
 
+def find_target_row_info(ws, tgt_name):
+    """Find the row index and comment status for the target event."""
+    tgt_lower = tgt_name.lower()
+    for r in range(2, ws.max_row + 1):
+        for c in range(1, ws.max_column + 1):
+            val = ws.cell(r, c).value
+            if val and tgt_lower in str(val).lower():
+                col1_val = str(ws.cell(r, 1).value or "").strip()
+                is_commented = col1_val.startswith("//") or col1_val.startswith("--")
+                return r, is_commented
+    return None, False
+
+def check_and_handle_existing(ws, sheet_name, tgt_name):
+    """
+    Uncomments the row if it exists but is disabled. 
+    Returns (True, row_idx) if it exists, (False, None) otherwise.
+    """
+    row_idx, is_commented = find_target_row_info(ws, tgt_name)
+    if row_idx:
+        if is_commented:
+            # Uncomment
+            col1_val = str(ws.cell(row_idx, 1).value).strip()
+            if col1_val.startswith("//"): col1_val = col1_val[2:].strip()
+            elif col1_val.startswith("--"): col1_val = col1_val[2:].strip()
+            ws.cell(row_idx, 1, col1_val)
+            log(f"{sheet_name}: Target existed but was commented. Uncommented row {row_idx}.")
+            return True, row_idx
+        else:
+            log(f"{sheet_name}: Target already exists and is active.")
+            return True, row_idx
+    return False, None
+
 def copy_and_rename_file(src_path, dest_path, old_name, new_name, root_path, step_index):
     """Copies a file and does a raw string replacement of old_name to new_name in its contents."""
     if not os.path.exists(src_path):
@@ -762,31 +794,6 @@ def update_bi_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
         s = s.replace(src_evt, tgt_evt)
         return s
     
-    def find_target_row_info(ws, search_str):
-        """Find the row index and comment status for the target event."""
-        search_str_lower = search_str.lower()
-        for r in range(1, ws.max_row + 1):
-            val = ws.cell(r, 1).value
-            if val and search_str_lower in str(val).lower():
-                col1_val = str(ws.cell(r, 1).value or "").strip()
-                is_commented = col1_val.startswith("//") or col1_val.startswith("--")
-                return r, is_commented
-        return None, False
-
-    def check_and_handle_existing(ws, sheet_name, search_str):
-        row_idx, is_commented = find_target_row_info(ws, search_str)
-        if row_idx:
-            if is_commented:
-                # Uncomment
-                col1_val = str(ws.cell(row_idx, 1).value).strip()
-                if col1_val.startswith("//"): col1_val = col1_val[2:].strip()
-                elif col1_val.startswith("--"): col1_val = col1_val[2:].strip()
-                ws.cell(row_idx, 1, col1_val)
-                log(f"{sheet_name}: Target existed but was commented. Uncommented row {row_idx}.")
-                return True
-            else:
-                log(f"{sheet_name}: Target already exists and is active.")
-                return True
         return False
 
     try:
@@ -805,7 +812,7 @@ def update_bi_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
         # ========== Sheet 1: bi_reason ==========
         if "bi_reason" in wb.sheetnames:
             ws = wb["bi_reason"]
-            if check_and_handle_existing(ws, "bi_reason", tgt_lower):
+            if check_and_handle_existing(ws, "bi_reason", tgt_evt):
                 modified = True # Might have uncommented
             else:
                 # Find source event row
@@ -830,7 +837,7 @@ def update_bi_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
         ad_sheet_name = "广告打点常量表"
         if ad_sheet_name in wb.sheetnames:
             ws = wb[ad_sheet_name]
-            if check_and_handle_existing(ws, ad_sheet_name, tgt_upper):
+            if check_and_handle_existing(ws, ad_sheet_name, tgt_evt):
                 modified = True
             else:
                 # Collect source rows grouped by prefix (SITE vs ENTRANCE)
@@ -883,7 +890,7 @@ def update_bi_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
         # ========== Sheet 3: bi_event_names ==========
         if "bi_event_names" in wb.sheetnames:
             ws = wb["bi_event_names"]
-            if check_and_handle_existing(ws, "bi_event_names", tgt_lower):
+            if check_and_handle_existing(ws, "bi_event_names", tgt_evt):
                 modified = True
             else:
                 # Find source event row
@@ -980,35 +987,6 @@ def update_events_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
                     return str(ws.cell(r, 1).value) if ws.cell(r, 1).value else None
         return None
     
-    def find_target_row_info(ws):
-        """Find the row index and comment status for the target event."""
-        for r in range(2, ws.max_row + 1):
-            for c in range(1, ws.max_column + 1):
-                val = ws.cell(r, c).value
-                if val and tgt_lower in str(val).lower():
-                    col1_val = str(ws.cell(r, 1).value or "").strip()
-                    is_commented = col1_val.startswith("//") or col1_val.startswith("--")
-                    return r, is_commented
-        return None, False
-
-    def check_and_handle_existing(ws, sheet_name):
-        """
-        Uncomments the row if it exists but is disabled. 
-        Returns (True, row_idx) if it exists, (False, None) otherwise.
-        """
-        row_idx, is_commented = find_target_row_info(ws)
-        if row_idx:
-            if is_commented:
-                # Uncomment
-                col1_val = str(ws.cell(row_idx, 1).value).strip()
-                if col1_val.startswith("//"): col1_val = col1_val[2:].strip()
-                elif col1_val.startswith("--"): col1_val = col1_val[2:].strip()
-                ws.cell(row_idx, 1, col1_val)
-                log(f"{sheet_name}: Target existed but was commented. Uncommented row {row_idx}.")
-                return True, row_idx
-            else:
-                log(f"{sheet_name}: Target already exists and is active.")
-                return True, row_idx
         return False, None
 
 
@@ -1029,7 +1007,7 @@ def update_events_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
         # ========== Sheet 1: events (main) ==========
         if "events" in wb.sheetnames:
             ws = wb["events"]
-            exists, row_idx = check_and_handle_existing(ws, "events")
+            exists, row_idx = check_and_handle_existing(ws, "events", tgt_evt)
             if exists:
                 # Even if it exists, we want to update dates and IDs if provided
                 target_row = row_idx
@@ -1110,7 +1088,7 @@ def update_events_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
         # ========== Sheet 2: event_type ==========
         if "event_type" in wb.sheetnames:
             ws = wb["event_type"]
-            exists, _ = check_and_handle_existing(ws, "event_type")
+            exists, _ = check_and_handle_existing(ws, "event_type", tgt_evt)
             if exists:
                 modified = True
             else:
@@ -1139,7 +1117,7 @@ def update_events_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
         # ========== Sheet 3: event_entrance ==========
         if "event_entrance" in wb.sheetnames:
             ws = wb["event_entrance"]
-            exists, _ = check_and_handle_existing(ws, "event_entrance")
+            exists, _ = check_and_handle_existing(ws, "event_entrance", tgt_evt)
             if exists:
                 modified = True
             else:
@@ -1167,7 +1145,7 @@ def update_events_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
         # ========== Sheet 4: event_score ==========
         if "event_score" in wb.sheetnames:
             ws = wb["event_score"]
-            exists, _ = check_and_handle_existing(ws, "event_score")
+            exists, _ = check_and_handle_existing(ws, "event_score", tgt_evt)
             if exists:
                 modified = True
             else:
@@ -1195,7 +1173,7 @@ def update_events_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
         # ========== Sheet 5: event_pre ==========
         if "event_pre" in wb.sheetnames:
             ws = wb["event_pre"]
-            exists, row_idx = check_and_handle_existing(ws, "event_pre")
+            exists, row_idx = check_and_handle_existing(ws, "event_pre", tgt_evt)
             if exists:
                 # Update ID if it exists
                 if event_id:
@@ -1226,7 +1204,7 @@ def update_events_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
         # ========== Sheet 6: event_post ==========
         if "event_post" in wb.sheetnames:
             ws = wb["event_post"]
-            exists, row_idx = check_and_handle_existing(ws, "event_post")
+            exists, row_idx = check_and_handle_existing(ws, "event_post", tgt_evt)
             if exists:
                 # Update ID if it exists
                 if event_id:
@@ -1269,7 +1247,7 @@ def update_events_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
         other_sheet = "活动其他"
         if other_sheet in wb.sheetnames:
             ws = wb[other_sheet]
-            exists, row_idx = check_and_handle_existing(ws, "activity_other")
+            exists, row_idx = check_and_handle_existing(ws, "activity_other", tgt_evt)
             if exists:
                 if event_id:
                     ws.cell(row_idx, 1, int(event_id))
@@ -1315,7 +1293,7 @@ def update_events_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
         achieve_sheet = "活动成就"
         if achieve_sheet in wb.sheetnames:
             ws = wb[achieve_sheet]
-            exists, row_idx = check_and_handle_existing(ws, "activity_achievement")
+            exists, row_idx = check_and_handle_existing(ws, "activity_achievement", tgt_evt)
             if exists:
                 target_row = row_idx
                 modified = True
@@ -1425,7 +1403,7 @@ def update_events_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
             
             # Step 3: Clear Main sheet of all bi-weekly events before injecting target
             # Skip clearing/injection if target already in main sheet unless we want a rebuild
-            exists_idx, _ = find_target_row_info(ws)
+            exists_idx, _ = check_and_handle_existing(ws, "buff_constants", tgt_evt)
             if exists_idx:
                 log("buff_constants: Target already exists in main sheet. Skipping injection.")
             else:
@@ -1570,30 +1548,35 @@ def update_item_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                 if match:
                     src_rows.append(r)
             
-            # Check if target items already exist
-            target_rows = []
-            for r in range(2, real_max + 1):
-                alias_val = str(ws.cell(r, 2).value or "").lower()
-                name_val = str(ws.cell(r, 5).value or "").lower()
-                if tgt_lower in alias_val or tgt_lower in name_val:
-                    target_rows.append(r)
-            
-            if target_rows:
-                log(f"item_sheet: Found {len(target_rows)} existing items for {tgt_evt}. Checking comment status...")
-                for tr in target_rows:
-                    c1_val = str(ws.cell(tr, 1).value or "").strip()
-                    if c1_val.startswith("//"):
-                        ws.cell(tr, 1, c1_val[2:].strip())
-                        log(f"item_sheet: Uncommented row {tr} for {tgt_evt}.")
-                        modified = True
+            exists, _ = check_and_handle_existing(ws, "item", tgt_evt)
+            if exists:
+                log(f"item_sheet: Target items already exist for {tgt_evt}. Reconstructing id_map...")
+                # Try to map src IDs to tgt IDs by matching the 'name' or 'alias' (columns 5 and 2)
+                id_map = {}
+                for sr in src_rows:
+                    src_id = str(ws.cell(sr, 1).value or "").replace("//", "").strip()
+                    src_name = str(ws.cell(sr, 5).value or "").strip()
+                    src_alias = str(ws.cell(sr, 2).value or "").strip()
+                    
+                    for tr in range(2, real_max + 1):
+                        tgt_id = str(ws.cell(tr, 1).value or "").replace("//", "").strip()
+                        tgt_name = str(ws.cell(tr, 5).value or "").strip()
+                        tgt_alias = str(ws.cell(tr, 2).value or "").strip()
+                        
+                        if tgt_id == src_id: continue # Same ID means it's likely the same row or a duplicate
+                        
+                        # Match by name suffix or alias
+                        if (src_name and src_name in tgt_name) or (src_alias and src_alias in tgt_alias):
+                            if src_id.isdigit() and tgt_id.isdigit():
+                                id_map[int(src_id)] = int(tgt_id)
+                                break
                 
-                # Build id_map from existing target items if they match source item count or names
-                # This is a bit tricky, but for Reopen we usually just want to return the map
-                # For now, let's just log and continue. If src_rows is also found, it will still clone.
-                # To prevent double cloning, we should skip cloning if target items exist.
-                if len(target_rows) >= len(src_rows) and len(src_rows) > 0:
-                    log(f"item_sheet: Target items already exist. Skipping cloning.")
-                    src_rows = [] 
+                if id_map:
+                    log(f"item_sheet: Reconstructed id_map with {len(id_map)} entries.")
+                    return True, id_map
+                else:
+                    log(f"item_sheet: Could not reconstruct id_map. Returning True without map.")
+                    return True, {}
             
             if src_rows:
                 log(f"item_sheet: Found {len(src_rows)} items for {src_evt}. Cloning...")
@@ -1913,7 +1896,7 @@ def update_event_shop_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
             real_max = get_real_max_row(ws_shop)
             
             # Check if target shop already exists
-            exists, target_row_idx = check_and_handle_existing(ws_shop, "event_shop")
+            exists, target_row_idx = check_and_handle_existing(ws_shop, "event_shop", tgt_evt)
             if exists:
                 log(f"event_shop: Target shop already exists at row {target_row_idx}. Updating...")
                 # Update Shop ID
@@ -2102,22 +2085,7 @@ def update_icon_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                 orig_prefix = parts[0]
                 new_key = f"{tgt_upper}_{parts[1]}"
                 
-                already_exists = False
-                target_row_idx = -1
-                for r in range(1, ws_item.max_row + 1):
-                    val = str(ws_item.cell(r, 1).value or "").strip()
-                    if val.upper() == new_key.upper():
-                        already_exists = True
-                        target_row_idx = r
-                        break
-                    elif val.startswith("//") and new_key.upper() in val.upper():
-                        already_exists = True
-                        target_row_idx = r
-                        # Uncomment
-                        ws_item.cell(r, 1, val[2:].strip())
-                        log(f"icon_sheet: Uncommented {new_key} in icon_item at Row {r}")
-                        modified = True
-                        break
+                already_exists, target_row_idx = check_and_handle_existing(ws_item, "icon_item", new_key)
                 
                 if not already_exists:
                     # Insert at the divider to keep it grouped correctly
@@ -2439,148 +2407,77 @@ def update_localization_main_excel(proj_root, src_evt, tgt_evt, log_dir, step_in
         wb = openpyxl.load_workbook(file_path)
         
         modified = False
+        # 1. Process each sheet efficiently
+        all_final_keys = set()
         for sheet_name in wb.sheetnames:
             if sheet_name in ["languages", "country", "localize_零使用"]:
                 continue
                 
             ws = wb[sheet_name]
             src_rows = []
-            
-            # Map of key -> row_idx in this sheet to prevent duplicates
             existing_keys = {} # key_upper -> row_idx
-            for r in range(2, ws.max_row + 1):
-                val = str(ws.cell(r, 1).value or "").strip()
-                if val:
-                    if val.startswith("//"):
-                        k = val[2:].strip().upper()
-                        existing_keys[k] = r
-                    else:
-                        existing_keys[val.upper()] = r
             
-            # Find rows to clone (fuzzy match on name OR digits)
-            for r in range(2, ws.max_row + 1):
-                c1 = str(ws.cell(r, 1).value or "").lower()
-                c2 = str(ws.cell(r, 2).value or "").lower()
+            # Single pass to build key map and find source rows
+            for r in range(1, ws.max_row + 1):
+                val = str(ws.cell(r, 1).value or "").strip()
+                if not val: continue
                 
-                match_found = False
-                if src_lower in c1 or src_lower in c2:
-                    match_found = True
-                elif src_digits and (src_digits in c1 or src_digits in c2):
-                    # More cautious match for digits: must look like an event-prefix
-                    if re.search(rf'([A-Za-z]+{src_digits}|{src_digits}_)', c1):
-                        match_found = True
+                k_clean = val.replace("//", "").strip().upper()
+                if k_clean:
+                    all_final_keys.add(k_clean)
+                    if k_clean not in existing_keys:
+                        existing_keys[k_clean] = r
                 
-                if match_found:
-                    src_rows.append(r)
+                # Find source rows
+                if r >= 2:
+                    c1 = val.lower()
+                    c2 = str(ws.cell(r, 2).value or "").lower()
+                    if src_lower in c1 or src_lower in c2 or (src_digits and src_digits in c1):
+                        src_rows.append(r)
             
             if src_rows:
-                # Add a divider
-                new_divider = ws.max_row + 1
-                ws.cell(new_divider, 1, f"// {tgt_upper} AUTO-CLONED")
-                
                 cloned_in_sheet = 0
                 for r in src_rows:
                     new_key = swap_name(ws.cell(r, 1).value)
                     new_key_upper = str(new_key).upper().strip()
-                    if new_key and new_key_upper in existing_keys:
+                    
+                    if new_key_upper in existing_keys:
                         row_idx = existing_keys[new_key_upper]
-                        val = str(ws.cell(row_idx, 1).value or "").strip()
-                        if val.startswith("//"):
-                            ws.cell(row_idx, 1, val[2:].strip())
-                            log(f"localization: Uncommented existing key {new_key} in [{sheet_name}]")
+                        c1_val = str(ws.cell(row_idx, 1).value or "").strip()
+                        if c1_val.startswith("//"):
+                            ws.cell(row_idx, 1, c1_val[2:].strip())
                             modified = True
-                        continue # Skip cloning if already exists
+                        continue
                         
                     new_row_idx = ws.max_row + 1
                     for c in range(1, ws.max_column + 1):
                         ws.cell(new_row_idx, c, swap_name(ws.cell(r, c).value))
+                    
+                    existing_keys[new_key_upper] = new_row_idx
+                    all_final_keys.add(new_key_upper)
                     cloned_in_sheet += 1
                 
                 if cloned_in_sheet > 0:
                     log(f"localization: Cloned {cloned_in_sheet} rows in [{sheet_name}] for {tgt_evt}")
                     modified = True
         
-        # 2. Final verification against REQUIRED keys from target excel
-        # Just in case some keys were missed in the cloning phase
-        missing_keys = []
-        # Pre-scan EVERYTHING again to be sure
-        all_final_keys = set()
-        for sheet_name in wb.sheetnames:
-            ws = wb[sheet_name]
-            for r in range(2, ws.max_row + 1):
-                all_final_keys.add(str(ws.cell(r, 1).value or "").upper().strip())
-        
-        for r_key in required_tgt_keys:
-            if r_key not in all_final_keys:
-                missing_keys.append(r_key)
-        
-        if missing_keys:
-            # Try to recover missing keys from ANY sheet of localization.xlsx
-            # (e.g. if SIM2512_ROOMNAME_1 was in a different sheet than expected)
-            ws_fix = wb[wb.sheetnames[0]] # Just put in first sheet or a common one
-            if "localize_room" in wb.sheetnames: ws_fix = wb["localize_room"]
-            
-            recovery_count = 0
-            # Build global source map for recovery
-            source_map = {}
-            for sheet_name in wb.sheetnames:
-                ws_s = wb[sheet_name]
-                for r in range(2, ws_s.max_row + 1):
-                    k_val = str(ws_s.cell(r, 1).value or "")
-                    if k_val: source_map[k_val.upper()] = [ws_s.cell(r, c).value for c in range(1, ws_s.max_column + 1)]
-            
-            new_divider = ws_fix.max_row + 1
-            ws_fix.cell(new_divider, 1, f"// {tgt_upper} INTELLIGENT RECOVERY")
-            
-            for m_key in missing_keys:
-                src_key = m_key.replace(tgt_upper, src_upper).replace(tgt_digits, src_digits)
-                if src_key in source_map:
-                    new_r = ws_fix.max_row + 1
-                    row_data = source_map[src_key]
-                    for c_idx, val in enumerate(row_data):
-                        ws_fix.cell(new_r, c_idx + 1, swap_name(val))
-                    recovery_count += 1
-                    log(f"localization: Recovered missing key '{m_key}' from source '{src_key}'")
-                else:
-                    # Pure placeholder
+        # 2. Final verification against REQUIRED keys
+        if required_tgt_keys:
+            missing = [k for k in required_tgt_keys if k not in all_final_keys]
+            if missing:
+                log(f"localization: {len(missing)} keys missing. Adding placeholders to localize_room.")
+                ws_fix = wb["localize_room"] if "localize_room" in wb.sheetnames else wb[wb.sheetnames[0]]
+                for m_key in missing:
                     new_r = ws_fix.max_row + 1
                     ws_fix.cell(new_r, 1, m_key)
                     ws_fix.cell(new_r, 2, f"[FIX ME] {m_key}")
-                    log(f"WARNING: Localization key '{m_key}' is REQUIRED by {tgt_evt}.xlsx but was NOT FOUND in localization.xlsx. Created placeholder.")
+                modified = True
             
-            if len(missing_keys) > 0:
-                modified = True
-            for r in range(2, ws.max_row + 1):
-                val1 = str(ws.cell(r, 1).value or "").lower()  # type: ignore
-                val2 = str(ws.cell(r, 2).value or "").lower()  # type: ignore
-                
-                match = False
-                if src_lower and (src_lower in val1 or src_lower in val2):
-                    match = True
-                elif src_digits and (src_digits in val1 or src_digits in val2):
-                    match = True
-                    
-                if match:
-                    src_rows.append(r)
-                    
-            if src_rows:
-                divider_row = ws.max_row + 1
-                ws.cell(divider_row, 1, f"// {tgt_upper}")
-                
-                for r in src_rows:
-                    new_row_idx = ws.max_row + 1
-                    for c in range(1, ws.max_column + 1):
-                        old_val = ws.cell(r, c).value  # type: ignore
-                        ws.cell(new_row_idx, c, swap_name(old_val))  # type: ignore
-                        
-                log(f"localization.xlsx [{sheet_name}]: Cloned {len(src_rows)} rows for {tgt_evt}.")
-                modified = True
-                
         if modified:
             wb.save(file_path)
             log(f"localization.xlsx successfully updated for {tgt_evt}.")
         else:
-            log(f"localization.xlsx: No changes needed. No source strings found.")
+            log(f"localization.xlsx: No changes needed.")
             
     except Exception as e:
         log(f"Error updating localization.xlsx: {e}")
@@ -3274,23 +3171,19 @@ def update_store_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                         old_recharge_ids.append(str(ws_r.cell(r, 1).value or ""))  # type: ignore
             
             if src_recharge_rows:
-                existing_target_rows = []
-                for r in range(2, ws_r.max_row + 1):
-                    alias_val = str(ws_r.cell(r, 2).value or "").strip()
-                    if tgt_evt.lower() in alias_val.lower() and not alias_val.startswith("B-") and not alias_val.startswith("A-"):
-                        existing_target_rows.append(r)
-                
-                if existing_target_rows:
-                    log(f"store_recharge: Target event {tgt_evt} already exists. Ensuring rows are uncommented.")
-                    for r in existing_target_rows:
-                        val = str(ws_r.cell(r, 1).value or "").strip()
-                        if val.startswith("//"):
-                            ws_r.cell(r, 1, val[2:].strip())
-                            modified = True
-                    # If modified, we still need the new IDs for mapping to other sheets
-                    for r in existing_target_rows:
-                        id_val = str(ws_r.cell(r, 1).value or "").replace("//", "").strip()
-                        if id_val: new_recharge_ids.append(id_val)
+                exists, row_idx = check_and_handle_existing(ws_r, "store_recharge", tgt_evt)
+                if exists:
+                    log(f"store_recharge: Target event {tgt_evt} already exists.")
+                    # If it exists (and was uncommented), we still need the IDs for mapping to other sheets
+                    # Let's collect existing IDs in this section
+                    # Search for rows matching tgt_evt that are active
+                    for r in range(2, ws_r.max_row + 1):
+                        alias_val = str(ws_r.cell(r, 2).value or "").strip()
+                        if tgt_evt.lower() in alias_val.lower() and not alias_val.startswith("B-") and not alias_val.startswith("A-"):
+                            id_val = str(ws_r.cell(r, 1).value or "").strip()
+                            if id_val and not id_val.startswith("//"):
+                                new_recharge_ids.append(id_val)
+                    src_recharge_rows = [] # Skip cloning logic
                 else:
                     # Find max ID in same event section as source
                     # Source rows define the section; find next section divider after them
@@ -3359,19 +3252,9 @@ def update_store_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                     src_package_rows.append(r)
             
             if src_package_rows:
-                existing_target_rows = []
-                for r in range(2, ws_p.max_row + 1):
-                    id_val = str(ws_p.cell(r, 1).value or "").replace("//", "").strip()
-                    if id_val in new_recharge_ids:
-                        existing_target_rows.append(r)
-                
-                if existing_target_rows:
-                    log(f"store_package: Target IDs already exist. Ensuring rows are uncommented.")
-                    for r in existing_target_rows:
-                        val = str(ws_p.cell(r, 1).value or "").strip()
-                        if val.startswith("//"):
-                            ws_p.cell(r, 1, val[2:].strip())
-                            modified = True
+                exists, row_idx = check_and_handle_existing(ws_p, "store_package", tgt_evt)
+                if exists:
+                    src_package_rows = [] # Skip cloning
                 else:
                     # Insert after last source event row in the section
                     last_pkg_src = src_package_rows[-1]
@@ -3422,19 +3305,11 @@ def update_store_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                         old_gift_ids.append(str(int(id_val)))
             
             if src_gift_rows:
-                existing_target_rows = []
-                for r in range(2, ws_g.max_row + 1):
-                    alias_val = str(ws_g.cell(r, 2).value or "").strip()
-                    if tgt_evt.lower() in alias_val.lower():
-                        existing_target_rows.append(r)
-                
-                if existing_target_rows:
-                    log(f"recommend_gift: Target event {tgt_evt} already exists. Ensuring rows are uncommented.")
-                    for r in existing_target_rows:
-                        val = str(ws_g.cell(r, 1).value or "").strip()
-                        if val.startswith("//"):
-                            ws_g.cell(r, 1, val[2:].strip())
-                            modified = True
+                exists, row_idx = check_and_handle_existing(ws_g, "recommend_gift", tgt_evt)
+                if exists:
+                    # Collect existing IDs for gift_id_map if needed, 
+                    # but for reopen we usually don't need to remap unless IDs changed.
+                    src_gift_rows = [] # Skip cloning
                 else:
                     # Find max ID only in the event gift section (row 61+)
                     # The event section starts after "// 活动商店与进度礼包" row
@@ -3540,19 +3415,10 @@ def update_store_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                     src_style_rows.append(r)
             
             if src_style_rows:
-                existing_target_rows = []
-                for r in range(2, ws_s.max_row + 1):
-                    id_val = str(ws_s.cell(r, 1).value or "").replace("//", "").strip()
-                    if id_val in main_new_ids:
-                        existing_target_rows.append(r)
-                
-                if existing_target_rows:
-                    log(f"event_gift_style: Target IDs already exist. Ensuring rows are uncommented.")
-                    for r in existing_target_rows:
-                        val = str(ws_s.cell(r, 1).value or "").strip()
-                        if val.startswith("//"):
-                            ws_s.cell(r, 1, val[2:].strip())
-                            modified = True
+                main_new_ids = new_gift_ids[:12] if len(new_gift_ids) >= 12 else new_gift_ids
+                exists, row_idx = check_and_handle_existing(ws_s, "event_gift_style", tgt_evt)
+                if exists:
+                    src_style_rows = [] # Skip cloning
                 else:
                     insert_row = ws_s.max_row + 1
                     for r in range(ws_s.max_row, 1, -1):
@@ -3649,19 +3515,11 @@ def update_pack_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
             log(f"pack.xlsx: No source rows found for {src_evt}")
             return True
             
-        existing_target_rows = []
-        for r in range(2, ws.max_row + 1):
-            alias_val = str(ws.cell(r, 2).value or "").strip()
-            if tgt_evt.lower() in alias_val.lower():
-                existing_target_rows.append(r)
-        
-        if existing_target_rows:
-            log(f"pack.xlsx: Target event {tgt_evt} already exists. Ensuring rows are uncommented.")
-            for r in existing_target_rows:
-                val = str(ws.cell(r, 1).value or "").strip()
-                if val.startswith("//"):
-                    ws.cell(r, 1, val[2:].strip())
-                    modified = True
+        exists, _ = check_and_handle_existing(ws, "pack", tgt_evt)
+        if exists:
+            if modified:
+                wb.save(file_path)
+            return True
             if modified:
                 wb.save(file_path)
             return True
@@ -3787,23 +3645,8 @@ def update_guide_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                 if tgt_evt.lower() in alias_val.lower():
                     existing_target_rows.append(r)
             
-            if existing_target_rows:
-                log(f"guide_section: Target event {tgt_evt} already exists. Ensuring rows are uncommented.")
-                for r in existing_target_rows:
-                    val = str(ws_sec.cell(r, 1).value or "").strip()
-                    if val.startswith("//"):
-                        ws_sec.cell(r, 1, val[2:].strip())
-                        modified = True
-                    
-                    # Populate old_id_to_new_id mapping for downstream sheets (guide/guide_backup)
-                    # We need to map from source event IDs to these existing target event IDs
-                    # But if we are re-opening the same event (src=tgt), it's already mapped.
-                    # If src != tgt, we'll try to find corresponding IDs.
-                    pass 
-                
-                # If we have existing target rows, we should probably SKIP the cloning logic below
-                # unless the user specifically wants to refresh them.
-                # For now, let's just skip cloning to be safe and idempotent.
+            exists, row_idx = check_and_handle_existing(ws_sec, "guide_section", tgt_evt)
+            if exists:
                 src_rows = [] # This effectively skips the cloning block below
             
             if src_rows:
@@ -3937,13 +3780,8 @@ def update_guide_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                 if tgt_evt.lower() in alias or tgt_evt.lower() in id_val:
                     existing_target_rows.append(r)
                     
-            if existing_target_rows:
-                log(f"guide_trigger: Target event {tgt_evt} already exists. Ensuring rows are uncommented.")
-                for r in existing_target_rows:
-                    val = str(ws_trig.cell(r, 1).value or "").strip()
-                    if val.startswith("//"):
-                        ws_trig.cell(r, 1, val[2:].strip())
-                        modified = True
+            exists, _ = check_and_handle_existing(ws_trig, "guide_trigger", tgt_evt)
+            if exists:
                 src_rows = [] # Skip cloning
             
             if src_rows:
@@ -3986,13 +3824,8 @@ def update_guide_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                 if tgt_evt.lower() in alias or tgt_evt.lower() in id_val:
                     existing_target_rows.append(r)
                     
-            if existing_target_rows:
-                log(f"guide_refui: Target event {tgt_evt} already exists. Ensuring rows are uncommented.")
-                for r in existing_target_rows:
-                    val = str(ws_ui.cell(r, 1).value or "").strip()
-                    if val.startswith("//"):
-                        ws_ui.cell(r, 1, val[2:].strip())
-                        modified = True
+            exists, _ = check_and_handle_existing(ws_ui, "guide_refui", tgt_evt)
+            if exists:
                 src_rows = [] # Skip cloning
             
             if src_rows:
