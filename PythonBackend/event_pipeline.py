@@ -1425,7 +1425,8 @@ def update_events_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
             
             # Step 3: Clear Main sheet of all bi-weekly events before injecting target
             # Skip clearing/injection if target already in main sheet unless we want a rebuild
-            if target_exists(ws):
+            exists_idx, _ = find_target_row_info(ws)
+            if exists_idx:
                 log("buff_constants: Target already exists in main sheet. Skipping injection.")
             else:
                 rows_to_delete = []
