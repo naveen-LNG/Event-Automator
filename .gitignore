@@ -1,34 +1,7 @@
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
-env/
-venv/
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Unity
-*.meta
-*.unitypackage
-*.asset
-*.prefab
-Temp/
-Obj/
-Library/
-ExportedObj/
-Build/
-Builds/
-Logs/
-UserSettings/
-
-# Script Backups
-*.xlsx.bak
-*.xlsx.bak*
-extra_args.json
-event_pipeline_step_*.log
-
-# OS
+node_modules/
+release/
+pybackend_dist/
+pybackend-src/build/
+pybackend-src/__pycache__/
+*.log
 .DS_Store
-Thumbs.db

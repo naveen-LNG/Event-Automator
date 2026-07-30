@@ -102,6 +102,38 @@ def get_last_numeric_id(ws, col=1, start_row=2):
                 pass
     return last_id
 
+def find_target_row_info(ws, tgt_name):
+    """Find the row index and comment status for the target event."""
+    tgt_lower = tgt_name.lower()
+    for r in range(2, ws.max_row + 1):
+        for c in range(1, ws.max_column + 1):
+            val = ws.cell(r, c).value
+            if val and tgt_lower in str(val).lower():
+                col1_val = str(ws.cell(r, 1).value or "").strip()
+                is_commented = col1_val.startswith("//") or col1_val.startswith("--")
+                return r, is_commented
+    return None, False
+
+def check_and_handle_existing(ws, sheet_name, tgt_name):
+    """
+    Uncomments the row if it exists but is disabled. 
+    Returns (True, row_idx) if it exists, (False, None) otherwise.
+    """
+    row_idx, is_commented = find_target_row_info(ws, tgt_name)
+    if row_idx:
+        if is_commented:
+            # Uncomment
+            col1_val = str(ws.cell(row_idx, 1).value).strip()
+            if col1_val.startswith("//"): col1_val = col1_val[2:].strip()
+            elif col1_val.startswith("--"): col1_val = col1_val[2:].strip()
+            ws.cell(row_idx, 1, col1_val)
+            log(f"{sheet_name}: Target existed but was commented. Uncommented row {row_idx}.")
+            return True, row_idx
+        else:
+            log(f"{sheet_name}: Target already exists and is active.")
+            return True, row_idx
+    return False, None
+
 def copy_and_rename_file(src_path, dest_path, old_name, new_name, root_path, step_index):
     """Copies a file and does a raw string replacement of old_name to new_name in its contents."""
     if not os.path.exists(src_path):
@@ -279,11 +311,16 @@ def clone_workspace3_to_design(proj_root, step_index):
     design_dir = os.path.join(proj_root, r"design\DesignData")
     workspace3 = os.path.join(design_dir, "WorkSpcae3")
     workspace_design = os.path.join(design_dir, WORKSPACE_NAME)
-    
+
     if not os.path.exists(workspace3):
         log(f"Error: WorkSpcae3 not found at {workspace3}")
         return False
-        
+
+    if os.path.normcase(os.path.abspath(workspace3)) == os.path.normcase(os.path.abspath(workspace_design)):
+        log("Error: Active workspace is WorkSpcae3 itself. Refusing to delete/clone WorkSpcae3 onto itself — "
+            "select WorkSpcae_Design, WorkSpcae_NE, or WorkSpcae_FC as the active workspace instead.")
+        return False
+
     try:
         # 1. SVN Update design directory
         log("Running SVN Update on DesignData...")
@@ -323,6 +360,49 @@ def clone_workspace3_to_design(proj_root, step_index):
         log(f"Exception during Clone_2_Design: {e}")
         traceback.print_exc()
         return False
+
+def detect_frozen_formula_risks(src_path, src_evt, wb_data_only):
+    """
+    Find formula cells in the SOURCE workbook whose cached/frozen result does not
+    contain src_evt as text. clone_event_excel loads the target with data_only=True
+    (required so coder_convert reads plain values, not formulas), which freezes every
+    formula to whatever it last computed in the SOURCE file. The blanket src->tgt
+    string-replace that follows only "fixes" a frozen cell by coincidence, when its
+    frozen text happens to contain the source event name. Anything that doesn't is a
+    silent risk: it ships the source's stale value with nothing to catch it.
+
+    wb_data_only is the already-open, data_only=True copy of the target (pre-replace)
+    — same cell coordinates as the source, since it's a fresh, unmodified copy at this
+    point in clone_event_excel. Returns a list of (sheet_name, coordinate, formula, cached_value).
+    """
+    import openpyxl
+
+    risky = []
+    try:
+        wb_formulas = openpyxl.load_workbook(src_path, data_only=False)
+    except Exception as e:
+        log(f"Warning: could not re-open {os.path.basename(src_path)} to check for formula risks: {e}")
+        return risky
+
+    src_variants = [src_evt.lower(), src_evt.capitalize(), src_evt.upper()]
+
+    for ws_name in wb_formulas.sheetnames:
+        if ws_name not in wb_data_only.sheetnames:
+            continue
+        ws_f = wb_formulas[ws_name]
+        ws_v = wb_data_only[ws_name]
+        for row in ws_f.iter_rows():
+            for cell in row:
+                v = cell.value
+                if isinstance(v, str) and v.startswith('='):
+                    cached = ws_v.cell(cell.row, cell.column).value
+                    cached_str = str(cached) if cached is not None else ""
+                    if not any(variant in cached_str for variant in src_variants):
+                        risky.append((ws_name, cell.coordinate, v, cached_str))
+
+    wb_formulas.close()
+    return risky
+
 
 def clone_event_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
     """Step 6: Clone Event Excel configuration tables."""
@@ -380,7 +460,18 @@ def clone_event_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
             # Use data_only=True to ensure formulas (especially for IDs) are converted to static values
             # This is critical for coder_convert to read the IDs correctly.
             wb = openpyxl.load_workbook(tgt_path, data_only=True)
-            
+
+            # data_only=True freezes every formula to its cached SOURCE-computed value.
+            # The string-replace pass below only "fixes" a frozen formula by coincidence,
+            # when its cached result happens to contain the source event name as text.
+            # Flag anything that doesn't — those ship the source's stale value silently.
+            formula_risks = detect_frozen_formula_risks(src_path, src_evt, wb)
+            if formula_risks:
+                log(f"WARNING: {len(formula_risks)} formula cell(s) in {tgt_xlsx} were frozen to a value "
+                    f"that does not contain '{src_evt}' — the rename below can't fix these, check manually:")
+                for sheet_name, coord, formula, cached_val in formula_risks:
+                    log(f"  [{sheet_name}!{coord}] formula={formula!r} frozen_value={cached_val!r}")
+
             replacements = [
                 (src_evt.lower(), tgt_evt.lower()),
                 (src_evt.capitalize(), tgt_evt.capitalize()),
@@ -488,14 +579,834 @@ def clone_event_descriptors(proj_root, src_evt, tgt_evt, root_path, step_index):
         traceback.print_exc()
         return False
 
+def cleanup_orphaned_convert_entries(design_base, root_path, step_index):
+    """
+    Audit convert.json's const_event.json ExcelSheets list against the design folder.
+    Any event registered there whose <name>.xlsx no longer exists in design/ is stale
+    (the Excel was deleted/moved but the config references were never cleaned up) —
+    remove that event from both convert.json and convert_layout.lua so coder_convert
+    doesn't choke on a reference to a file that isn't there.
+    """
+    import json
+    import re
+
+    convert_json_path = os.path.join(design_base, r"descriptor\app_client\convert.json")
+    convert_layout_path = os.path.join(design_base, r"PostConvert\Lua\convert_layout.lua")
+    design_dir = os.path.join(design_base, "design")
+
+    if not os.path.exists(convert_json_path) or not os.path.exists(convert_layout_path):
+        return True  # Let the caller's own existence checks handle this; nothing to audit yet.
+
+    try:
+        with open(convert_json_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        const_event_dir = None
+        for director in data.get("Directors", []):
+            if director.get("FileName") == "const_event.json":
+                const_event_dir = director
+                break
+
+        if not const_event_dir:
+            return True
+
+        sheets = const_event_dir.get("ExcelSheets", [])
+        orphaned = [
+            s.get("ExcelName") for s in sheets
+            if s.get("ExcelName") and not os.path.exists(os.path.join(design_dir, f"{s.get('ExcelName')}.xlsx"))
+        ]
+
+        if not orphaned:
+            log("convert.json/convert_layout.lua audit: no orphaned event references found.")
+            return True
+
+        log(f"convert.json/convert_layout.lua audit: found {len(orphaned)} orphaned event(s) with no Excel file in design/: {orphaned}")
+
+        # --- Remove from convert.json ---
+        backup_json = convert_json_path + ".bak"
+        shutil.copy2(convert_json_path, backup_json)
+        record_file_creation(root_path, step_index, backup_json)
+
+        const_event_dir["ExcelSheets"] = [s for s in sheets if s.get("ExcelName") not in orphaned]
+        with open(convert_json_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        log(f"convert.json: removed {len(orphaned)} orphaned entr{'y' if len(orphaned) == 1 else 'ies'}.")
+
+        # --- Remove matching lines from convert_layout.lua ---
+        backup_lua = convert_layout_path + ".bak"
+        shutil.copy2(convert_layout_path, backup_lua)
+        record_file_creation(root_path, step_index, backup_lua)
+
+        with open(convert_layout_path, 'r', encoding='utf-8') as f:
+            lines = f.read().split('\n')
+
+        orphan_pattern = re.compile(r'json\s*=\s*"(?:' + '|'.join(re.escape(o) for o in orphaned) + r')_')
+        kept_lines = [ln for ln in lines if not orphan_pattern.search(ln)]
+        removed_count = len(lines) - len(kept_lines)
+
+        with open(convert_layout_path, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(kept_lines))
+        log(f"convert_layout.lua: removed {removed_count} orphaned line(s) for {orphaned}.")
+
+        return True
+    except Exception as e:
+        log(f"Exception during orphaned convert entry cleanup: {e}")
+        traceback.print_exc()
+        return False
+
+def parse_convert_layout_suffix_map(content, restrict_prefix=None):
+    """
+    Scan convert_layout.lua-style content and build:
+      section_end_lines: section_name -> last line index containing an entry
+      suffix_to_info:    file_suffix   -> (section_name, merge_suffix, sample_line)
+
+    If restrict_prefix is given (e.g. "blocks2508"), only entries whose merge_as
+    value starts with "<restrict_prefix>." are considered — used when scanning a
+    historical snapshot that may contain many other events besides the one we
+    actually care about.
+    """
+    import re as _re
+
+    lines = content.split('\n')
+    current_section = None
+    section_end_lines = {}
+    suffix_to_info = {}
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        section_match = _re.match(r'(\w+)\s*=\s*\{', stripped)
+        if section_match:
+            current_section = section_match.group(1)
+
+        entry_match = _re.match(r'.*json\s*=\s*"([^"]+)".*merge_as\s*=\s*"([^"]+)"', stripped)
+        if entry_match and current_section and not stripped.startswith('--'):
+            json_name = entry_match.group(1)
+            merge_as = entry_match.group(2)
+
+            dot_idx = merge_as.find('.')
+            if dot_idx > 0:
+                evt_prefix = merge_as[:dot_idx]
+                merge_suffix = merge_as[dot_idx + 1:]
+
+                if restrict_prefix and evt_prefix.lower() != restrict_prefix.lower():
+                    continue
+
+                if json_name.startswith(evt_prefix + '_'):
+                    file_suffix = json_name[len(evt_prefix) + 1:]
+                else:
+                    file_suffix = json_name
+
+                # Section end lines should reflect entries actually kept (matching
+                # restrict_prefix when set), not every event's last line in the file.
+                section_end_lines[current_section] = i
+
+                if file_suffix not in suffix_to_info:
+                    suffix_to_info[file_suffix] = (current_section, merge_suffix, line)
+
+    return section_end_lines, suffix_to_info
+
+
+def get_svn_log_revisions(file_path, limit=60):
+    """Return revision numbers (newest first) that touched file_path, via `svn log -q`."""
+    import subprocess
+    import re as _re
+
+    try:
+        result = subprocess.run(
+            ["svn", "log", "-q", "-l", str(limit), os.path.basename(file_path)],
+            cwd=os.path.dirname(file_path), shell=True, capture_output=True, text=True, timeout=60
+        )
+    except Exception as e:
+        log(f"svn log failed to run: {e}")
+        return []
+
+    if result.returncode != 0:
+        log(f"svn log error: {result.stderr.strip()}")
+        return []
+
+    return _re.findall(r'^r(\d+)\s', result.stdout, flags=_re.MULTILINE)
+
+
+def svn_cat_revision(file_path, revision):
+    """Return file_path's content at a specific SVN revision, or None on failure."""
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["svn", "cat", "-r", str(revision), os.path.basename(file_path)],
+            cwd=os.path.dirname(file_path), shell=True, capture_output=True, text=True,
+            timeout=30, encoding='utf-8', errors='ignore'
+        )
+    except Exception as e:
+        log(f"svn cat -r {revision} failed to run: {e}")
+        return None
+
+    if result.returncode != 0:
+        return None
+    return result.stdout
+
+
+def svn_cat_revision_bytes(file_path, revision):
+    """Same as svn_cat_revision but returns raw bytes — required for binary files like
+    .xlsx (text=True mode would corrupt the zip container)."""
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["svn", "cat", "-r", str(revision), os.path.basename(file_path)],
+            cwd=os.path.dirname(file_path), shell=True, capture_output=True,
+            timeout=60
+        )
+    except Exception as e:
+        log(f"svn cat -r {revision} (binary) failed to run: {e}")
+        return None
+
+    if result.returncode != 0:
+        return None
+    return result.stdout
+
+
+def get_svn_revisions_in_date_range(file_path, center_date_str, days_before=45, days_after=120):
+    """
+    Return revision numbers (newest first) that touched file_path within a date
+    window bracketing center_date_str (the source event's own start_time).
+
+    This is the whole point: a source event from 11 months ago can sit 400+
+    revisions back on a file that's touched roughly every 2 weeks. A blind
+    HEAD-relative scan either has to check hundreds of revisions (slow — each
+    `svn cat` is a network round trip) or caps out and misses it entirely.
+    Bracketing by the event's own known active dates instead finds it in a
+    couple dozen revisions regardless of how long ago it ran.
+    """
+    import subprocess
+    import re as _re
+    from datetime import datetime, timedelta
+
+    try:
+        center = datetime.strptime(center_date_str.strip()[:10], "%Y-%m-%d")
+    except Exception:
+        return None  # Unparseable/missing hint — caller falls back to a revision-count scan.
+
+    range_start = (center - timedelta(days=days_before)).strftime("%Y-%m-%d")
+    range_end = (center + timedelta(days=days_after)).strftime("%Y-%m-%d")
+
+    try:
+        result = subprocess.run(
+            ["svn", "log", "-q", "-r", f"{{{range_start}}}:{{{range_end}}}", os.path.basename(file_path)],
+            cwd=os.path.dirname(file_path), shell=True, capture_output=True, text=True, timeout=60
+        )
+    except Exception as e:
+        log(f"svn log (date range) failed to run: {e}")
+        return None
+
+    if result.returncode != 0:
+        log(f"svn log (date range) error: {result.stderr.strip()}")
+        return None
+
+    revs = _re.findall(r'^r(\d+)\s', result.stdout, flags=_re.MULTILINE)
+    return list(reversed(revs))  # svn log over an ascending date range returns oldest -> newest
+
+
+def find_source_event_suffix_map_from_svn(convert_layout_path, src_lower, hint_date=None, limit=60):
+    """
+    Look through convert_layout.lua's SVN history for the most recent revision
+    that actually contains entries for src_lower (e.g. "blocks2509").
+    Returns (suffix_to_info, revision) for that revision, or (None, None) if SVN
+    isn't usable or no matching revision was found.
+
+    When hint_date (the source event's own start_time) is available, the search
+    is bounded to a date window around it — see get_svn_revisions_in_date_range.
+    Falls back to a bare HEAD-relative revision-count scan only if no hint_date
+    was given or it couldn't be parsed; that fallback is a best-effort last
+    resort, not reliable for events more than a few months old.
+    """
+    revisions = None
+    used_date_bracket = False
+
+    if hint_date:
+        revisions = get_svn_revisions_in_date_range(convert_layout_path, hint_date)
+        if revisions:
+            used_date_bracket = True
+            log(f"SVN history lookup: date-bracketed search around {hint_date.strip()[:10]} "
+                f"found {len(revisions)} revision(s) to check (instead of a blind HEAD scan).")
+
+    if not revisions:
+        if hint_date:
+            log("SVN history lookup: date-bracketed search found nothing usable — falling back to a HEAD-relative scan.")
+        revisions = get_svn_log_revisions(convert_layout_path, limit=limit)
+
+    if not revisions:
+        log(f"SVN history lookup: no revision history available for {os.path.basename(convert_layout_path)}.")
+        return None, None
+
+    if not used_date_bracket:
+        log(f"SVN history lookup: scanning the last {len(revisions)} revision(s) of "
+            f"{os.path.basename(convert_layout_path)} for '{src_lower}_' entries (no reliable date hint available)...")
+
+    for rev in revisions:
+        content = svn_cat_revision(convert_layout_path, rev)
+        if content is None:
+            continue
+        if f'"{src_lower}_' not in content.lower():
+            continue
+
+        _, suffix_map = parse_convert_layout_suffix_map(content, restrict_prefix=src_lower)
+        if suffix_map:
+            log(f"SVN history lookup: found {src_lower} entries at r{rev} ({len(suffix_map)} suffix pattern(s)).")
+            return suffix_map, rev
+
+    log(f"SVN history lookup: no revision within the {len(revisions)} checked contained active '{src_lower}_' entries.")
+    return None, None
+
+
+# ---------------- Local cache for convert_layout.lua source-event lookups ----------------
+#
+# The expensive part of the above is walking SVN history. But the common case (reopening
+# the previous latest event) almost never needs it: that event's entries are usually still
+# live in the local working copy right now — reading the file that's already on disk costs
+# nothing. The cache only matters for events whose entries have already rolled off the live
+# file (closed + cleaned up), and even then only needs to pay the SVN cost once per event.
+
+def convert_layout_cache_path(log_dir):
+    return os.path.join(log_dir, f"convert_layout_cache_{WORKSPACE_NAME}.json")
+
+
+def load_convert_layout_cache(log_dir):
+    p = convert_layout_cache_path(log_dir)
+    if os.path.exists(p):
+        try:
+            with open(p, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+
+def save_convert_layout_cache(log_dir, cache):
+    p = convert_layout_cache_path(log_dir)
+    with open(p, 'w', encoding='utf-8') as f:
+        json.dump(cache, f, indent=2, ensure_ascii=False)
+
+
+def _cache_timestamp():
+    from datetime import datetime
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def get_suffix_map_for_source_event(convert_layout_path, src_lower, hint_date, log_dir):
+    """
+    Resolve the section/merge_as suffix map for src_lower with the minimum SVN cost:
+      1. If src_lower's entries are still live in the current local file, use them
+         directly (zero network cost) and refresh the cache with them — this is the
+         common "reopen the latest event" path.
+      2. Otherwise, if previously cached, use the cached result (zero cost).
+      3. Otherwise, run the full SVN-history search (expensive) and cache the result
+         so the next reopen of this same event is instant.
+    Returns (suffix_map, source_label) — source_label is for logging/transparency,
+    never for logic branching.
+    """
+    with open(convert_layout_path, 'r', encoding='utf-8') as f:
+        live_content = f.read()
+
+    _, live_map = parse_convert_layout_suffix_map(live_content, restrict_prefix=src_lower)
+    if live_map:
+        cache = load_convert_layout_cache(log_dir)
+        cache[src_lower] = {"suffix_map": live_map, "source": "live", "cached_at": _cache_timestamp()}
+        save_convert_layout_cache(log_dir, cache)
+        return live_map, f"current live file ({len(live_map)} pattern(s))"
+
+    cache = load_convert_layout_cache(log_dir)
+    cached_entry = cache.get(src_lower)
+    if cached_entry and cached_entry.get("suffix_map"):
+        return cached_entry["suffix_map"], f"local cache (from {cached_entry.get('source', '?')}, cached {cached_entry.get('cached_at', '?')})"
+
+    suffix_map, rev = find_source_event_suffix_map_from_svn(convert_layout_path, src_lower, hint_date=hint_date)
+    if suffix_map:
+        cache[src_lower] = {"suffix_map": suffix_map, "source": f"svn r{rev}", "cached_at": _cache_timestamp()}
+        save_convert_layout_cache(log_dir, cache)
+        return suffix_map, f"SVN history (r{rev}, freshly fetched and cached)"
+
+    return None, None
+
+
+def refresh_convert_layout_cache(proj_root, log_dir, event_names):
+    """
+    Manual 'Update from SVN' action. Re-verifies every event name given, plus
+    whatever's already cached, against the current live file first (free) and,
+    if not live, a fresh SVN-history search — updating the cache only where the
+    resolved data actually differs from what's cached. Never blindly overwrites.
+    """
+    convert_layout_path = os.path.join(proj_root, "design", "DesignData", WORKSPACE_NAME, "PostConvert", "Lua", "convert_layout.lua")
+    if not os.path.exists(convert_layout_path):
+        log(f"Error: convert_layout.lua not found at {convert_layout_path}")
+        return False
+
+    with open(convert_layout_path, 'r', encoding='utf-8') as f:
+        live_content = f.read()
+
+    cache = load_convert_layout_cache(log_dir)
+    all_names = sorted(set(n.lower() for n in event_names) | set(cache.keys()))
+
+    changed, unchanged, missing = [], [], []
+
+    for evt_lower in all_names:
+        _, live_map = parse_convert_layout_suffix_map(live_content, restrict_prefix=evt_lower)
+        if live_map:
+            prior = cache.get(evt_lower, {}).get("suffix_map")
+            if prior != live_map:
+                cache[evt_lower] = {"suffix_map": live_map, "source": "live", "cached_at": _cache_timestamp()}
+                changed.append(evt_lower)
+            else:
+                unchanged.append(evt_lower)
+            continue
+
+        fresh_map, rev = find_source_event_suffix_map_from_svn(convert_layout_path, evt_lower)
+        if fresh_map:
+            prior = cache.get(evt_lower, {}).get("suffix_map")
+            if prior != fresh_map:
+                cache[evt_lower] = {"suffix_map": fresh_map, "source": f"svn r{rev}", "cached_at": _cache_timestamp()}
+                changed.append(evt_lower)
+            else:
+                unchanged.append(evt_lower)
+        else:
+            missing.append(evt_lower)
+            log(f"Refresh: no data found for {evt_lower} — not live, and nothing in SVN history.")
+
+    save_convert_layout_cache(log_dir, cache)
+    log(f"Cache refresh complete: {len(changed)} updated {changed}, {len(unchanged)} unchanged, {len(missing)} not found {missing}.")
+    return True
+
+
+# ================================================================================
+# icon.xlsx / item.xlsx source-event data: same live -> cache -> SVN-history
+# pattern as convert_layout.lua, extended to three more data shapes:
+#   - icon_item's "活动物品" group (variable row count per event)
+#   - icon_event (checked via icon_备份 first, since that's a maintained in-repo
+#     archive — free, no SVN needed — before falling back to SVN history)
+#   - item.xlsx's 物品小/中/大ICON columns (7,8,9), which are only ever populated
+#     for events that were registered in convert.json/convert_layout.lua at the
+#     time — everything else has them blank and needs backfilling from the source.
+# ================================================================================
+
+def load_named_cache(log_dir, cache_name):
+    p = os.path.join(log_dir, f"{cache_name}_{WORKSPACE_NAME}.json")
+    if os.path.exists(p):
+        try:
+            with open(p, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+
+def save_named_cache(log_dir, cache_name, cache):
+    p = os.path.join(log_dir, f"{cache_name}_{WORKSPACE_NAME}.json")
+    with open(p, 'w', encoding='utf-8') as f:
+        json.dump(cache, f, indent=2, ensure_ascii=False)
+
+
+def _strip_event_name(value, evt_name):
+    """Normalize an alias/name by removing the event name in any case variant,
+    leaving a generic suffix comparable across events (e.g. 'Merge2606能量' -> '能量')."""
+    if not value or not evt_name:
+        return str(value or "").strip()
+    s = str(value)
+    for variant in [evt_name.upper(), evt_name.lower(), evt_name[0].upper() + evt_name[1:]]:
+        if variant:
+            s = s.replace(variant, "")
+    return s.strip()
+
+
+def find_icon_item_group_bounds(ws, group_marker="活动物品"):
+    """Locate the icon_item sheet's '// ...活动物品...' divider and the next divider
+    after it (e.g. '// BP相关...'). Returns (start_row, end_row_exclusive), or
+    (None, None) if the group marker isn't found."""
+    start = None
+    end = ws.max_row + 1
+    for r in range(1, ws.max_row + 1):
+        v = str(ws.cell(r, 1).value or "").strip()
+        if v.startswith("//"):
+            if group_marker in v:
+                start = r + 1
+            elif start is not None:
+                end = r
+                break
+    return start, end
+
+
+def extract_icon_item_group_rows(wb, evt_lower, group_marker="活动物品"):
+    """Return raw row value-lists within the icon_item group whose col1 mentions evt_lower."""
+    if "icon_item" not in wb.sheetnames:
+        return None
+    ws = wb["icon_item"]
+    start, end = find_icon_item_group_bounds(ws, group_marker)
+    if start is None:
+        return None
+    matched = []
+    for r in range(start, end):
+        v = str(ws.cell(r, 1).value or "")
+        if evt_lower in v.lower():
+            matched.append([ws.cell(r, c).value for c in range(1, ws.max_column + 1)])
+    return matched if matched else None
+
+
+def event_ever_registered_in_convert_json(icon_or_item_path, evt_lower, hint_date):
+    """
+    Cheap pre-check before the expensive icon.xlsx/item.xlsx binary SVN search:
+    has evt_lower EVER appeared in convert.json (current content, or its history)?
+
+    Every closed event checked so far with no convert.json history also had zero
+    icon_item/icon_event/item-icon data — the two are the same underlying fact
+    (this pipeline only started populating those fields once events started being
+    registered there). convert.json is small text, so `svn cat` per revision costs
+    ~6s instead of icon.xlsx's ~14min for a full binary scan. `svn log --diff`
+    looks cheaper on paper but the server-side diff computation timed out even on
+    this small file — plain `svn cat` per revision is what's actually fast here.
+
+    Returns True (proceed with the expensive search) if genuinely uncertain —
+    this is a time-saving skip, never a correctness gate, so it fails open.
+    """
+    import subprocess
+
+    design_base = os.path.dirname(os.path.dirname(icon_or_item_path))
+    convert_json_path = os.path.join(design_base, r"descriptor\app_client\convert.json")
+    if not os.path.exists(convert_json_path):
+        return True
+
+    try:
+        with open(convert_json_path, 'r', encoding='utf-8') as f:
+            if evt_lower in f.read().lower():
+                return True
+    except Exception:
+        return True
+
+    revisions = get_svn_revisions_in_date_range(convert_json_path, hint_date) if hint_date else None
+    if not revisions:
+        revisions = get_svn_log_revisions(convert_json_path, limit=30)
+    if not revisions:
+        return True  # Can't check — don't block a legitimate search.
+
+    for rev in revisions:
+        try:
+            result = subprocess.run(
+                ["svn", "cat", "-r", str(rev), os.path.basename(convert_json_path)],
+                cwd=os.path.dirname(convert_json_path), shell=True, capture_output=True, text=True,
+                timeout=30, encoding='utf-8', errors='ignore'
+            )
+        except Exception:
+            return True
+        if result.returncode == 0 and evt_lower in result.stdout.lower():
+            return True
+
+    return False
+
+
+def get_icon_item_rows_for_source(icon_path, src_lower, hint_date, log_dir):
+    """
+    (rows, source_label) for src_lower's icon_item '活动物品' group rows.
+    Tier 1: live file (free). Tier 2: local cache (free). Tier 3: SVN history
+    (date-bracketed by hint_date when available).
+    """
+    import openpyxl as _oxl
+    import io as _io
+
+    wb_live = _oxl.load_workbook(icon_path, data_only=True)
+    live_rows = extract_icon_item_group_rows(wb_live, src_lower)
+    if live_rows:
+        cache = load_named_cache(log_dir, "icon_item_cache")
+        cache[src_lower] = {"rows": live_rows, "source": "live", "cached_at": _cache_timestamp()}
+        save_named_cache(log_dir, "icon_item_cache", cache)
+        return live_rows, f"current live file ({len(live_rows)} row(s))"
+
+    cache = load_named_cache(log_dir, "icon_item_cache")
+    cached_entry = cache.get(src_lower)
+    if cached_entry and cached_entry.get("rows"):
+        return cached_entry["rows"], f"local cache (from {cached_entry.get('source', '?')}, cached {cached_entry.get('cached_at', '?')})"
+
+    if not event_ever_registered_in_convert_json(icon_path, src_lower, hint_date):
+        log(f"icon_item: {src_lower} never appears in convert.json (current or history) — skipping the expensive "
+            f"icon.xlsx SVN search, since this pipeline never populates 活动物品 rows for events outside that set.")
+        return None, None
+
+    revisions = get_svn_revisions_in_date_range(icon_path, hint_date) if hint_date else None
+    if not revisions:
+        revisions = get_svn_log_revisions(icon_path, limit=60)
+    if not revisions:
+        return None, None
+
+    for rev in revisions:
+        content_bytes = svn_cat_revision_bytes(icon_path, rev)
+        if content_bytes is None:
+            continue
+        try:
+            wb_hist = _oxl.load_workbook(_io.BytesIO(content_bytes), data_only=True)
+        except Exception:
+            continue
+        rows = extract_icon_item_group_rows(wb_hist, src_lower)
+        if rows:
+            cache[src_lower] = {"rows": rows, "source": f"svn r{rev}", "cached_at": _cache_timestamp()}
+            save_named_cache(log_dir, "icon_item_cache", cache)
+            return rows, f"SVN history (r{rev}, freshly fetched and cached)"
+
+    return None, None
+
+
+def get_icon_event_rows_for_source(icon_path, src_lower, hint_date, log_dir):
+    """
+    (rows, source_label) for src_lower's icon_event rows.
+    Tier 1a: icon_备份 (a maintained in-repo archive — free). Tier 1b: icon_event
+    itself, if the source is still currently active. Tier 2: local cache.
+    Tier 3: SVN history of the icon_event sheet.
+    """
+    import openpyxl as _oxl
+    import io as _io
+
+    wb_live = _oxl.load_workbook(icon_path, data_only=True)
+
+    def _rows_from_sheet(ws, match_all_cols):
+        rows = []
+        for r in range(2, ws.max_row + 1):
+            c1 = str(ws.cell(r, 1).value or "").lower()
+            if match_all_cols:
+                c2 = str(ws.cell(r, 2).value or "").lower()
+                c3 = str(ws.cell(r, 3).value or "").lower()
+                hit = src_lower in c1 or src_lower in c2 or src_lower in c3
+            else:
+                hit = src_lower in c1
+            if hit:
+                rows.append([ws.cell(r, c).value for c in range(1, ws.max_column + 1)])
+        return rows
+
+    if "icon_备份" in wb_live.sheetnames:
+        rows = _rows_from_sheet(wb_live["icon_备份"], match_all_cols=True)
+        if rows:
+            cache = load_named_cache(log_dir, "icon_event_cache")
+            cache[src_lower] = {"rows": rows, "source": "icon_备份 (live)", "cached_at": _cache_timestamp()}
+            save_named_cache(log_dir, "icon_event_cache", cache)
+            return rows, f"icon_备份 backup sheet ({len(rows)} row(s))"
+
+    if "icon_event" in wb_live.sheetnames:
+        rows = _rows_from_sheet(wb_live["icon_event"], match_all_cols=False)
+        if rows:
+            cache = load_named_cache(log_dir, "icon_event_cache")
+            cache[src_lower] = {"rows": rows, "source": "icon_event (live)", "cached_at": _cache_timestamp()}
+            save_named_cache(log_dir, "icon_event_cache", cache)
+            return rows, f"icon_event active sheet ({len(rows)} row(s))"
+
+    cache = load_named_cache(log_dir, "icon_event_cache")
+    cached_entry = cache.get(src_lower)
+    if cached_entry and cached_entry.get("rows"):
+        return cached_entry["rows"], f"local cache (from {cached_entry.get('source', '?')}, cached {cached_entry.get('cached_at', '?')})"
+
+    # Weaker signal here than for icon_item/item_icon — icon_备份 already independently
+    # covers most historical events regardless of convert.json status, so reaching this
+    # point at all is rarer. Still worth skipping when we're confident, since the cost
+    # is the same expensive binary scan either way.
+    if not event_ever_registered_in_convert_json(icon_path, src_lower, hint_date):
+        log(f"icon_event: {src_lower} never appears in convert.json (current or history) and wasn't in icon_备份 "
+            f"or the live icon_event sheet — skipping the expensive SVN search.")
+        return None, None
+
+    revisions = get_svn_revisions_in_date_range(icon_path, hint_date) if hint_date else None
+    if not revisions:
+        revisions = get_svn_log_revisions(icon_path, limit=60)
+    if not revisions:
+        return None, None
+
+    for rev in revisions:
+        content_bytes = svn_cat_revision_bytes(icon_path, rev)
+        if content_bytes is None:
+            continue
+        try:
+            wb_hist = _oxl.load_workbook(_io.BytesIO(content_bytes), data_only=True)
+        except Exception:
+            continue
+        if "icon_event" not in wb_hist.sheetnames:
+            continue
+        rows = _rows_from_sheet(wb_hist["icon_event"], match_all_cols=False)
+        if rows:
+            cache[src_lower] = {"rows": rows, "source": f"svn r{rev} (icon_event)", "cached_at": _cache_timestamp()}
+            save_named_cache(log_dir, "icon_event_cache", cache)
+            return rows, f"SVN history (r{rev}, freshly fetched and cached)"
+
+    return None, None
+
+
+def get_item_icon_columns_for_source(item_path, src_evt, log_dir, hint_date):
+    """
+    {suffix: (icon7, icon8, icon9)} for src_evt's items, keyed by the alias with the
+    event name stripped (so it's comparable to a differently-named target event).
+    Tier 1: live file. Tier 2: cache. Tier 3: SVN history.
+    """
+    import openpyxl as _oxl
+    import io as _io
+    src_lower = src_evt.lower()
+
+    def _extract(wb):
+        if "item" not in wb.sheetnames:
+            return None
+        ws = wb["item"]
+        result = {}
+        for r in range(2, ws.max_row + 1):
+            alias = str(ws.cell(r, 2).value or "")
+            if src_lower in alias.lower():
+                icon7, icon8, icon9 = ws.cell(r, 7).value, ws.cell(r, 8).value, ws.cell(r, 9).value
+                if icon7 or icon8 or icon9:
+                    result[_strip_event_name(alias, src_evt)] = (icon7, icon8, icon9)
+        return result if result else None
+
+    wb_live = _oxl.load_workbook(item_path, data_only=True)
+    live_map = _extract(wb_live)
+    if live_map:
+        cache = load_named_cache(log_dir, "item_icon_cache")
+        cache[src_lower] = {"map": live_map, "source": "live", "cached_at": _cache_timestamp()}
+        save_named_cache(log_dir, "item_icon_cache", cache)
+        return live_map, f"current live file ({len(live_map)} item(s))"
+
+    cache = load_named_cache(log_dir, "item_icon_cache")
+    cached_entry = cache.get(src_lower)
+    if cached_entry and cached_entry.get("map"):
+        return cached_entry["map"], f"local cache (from {cached_entry.get('source', '?')}, cached {cached_entry.get('cached_at', '?')})"
+
+    if not event_ever_registered_in_convert_json(item_path, src_lower, hint_date):
+        log(f"item_icon_backfill: {src_lower} never appears in convert.json (current or history) — skipping the "
+            f"expensive item.xlsx SVN search, since icon columns are only ever populated for registered events.")
+        return None, None
+
+    revisions = get_svn_revisions_in_date_range(item_path, hint_date) if hint_date else None
+    if not revisions:
+        revisions = get_svn_log_revisions(item_path, limit=60)
+    if not revisions:
+        return None, None
+
+    for rev in revisions:
+        content_bytes = svn_cat_revision_bytes(item_path, rev)
+        if content_bytes is None:
+            continue
+        try:
+            wb_hist = _oxl.load_workbook(_io.BytesIO(content_bytes), data_only=True)
+        except Exception:
+            continue
+        hist_map = _extract(wb_hist)
+        if hist_map:
+            cache[src_lower] = {"map": hist_map, "source": f"svn r{rev}", "cached_at": _cache_timestamp()}
+            save_named_cache(log_dir, "item_icon_cache", cache)
+            return hist_map, f"SVN history (r{rev}, freshly fetched and cached)"
+
+    return None, None
+
+
+def backfill_item_icon_columns(proj_root, src_evt, tgt_evt, log_dir):
+    """
+    Populate the target event's item rows' 物品小/中/大ICON columns (7,8,9) from the
+    source event's own values (live/cache/SVN) — these columns are only ever populated
+    for events that were registered in convert.json/convert_layout.lua at clone time,
+    so a source that wasn't active back then leaves the target's clone blank otherwise.
+    """
+    import openpyxl
+    import stat as _stat
+
+    item_path = os.path.join(proj_root, "design", "DesignData", WORKSPACE_NAME, "design", "item.xlsx")
+    if not os.path.exists(item_path):
+        return True
+
+    tgt_lower = tgt_evt.lower()
+    src_lower = src_evt.lower()
+    tgt_pascal = tgt_evt[0].upper() + tgt_evt[1:] if tgt_evt else tgt_evt
+    src_pascal = src_evt[0].upper() + src_evt[1:] if src_evt else src_evt
+
+    def swap_name(value):
+        if value is None:
+            return None
+        s = str(value)
+        s = s.replace(src_evt.upper(), tgt_evt.upper())
+        s = s.replace(src_lower, tgt_lower)
+        s = s.replace(src_pascal, tgt_pascal)
+        s = s.replace(src_evt, tgt_evt)
+        return s
+
+    extra = load_extra_args(log_dir)
+    src_start_time = extra.get("src_start_time", "")
+
+    src_icon_map, src_label = get_item_icon_columns_for_source(item_path, src_evt, log_dir, src_start_time)
+    if not src_icon_map:
+        log(f"item_icon_backfill: no icon column data found anywhere for {src_evt} (live, cache, or SVN history).")
+        return True
+
+    os.chmod(item_path, _stat.S_IWRITE | _stat.S_IREAD)
+    wb = openpyxl.load_workbook(item_path)
+    if "item" not in wb.sheetnames:
+        return True
+    ws = wb["item"]
+
+    filled = 0
+    for r in range(2, ws.max_row + 1):
+        alias = str(ws.cell(r, 2).value or "")
+        if tgt_lower not in alias.lower():
+            continue
+        if ws.cell(r, 7).value or ws.cell(r, 8).value or ws.cell(r, 9).value:
+            continue  # already populated — don't clobber real data
+        suffix = _strip_event_name(alias, tgt_evt)
+        if suffix in src_icon_map:
+            icon7, icon8, icon9 = src_icon_map[suffix]
+            if icon7: ws.cell(r, 7, swap_name(icon7))
+            if icon8: ws.cell(r, 8, swap_name(icon8))
+            if icon9: ws.cell(r, 9, swap_name(icon9))
+            filled += 1
+
+    if filled:
+        wb.save(item_path)
+        log(f"item_icon_backfill: Populated icon columns for {filled} item(s) in {tgt_evt}, sourced from {src_label}.")
+    else:
+        log(f"item_icon_backfill: No item rows needed backfilling for {tgt_evt}.")
+    return True
+
+
+def refresh_icon_and_item_caches(proj_root, log_dir, event_names):
+    """Pre-populate icon_item / icon_event / item_icon caches for the given event
+    names (e.g. each type's current latest event) — same manual 'Update from SVN'
+    role as refresh_convert_layout_cache, extended to these three data shapes."""
+    icon_path = os.path.join(proj_root, "design", "DesignData", WORKSPACE_NAME, "design", "icon.xlsx")
+    item_path = os.path.join(proj_root, "design", "DesignData", WORKSPACE_NAME, "design", "item.xlsx")
+
+    stats = {}
+    for evt in event_names:
+        evt_lower = evt.lower()
+        icon_item_rows, icon_item_label = get_icon_item_rows_for_source(icon_path, evt_lower, None, log_dir)
+        icon_event_rows, icon_event_label = get_icon_event_rows_for_source(icon_path, evt_lower, None, log_dir)
+        item_icon_map, item_icon_label = get_item_icon_columns_for_source(item_path, evt, log_dir, None)
+
+        stats[evt_lower] = {
+            "icon_item": {"count": len(icon_item_rows) if icon_item_rows else 0, "source": icon_item_label},
+            "icon_event": {"count": len(icon_event_rows) if icon_event_rows else 0, "source": icon_event_label},
+            "item_icon": {"count": len(item_icon_map) if item_icon_map else 0, "source": item_icon_label},
+        }
+        log(f"Cache warm [{evt_lower}]: icon_item={stats[evt_lower]['icon_item']['count']} "
+            f"icon_event={stats[evt_lower]['icon_event']['count']} "
+            f"item_icon={stats[evt_lower]['item_icon']['count']}")
+
+    return stats
+
+
 def inject_convert_references(proj_root, src_evt, tgt_evt, root_path, step_index):
     """Step 8: Modify convert_layout.lua and convert.json to register the new event."""
     import json
-    
+
     design_base = os.path.join(proj_root, os.path.join("design", "DesignData", WORKSPACE_NAME))
     convert_json_path = os.path.join(design_base, r"descriptor\app_client\convert.json")
     convert_layout_path = os.path.join(design_base, r"PostConvert\Lua\convert_layout.lua")
-    
+
+    # Audit existing entries before registering the new event — remove anything whose
+    # Excel file no longer exists in design/, so stale references don't break coder_convert.
+    if not cleanup_orphaned_convert_entries(design_base, root_path, step_index):
+        return False
+
+    # The source event's own start_time (passed by the caller as src_start_time in
+    # extra_args.json) lets the SVN-history lookup below bracket its search by date
+    # instead of blindly walking back from HEAD — see find_source_event_suffix_map_from_svn.
+    extra = load_extra_args(root_path)
+    src_start_time = extra.get("src_start_time", "")
+
     src_lower = src_evt.lower()
     tgt_lower = tgt_evt.lower()
     
@@ -616,73 +1527,56 @@ def inject_convert_references(proj_root, src_evt, tgt_evt, root_path, step_index
                 
                 log(f"Read {len(tgt_filenames)} FileNames from target _convert.json(s).")
                 
-                # Build a lookup: for each existing entry in convert_layout.lua,
-                # map the suffix (FileName minus event prefix) to (section, merge_as_suffix)
-                # We parse the entire lua to understand sections and their entries
-                lines = content.split('\n')
-                
-                # Identify which section each line belongs to
-                current_section = None
-                section_end_lines = {}  # section -> last line index with an entry
-                suffix_to_info = {}     # suffix -> (section, merge_as_suffix, sample_line)
-                
-                for i, line in enumerate(lines):
-                    stripped = line.strip()
-                    # Detect section headers like "default_map = {"
-                    section_match = re.match(r'(\w+)\s*=\s*\{', stripped)
-                    if section_match:
-                        current_section = section_match.group(1)
-                    
-                    # Detect json entries
-                    entry_match = re.match(r'.*json\s*=\s*"([^"]+)".*merge_as\s*=\s*"([^"]+)"', stripped)
-                    if entry_match and current_section and not stripped.startswith('--'):
-                        json_name = entry_match.group(1)  # e.g., "blocks2601_scene.json"
-                        merge_as = entry_match.group(2)   # e.g., "blocks2601.scene"
-                        
-                        # Track section end lines
-                        section_end_lines[current_section] = i
-                        
-                        # Extract the suffix: strip any known event prefix
-                        # Try to find the event name by matching against merge_as prefix
-                        dot_idx = merge_as.find('.')
-                        if dot_idx > 0:
-                            evt_prefix = merge_as[:dot_idx]  # e.g., "blocks2601"
-                            merge_suffix = merge_as[dot_idx+1:]  # e.g., "scene"
-                            
-                            # The json filename suffix: strip event prefix + underscore + .json
-                            if json_name.startswith(evt_prefix + '_'):
-                                file_suffix = json_name[len(evt_prefix)+1:]  # e.g., "scene.json"
-                            else:
-                                file_suffix = json_name
-                            
-                            # Store: file_suffix -> (section, merge_suffix, line_template)
-                            if file_suffix not in suffix_to_info:
-                                suffix_to_info[file_suffix] = (current_section, merge_suffix, line)
-                
-                log(f"Built suffix lookup with {len(suffix_to_info)} known patterns.")
-                
+                # Preferred source: the source event's OWN placement — resolved via the
+                # local cache first, falling back to SVN history only if genuinely needed.
+                # See get_suffix_map_for_source_event for the live-file / cache / SVN order.
+                history_suffix_map, history_source_label = get_suffix_map_for_source_event(convert_layout_path, src_lower, src_start_time, root_path)
+
+                # Fallback source: whatever's currently in the live file, for any
+                # suffix history didn't cover (unknown source, no SVN, new file type, etc).
+                section_end_lines, current_suffix_map = parse_convert_layout_suffix_map(content)
+
+                suffix_to_info = dict(current_suffix_map)
+                if history_suffix_map:
+                    suffix_to_info.update(history_suffix_map)  # history wins on overlap
+                    # History entries carry a section that may not exist in the CURRENT
+                    # file yet (e.g. the source's section got removed since). Only trust
+                    # a history-provided section if it's actually present today; otherwise
+                    # the insertion fallback below drops to default_map.
+                log(f"Suffix lookup: {len(current_suffix_map)} pattern(s) from current file, "
+                    f"{len(history_suffix_map) if history_suffix_map else 0} pattern(s) from {src_lower}'s own data"
+                    f"{f' — {history_source_label}' if history_source_label else ''}.")
+
                 # Now generate entries for each target FileName
                 # Group by section for insertion
                 section_entries = {}  # section -> list of new lines
-                
+                resolved_from_history = 0
+
                 for fn in tgt_filenames:
+                    # Merge events: <tgt>_machineItem.json is handled separately below by
+                    # update_merge_item_to_machine_slot (single-slot replace, not append).
+                    if tgt_lower.startswith("merge") and fn == f"{tgt_lower}_machineItem.json":
+                        continue
+
                     # Derive the file suffix: strip target event prefix
                     if fn.startswith(tgt_lower + '_'):
                         file_suffix = fn[len(tgt_lower)+1:]  # e.g., "scene.json"
                     else:
                         file_suffix = fn
-                    
-                    # Look up the suffix in our mapping
+
+                    # Look up the suffix in our mapping (SVN history first, then current-file pattern)
                     if file_suffix in suffix_to_info:
                         section, merge_suffix, sample_line = suffix_to_info[file_suffix]
+                        if history_suffix_map and file_suffix in history_suffix_map:
+                            resolved_from_history += 1
                     else:
                         # Fallback: use default_map, derive merge_suffix from file_suffix
                         section = "default_map"
                         merge_suffix = file_suffix.replace('.json', '')
-                    
+
                     merge_as = f"{tgt_lower}.{merge_suffix}"
                     new_line = f'        {{json = "{fn}", merge_as = "{merge_as}"}},'
-                    
+
                     if section not in section_entries:
                         section_entries[section] = []
                     section_entries[section].append(new_line)
@@ -721,14 +1615,76 @@ def inject_convert_references(proj_root, src_evt, tgt_evt, root_path, step_index
                 with open(convert_layout_path, 'w', encoding='utf-8') as f:
                     f.write(content)
                 
-                log(f"convert_layout.lua: Injected {total_injected} total entries for {tgt_lower}.")
+                log(f"convert_layout.lua: Injected {total_injected} total entries for {tgt_lower} "
+                    f"({resolved_from_history} resolved from {src_lower}'s own data, {total_injected - resolved_from_history} from current-file pattern/default_map fallback).")
                 success_lua = True
     except Exception as e:
         log(f"Exception updating convert_layout.lua: {e}")
         traceback.print_exc()
         return False
-    
-    return success_json and success_lua
+
+    # Merge events only: convert_merge2406_item_to_machine is a separate, independent
+    # single-slot table — handled after the main entry logic regardless of which of the
+    # three cases above fired (it's not part of the accumulating default_map convention).
+    success_item_to_machine = True
+    if tgt_lower.startswith("merge"):
+        try:
+            success_item_to_machine = update_merge_item_to_machine_slot(convert_layout_path, tgt_lower, root_path, step_index)
+        except Exception as e:
+            log(f"Exception updating convert_merge2406_item_to_machine: {e}")
+            traceback.print_exc()
+            success_item_to_machine = False
+
+    return success_json and success_lua and success_item_to_machine
+
+
+def update_merge_item_to_machine_slot(convert_layout_path, tgt_lower, root_path, step_index):
+    """
+    convert_merge2406_item_to_machine is a SINGLE-SLOT table, not an accumulating
+    list like every other section in convert_layout.lua — its one entry gets
+    REPLACED with each new merge event, not appended alongside old ones. The
+    table's name is legacy (frozen at "2406" from whenever it was first created)
+    but its content is actively maintained. Confirmed by cross-branch inspection
+    and SVN history: merge2406 -> merge2603 -> merge2606 -> merge2608, always
+    exactly one entry present at a time.
+    """
+    import re as _re
+
+    if not os.path.exists(convert_layout_path):
+        return True  # Earlier checks in inject_convert_references already failed loudly if this matters.
+
+    with open(convert_layout_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+
+    target_line = f'        {{json = "{tgt_lower}_machineItem.json", merge_as="{tgt_lower}.itemToMachine"}}'
+
+    pattern = _re.compile(r'(convert_merge2406_item_to_machine\s*=\s*\{)(.*?)(\n?\s*\},)', _re.DOTALL)
+    match = pattern.search(content)
+
+    if not match:
+        log("convert_layout.lua: no convert_merge2406_item_to_machine table found in this file — skipping.")
+        return True
+
+    current_inner = match.group(2)
+    if f'"{tgt_lower}_machineItem.json"' in current_inner:
+        log(f"convert_layout.lua: convert_merge2406_item_to_machine already holds {tgt_lower}'s entry. Skipping.")
+        return True
+
+    backup_path = convert_layout_path + ".bak"
+    if not os.path.exists(backup_path):
+        # Don't clobber a .bak already made earlier in this same step (Part 2's own
+        # backup) — the first backup in a run should always capture the true pre-run state.
+        shutil.copy2(convert_layout_path, backup_path)
+        record_file_creation(root_path, step_index, backup_path)
+
+    new_content = pattern.sub(lambda m: m.group(1) + "\n" + target_line + m.group(3), content, count=1)
+
+    with open(convert_layout_path, 'w', encoding='utf-8') as f:
+        f.write(new_content)
+
+    old_display = current_inner.strip() or "(empty)"
+    log(f"convert_layout.lua: replaced convert_merge2406_item_to_machine slot with {tgt_lower}'s entry (was: {old_display}).")
+    return True
 
 def update_bi_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
     """Step 9: Update bi.xlsx with target event tracking entries."""
@@ -762,31 +1718,6 @@ def update_bi_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
         s = s.replace(src_evt, tgt_evt)
         return s
     
-    def find_target_row_info(ws, search_str):
-        """Find the row index and comment status for the target event."""
-        search_str_lower = search_str.lower()
-        for r in range(1, ws.max_row + 1):
-            val = ws.cell(r, 1).value
-            if val and search_str_lower in str(val).lower():
-                col1_val = str(ws.cell(r, 1).value or "").strip()
-                is_commented = col1_val.startswith("//") or col1_val.startswith("--")
-                return r, is_commented
-        return None, False
-
-    def check_and_handle_existing(ws, sheet_name, search_str):
-        row_idx, is_commented = find_target_row_info(ws, search_str)
-        if row_idx:
-            if is_commented:
-                # Uncomment
-                col1_val = str(ws.cell(row_idx, 1).value).strip()
-                if col1_val.startswith("//"): col1_val = col1_val[2:].strip()
-                elif col1_val.startswith("--"): col1_val = col1_val[2:].strip()
-                ws.cell(row_idx, 1, col1_val)
-                log(f"{sheet_name}: Target existed but was commented. Uncommented row {row_idx}.")
-                return True
-            else:
-                log(f"{sheet_name}: Target already exists and is active.")
-                return True
         return False
 
     try:
@@ -805,7 +1736,7 @@ def update_bi_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
         # ========== Sheet 1: bi_reason ==========
         if "bi_reason" in wb.sheetnames:
             ws = wb["bi_reason"]
-            if check_and_handle_existing(ws, "bi_reason", tgt_lower):
+            if check_and_handle_existing(ws, "bi_reason", tgt_evt):
                 modified = True # Might have uncommented
             else:
                 # Find source event row
@@ -830,7 +1761,7 @@ def update_bi_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
         ad_sheet_name = "广告打点常量表"
         if ad_sheet_name in wb.sheetnames:
             ws = wb[ad_sheet_name]
-            if check_and_handle_existing(ws, ad_sheet_name, tgt_upper):
+            if check_and_handle_existing(ws, ad_sheet_name, tgt_evt):
                 modified = True
             else:
                 # Collect source rows grouped by prefix (SITE vs ENTRANCE)
@@ -883,7 +1814,7 @@ def update_bi_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
         # ========== Sheet 3: bi_event_names ==========
         if "bi_event_names" in wb.sheetnames:
             ws = wb["bi_event_names"]
-            if check_and_handle_existing(ws, "bi_event_names", tgt_lower):
+            if check_and_handle_existing(ws, "bi_event_names", tgt_evt):
                 modified = True
             else:
                 # Find source event row
@@ -980,35 +1911,6 @@ def update_events_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
                     return str(ws.cell(r, 1).value) if ws.cell(r, 1).value else None
         return None
     
-    def find_target_row_info(ws):
-        """Find the row index and comment status for the target event."""
-        for r in range(2, ws.max_row + 1):
-            for c in range(1, ws.max_column + 1):
-                val = ws.cell(r, c).value
-                if val and tgt_lower in str(val).lower():
-                    col1_val = str(ws.cell(r, 1).value or "").strip()
-                    is_commented = col1_val.startswith("//") or col1_val.startswith("--")
-                    return r, is_commented
-        return None, False
-
-    def check_and_handle_existing(ws, sheet_name):
-        """
-        Uncomments the row if it exists but is disabled. 
-        Returns (True, row_idx) if it exists, (False, None) otherwise.
-        """
-        row_idx, is_commented = find_target_row_info(ws)
-        if row_idx:
-            if is_commented:
-                # Uncomment
-                col1_val = str(ws.cell(row_idx, 1).value).strip()
-                if col1_val.startswith("//"): col1_val = col1_val[2:].strip()
-                elif col1_val.startswith("--"): col1_val = col1_val[2:].strip()
-                ws.cell(row_idx, 1, col1_val)
-                log(f"{sheet_name}: Target existed but was commented. Uncommented row {row_idx}.")
-                return True, row_idx
-            else:
-                log(f"{sheet_name}: Target already exists and is active.")
-                return True, row_idx
         return False, None
 
 
@@ -1029,7 +1931,7 @@ def update_events_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
         # ========== Sheet 1: events (main) ==========
         if "events" in wb.sheetnames:
             ws = wb["events"]
-            exists, row_idx = check_and_handle_existing(ws, "events")
+            exists, row_idx = check_and_handle_existing(ws, "events", tgt_evt)
             if exists:
                 # Even if it exists, we want to update dates and IDs if provided
                 target_row = row_idx
@@ -1110,7 +2012,7 @@ def update_events_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
         # ========== Sheet 2: event_type ==========
         if "event_type" in wb.sheetnames:
             ws = wb["event_type"]
-            exists, _ = check_and_handle_existing(ws, "event_type")
+            exists, _ = check_and_handle_existing(ws, "event_type", tgt_evt)
             if exists:
                 modified = True
             else:
@@ -1139,7 +2041,7 @@ def update_events_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
         # ========== Sheet 3: event_entrance ==========
         if "event_entrance" in wb.sheetnames:
             ws = wb["event_entrance"]
-            exists, _ = check_and_handle_existing(ws, "event_entrance")
+            exists, _ = check_and_handle_existing(ws, "event_entrance", tgt_evt)
             if exists:
                 modified = True
             else:
@@ -1167,7 +2069,7 @@ def update_events_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
         # ========== Sheet 4: event_score ==========
         if "event_score" in wb.sheetnames:
             ws = wb["event_score"]
-            exists, _ = check_and_handle_existing(ws, "event_score")
+            exists, _ = check_and_handle_existing(ws, "event_score", tgt_evt)
             if exists:
                 modified = True
             else:
@@ -1195,7 +2097,7 @@ def update_events_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
         # ========== Sheet 5: event_pre ==========
         if "event_pre" in wb.sheetnames:
             ws = wb["event_pre"]
-            exists, row_idx = check_and_handle_existing(ws, "event_pre")
+            exists, row_idx = check_and_handle_existing(ws, "event_pre", tgt_evt)
             if exists:
                 # Update ID if it exists
                 if event_id:
@@ -1226,7 +2128,7 @@ def update_events_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
         # ========== Sheet 6: event_post ==========
         if "event_post" in wb.sheetnames:
             ws = wb["event_post"]
-            exists, row_idx = check_and_handle_existing(ws, "event_post")
+            exists, row_idx = check_and_handle_existing(ws, "event_post", tgt_evt)
             if exists:
                 # Update ID if it exists
                 if event_id:
@@ -1269,7 +2171,7 @@ def update_events_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
         other_sheet = "活动其他"
         if other_sheet in wb.sheetnames:
             ws = wb[other_sheet]
-            exists, row_idx = check_and_handle_existing(ws, "activity_other")
+            exists, row_idx = check_and_handle_existing(ws, "activity_other", tgt_evt)
             if exists:
                 if event_id:
                     ws.cell(row_idx, 1, int(event_id))
@@ -1315,7 +2217,7 @@ def update_events_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
         achieve_sheet = "活动成就"
         if achieve_sheet in wb.sheetnames:
             ws = wb[achieve_sheet]
-            exists, row_idx = check_and_handle_existing(ws, "activity_achievement")
+            exists, row_idx = check_and_handle_existing(ws, "activity_achievement", tgt_evt)
             if exists:
                 target_row = row_idx
                 modified = True
@@ -1425,7 +2327,7 @@ def update_events_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
             
             # Step 3: Clear Main sheet of all bi-weekly events before injecting target
             # Skip clearing/injection if target already in main sheet unless we want a rebuild
-            exists_idx, _ = find_target_row_info(ws)
+            exists_idx, _ = check_and_handle_existing(ws, "buff_constants", tgt_evt)
             if exists_idx:
                 log("buff_constants: Target already exists in main sheet. Skipping injection.")
             else:
@@ -1570,30 +2472,49 @@ def update_item_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                 if match:
                     src_rows.append(r)
             
-            # Check if target items already exist
-            target_rows = []
-            for r in range(2, real_max + 1):
-                alias_val = str(ws.cell(r, 2).value or "").lower()
-                name_val = str(ws.cell(r, 5).value or "").lower()
-                if tgt_lower in alias_val or tgt_lower in name_val:
-                    target_rows.append(r)
-            
-            if target_rows:
-                log(f"item_sheet: Found {len(target_rows)} existing items for {tgt_evt}. Checking comment status...")
-                for tr in target_rows:
-                    c1_val = str(ws.cell(tr, 1).value or "").strip()
-                    if c1_val.startswith("//"):
-                        ws.cell(tr, 1, c1_val[2:].strip())
-                        log(f"item_sheet: Uncommented row {tr} for {tgt_evt}.")
-                        modified = True
+            exists, _ = check_and_handle_existing(ws, "item", tgt_evt)
+            if exists:
+                log(f"item_sheet: Target items already exist for {tgt_evt}. Reconstructing id_map...")
+                # Match by normalized suffix (event name/digits stripped from both sides), not raw
+                # substring containment — "Merge2606能量" is never a substring of "Merge2608能量"
+                # since the digits differ, so a plain `src_alias in tgt_alias` check never matches
+                # any cross-event pair. Stripping the event name from both first ("能量" == "能量")
+                # is what actually makes the match event-independent.
+                def _strip_event_name(value, evt_name):
+                    if not value:
+                        return ""
+                    s = str(value)
+                    for variant in [evt_name.upper(), evt_name.lower(), (evt_name[0].upper() + evt_name[1:]) if evt_name else evt_name]:
+                        if variant:
+                            s = s.replace(variant, "")
+                    return s.strip()
+
+                id_map = {}
+                for sr in src_rows:
+                    src_id = str(ws.cell(sr, 1).value or "").replace("//", "").strip()
+                    src_name_suffix = _strip_event_name(ws.cell(sr, 5).value, src_evt)
+                    src_alias_suffix = _strip_event_name(ws.cell(sr, 2).value, src_evt)
+
+                    for tr in range(2, real_max + 1):
+                        tgt_id = str(ws.cell(tr, 1).value or "").replace("//", "").strip()
+                        if tgt_id == src_id: continue # Same ID means it's likely the same row or a duplicate
+
+                        tgt_name_suffix = _strip_event_name(ws.cell(tr, 5).value, tgt_evt)
+                        tgt_alias_suffix = _strip_event_name(ws.cell(tr, 2).value, tgt_evt)
+
+                        # Match by normalized suffix (exact, not substring — avoids "宝箱" matching "金币宝箱")
+                        if (src_name_suffix and src_name_suffix == tgt_name_suffix) or \
+                           (src_alias_suffix and src_alias_suffix == tgt_alias_suffix):
+                            if src_id.isdigit() and tgt_id.isdigit():
+                                id_map[int(src_id)] = int(tgt_id)
+                                break
                 
-                # Build id_map from existing target items if they match source item count or names
-                # This is a bit tricky, but for Reopen we usually just want to return the map
-                # For now, let's just log and continue. If src_rows is also found, it will still clone.
-                # To prevent double cloning, we should skip cloning if target items exist.
-                if len(target_rows) >= len(src_rows) and len(src_rows) > 0:
-                    log(f"item_sheet: Target items already exist. Skipping cloning.")
-                    src_rows = [] 
+                if id_map:
+                    log(f"item_sheet: Reconstructed id_map with {len(id_map)} entries.")
+                    return True, id_map
+                else:
+                    log(f"item_sheet: Could not reconstruct id_map. Returning True without map.")
+                    return True, {}
             
             if src_rows:
                 log(f"item_sheet: Found {len(src_rows)} items for {src_evt}. Cloning...")
@@ -1802,7 +2723,8 @@ def update_event_shop_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
         
         wb = openpyxl.load_workbook(shop_path)
         modified = False
-        
+        new_item_ids = []  # Referenced by Sheet 2 below even if 物品 is missing or has no rows for this event.
+
         # ========== Sheet 1: 物品 (Items) ==========
         item_sheet = "物品"
         if item_sheet in wb.sheetnames:
@@ -1845,16 +2767,18 @@ def update_event_shop_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
             else:
                 # 2b. Find source items (those linked to src_evt)
                 src_item_rows = []
+                new_item_ids = []
                 for r in range(2, real_max + 1):
                     alias_val = str(ws_item.cell(r, 2).value or "")
                     if src_lower in alias_val.lower():
                         src_item_rows.append(r)
-                
+
                 if not src_item_rows:
                     log(f"item_sheet: No items found for source {src_evt}.")
             
             # 3. Clone source items
-            new_item_ids = []
+            # (new_item_ids is already set above — from the target's own existing items if
+            # target_item_rows was non-empty, or stays [] here and gets filled by the clone below.)
             if src_item_rows:
                 current_id = new_group_start
                 insert_pos = real_max + 1
@@ -1913,7 +2837,7 @@ def update_event_shop_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
             real_max = get_real_max_row(ws_shop)
             
             # Check if target shop already exists
-            exists, target_row_idx = check_and_handle_existing(ws_shop, "event_shop")
+            exists, target_row_idx = check_and_handle_existing(ws_shop, "event_shop", tgt_evt)
             if exists:
                 log(f"event_shop: Target shop already exists at row {target_row_idx}. Updating...")
                 # Update Shop ID
@@ -2072,81 +2996,55 @@ def update_icon_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                     gui_event_id = str(extra.get("event_id", ""))
         except: pass
 
-        # 2a. Handle Specialized icon_item templates (Rows 69 & 70)
+        extra_for_hint = load_extra_args(log_dir)
+        src_start_time = extra_for_hint.get("src_start_time", "")
+
+        # 2a. icon_item's "活动物品" group — a variable-length run of rows (2, 3, however
+        # many an event needs) bounded by dividers, NOT fixed row indices. Resolve the
+        # source event's own rows via live file -> cache -> SVN history, then append
+        # (never overwrite) at the end of the group, right before the next divider.
         if "icon_item" in wb_icon.sheetnames:
             ws_item = wb_icon["icon_item"]
-            
-            # First, cleanup any previously mis-appended rows (due to logic bugs)
-            # Find the BP divider if it exists
-            divider_idx = ws_item.max_row + 1
-            for r in range(1, ws_item.max_row + 1):
-                if "// BP相关" in str(ws_item.cell(r, 1).value or ""):
-                    divider_idx = r
-                    break
-            
-            # If the divider exists, remove any cloned icons that were accidentally appended AFTER it
-            if divider_idx < ws_item.max_row:
-                for r in range(ws_item.max_row, divider_idx, -1):
-                    val = str(ws_item.cell(r, 1).value or "").upper()
-                    if tgt_upper in val and ("_TOKEN" in val or "_MATERIAL" in val):
-                        ws_item.delete_rows(r)
-                        log(f"icon_sheet: Cleaned up mis-appended row {r} from icon_item tail")
-                        modified = True
+            start, end = find_icon_item_group_bounds(ws_item)
 
-            # Templates for TOKEN and MATERIAL
-            for r_idx in [69, 70]:
-                orig_key = str(ws_item.cell(r_idx, 1).value or "")
-                if not orig_key or "_" not in orig_key: continue
-                
-                parts = orig_key.split('_', 1)
-                orig_prefix = parts[0]
-                new_key = f"{tgt_upper}_{parts[1]}"
-                
-                already_exists = False
-                target_row_idx = -1
-                for r in range(1, ws_item.max_row + 1):
-                    val = str(ws_item.cell(r, 1).value or "").strip()
-                    if val.upper() == new_key.upper():
-                        already_exists = True
-                        target_row_idx = r
-                        break
-                    elif val.startswith("//") and new_key.upper() in val.upper():
-                        already_exists = True
-                        target_row_idx = r
-                        # Uncomment
-                        ws_item.cell(r, 1, val[2:].strip())
-                        log(f"icon_sheet: Uncommented {new_key} in icon_item at Row {r}")
+            if start is None:
+                log("icon_item: '活动物品' group marker not found — skipping icon_item update.")
+            else:
+                tgt_already_present = any(
+                    tgt_lower in str(ws_item.cell(r, 1).value or "").lower()
+                    for r in range(start, end)
+                )
+                if tgt_already_present:
+                    log(f"icon_item: {tgt_evt} already has row(s) in the 活动物品 group. Skipping.")
+                else:
+                    src_item_rows, src_item_label = get_icon_item_rows_for_source(icon_path, src_lower, src_start_time, log_dir)
+                    if src_item_rows:
+                        log(f"icon_item: Resolved {len(src_item_rows)} row(s) for {src_evt} from {src_item_label}.")
+                        insert_at = end
+                        for row_vals in src_item_rows:
+                            new_row = []
+                            for c_idx, v in enumerate(row_vals):
+                                nv = swap_name(v)
+                                if c_idx == 2 and nv and gui_event_id:  # column 3: sprite name
+                                    nv = re.sub(r'\d{8}', gui_event_id, str(nv))
+                                new_row.append(nv)
+                            ws_item.insert_rows(insert_at)
+                            for c_idx, v in enumerate(new_row):
+                                ws_item.cell(insert_at, c_idx + 1, v)
+                            insert_at += 1
+                        log(f"icon_item: Appended {len(src_item_rows)} row(s) for {tgt_evt} to the 活动物品 group.")
                         modified = True
-                        break
-                
-                if not already_exists:
-                    # Insert at the divider to keep it grouped correctly
-                    ws_item.insert_rows(divider_idx)
-                    new_r = divider_idx
-                    for c in range(1, ws_item.max_column + 1):
-                        v = ws_item.cell(r_idx, c).value
-                        if v:
-                            nv = swap_name(v)
-                            if orig_prefix.upper() in str(nv).upper():
-                                nv = nv.replace(orig_prefix.upper(), tgt_upper)
-                                nv = nv.replace(orig_prefix.lower(), tgt_lower)
-                            if c == 3 and nv and gui_event_id:
-                                nv = re.sub(r'\d{8}', gui_event_id, str(nv))
-                            ws_item.cell(new_r, c, nv)
-                        else:
-                            ws_item.cell(new_r, c, None)
-                    log(f"icon_sheet: Inserted template row {r_idx} ({new_key}) into icon_item at Row {new_r}")
-                    divider_idx += 1 # Advance divider index for the next insertion
-                    modified = True
+                    else:
+                        log(f"icon_item: WARNING — no data found for {src_evt} anywhere (not live, not cached, not in SVN history). Needs manual entry.")
 
-        # 2b. Extract from backup and transfer to active sheets
+        # 2b. icon_event — resolve source rows via icon_备份 (free) -> cache -> SVN
+        # history of icon_event itself, then clone into the active sheet.
         backup_sheet_name = "icon_备份"
         active_sheet_name = "icon_event"
-        
-        if backup_sheet_name in wb_icon.sheetnames and active_sheet_name in wb_icon.sheetnames:
-            ws_backup = wb_icon[backup_sheet_name]
+
+        if active_sheet_name in wb_icon.sheetnames:
             ws_active = wb_icon[active_sheet_name]
-            
+
             existing_active_icons = {} # name -> row_idx
             for r in range(2, ws_active.max_row + 1):
                 icon_val = str(ws_active.cell(r, 1).value or "").strip()
@@ -2157,21 +3055,16 @@ def update_icon_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                     else:
                         existing_active_icons[icon_val.upper()] = r
 
-            src_rows = []
-            for r in range(2, ws_backup.max_row + 1):
-                c1 = str(ws_backup.cell(r, 1).value or "").lower()
-                c2 = str(ws_backup.cell(r, 2).value or "").lower()
-                c3 = str(ws_backup.cell(r, 3).value or "").lower()
-                if src_lower in c1 or src_lower in c2 or src_lower in c3:
-                    src_rows.append(r)
-            
-            if src_rows:
+            src_event_rows, src_event_label = get_icon_event_rows_for_source(icon_path, src_lower, src_start_time, log_dir)
+
+            if src_event_rows:
+                log(f"icon_event: Resolved {len(src_event_rows)} row(s) for {src_evt} from {src_event_label}.")
                 divider_row = ws_active.max_row + 1
                 ws_active.cell(divider_row, 1, f"// {tgt_upper} (CLONED FROM {src_upper})")
-                
+
                 cloned_count = 0
-                for r_src in src_rows:
-                    new_icon_name = swap_name(ws_backup.cell(r_src, 1).value)
+                for row_vals in src_event_rows:
+                    new_icon_name = swap_name(row_vals[0])
                     name_upper = str(new_icon_name).upper().strip()
                     if new_icon_name and name_upper in existing_active_icons:
                         row_idx = existing_active_icons[name_upper]
@@ -2181,20 +3074,21 @@ def update_icon_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                             log(f"icon_sheet: Uncommented existing icon {new_icon_name} in active event sheet.")
                             modified = True
                         continue
-                        
+
                     new_row_idx = ws_active.max_row + 1
-                    for c in range(1, ws_backup.max_column + 1):
-                        old_val = ws_backup.cell(r_src, c).value
+                    for c_idx, old_val in enumerate(row_vals):
                         new_val = swap_name(old_val)
                         # Sync Event ID in Sprite Name (Col 3) as requested
-                        if c == 3 and new_val and gui_event_id:
+                        if c_idx == 2 and new_val and gui_event_id:
                             new_val = re.sub(r'\d{8}', gui_event_id, str(new_val))
-                        ws_active.cell(new_row_idx, c, new_val)
+                        ws_active.cell(new_row_idx, c_idx + 1, new_val)
                     cloned_count += 1
-                
+
                 if cloned_count > 0:
-                    log(f"icon_sheet: Cloned {cloned_count} rows from backup to active event sheet.")
+                    log(f"icon_sheet: Cloned {cloned_count} rows for {tgt_evt} into active event sheet.")
                     modified = True
+            else:
+                log(f"icon_event: WARNING — no data found for {src_evt} anywhere (icon_备份, icon_event, cache, or SVN history). Needs manual entry.")
 
         # 3. Traditional sheet-by-sheet update
         for sheet_name in wb_icon.sheetnames:
@@ -2273,10 +3167,10 @@ def update_icon_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                     s1 = str(ws_search.cell(r, 1).value or "").strip().upper()
                     if s1 and s1 not in source_to_clone:
                         source_to_clone[s1] = (ws_search, r)
-            
-            divider_row = ws_target_fix.max_row + 1
-            ws_target_fix.cell(divider_row, 1, f"// {tgt_upper} (INTELLIGENT RECOVERY)")
-            
+
+            recovered = []
+            still_missing = []
+
             for m_icon in missing_icons:
                 src_icon_name = m_icon.replace(tgt_upper, src_upper).replace(tgt_lower, src_lower).replace(tgt_pascal, src_pascal)
                 if src_icon_name.upper() in source_to_clone:
@@ -2289,14 +3183,18 @@ def update_icon_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                             new_v = re.sub(r'\d{8}', gui_event_id, str(new_v))
                         ws_target_fix.cell(new_r, c, new_v)
                     log(f"icon_sheet: Successfully RECOVERED icon '{m_icon}' from {ws_src.title}")
+                    recovered.append(m_icon)
                 else:
-                    new_r = ws_target_fix.max_row + 1
-                    ws_target_fix.cell(new_r, 1, m_icon)
-                    ws_target_fix.cell(new_r, 2, f"{m_icon}")
-                    ws_target_fix.cell(new_r, 3, f"{gui_event_id}_TBD" if gui_event_id else "Sprite_TBD")
-                    ws_target_fix.cell(new_r, 4, "Atlas_Quest")
-                    log(f"WARNING: Icon '{m_icon}' missing. Created placeholder in {ws_target_fix.title}.")
-            modified = True
+                    # No fabrication — a fake placeholder (Atlas_Quest/_TBD) would silently
+                    # ship broken art with no visible signal beyond a log line. This icon
+                    # genuinely doesn't exist anywhere yet; that's real missing art, not
+                    # something this step can invent correctly.
+                    still_missing.append(m_icon)
+
+            if recovered:
+                modified = True
+            if still_missing:
+                log(f"icon_sheet: WARNING — {len(still_missing)} icon(s) still need real art, not created anywhere: {still_missing}")
         
         if modified:
             wb_icon.save(icon_path)
@@ -2306,12 +3204,6 @@ def update_icon_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
             log(f"icon.xlsx: No changes were needed.")
             return True
     
-    except Exception as e:
-        log(f"Error updating icon.xlsx: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
-
     except Exception as e:
         log(f"Error updating icon.xlsx: {e}")
         import traceback
@@ -2439,148 +3331,77 @@ def update_localization_main_excel(proj_root, src_evt, tgt_evt, log_dir, step_in
         wb = openpyxl.load_workbook(file_path)
         
         modified = False
+        # 1. Process each sheet efficiently
+        all_final_keys = set()
         for sheet_name in wb.sheetnames:
             if sheet_name in ["languages", "country", "localize_零使用"]:
                 continue
                 
             ws = wb[sheet_name]
             src_rows = []
-            
-            # Map of key -> row_idx in this sheet to prevent duplicates
             existing_keys = {} # key_upper -> row_idx
-            for r in range(2, ws.max_row + 1):
-                val = str(ws.cell(r, 1).value or "").strip()
-                if val:
-                    if val.startswith("//"):
-                        k = val[2:].strip().upper()
-                        existing_keys[k] = r
-                    else:
-                        existing_keys[val.upper()] = r
             
-            # Find rows to clone (fuzzy match on name OR digits)
-            for r in range(2, ws.max_row + 1):
-                c1 = str(ws.cell(r, 1).value or "").lower()
-                c2 = str(ws.cell(r, 2).value or "").lower()
+            # Single pass to build key map and find source rows
+            for r in range(1, ws.max_row + 1):
+                val = str(ws.cell(r, 1).value or "").strip()
+                if not val: continue
                 
-                match_found = False
-                if src_lower in c1 or src_lower in c2:
-                    match_found = True
-                elif src_digits and (src_digits in c1 or src_digits in c2):
-                    # More cautious match for digits: must look like an event-prefix
-                    if re.search(rf'([A-Za-z]+{src_digits}|{src_digits}_)', c1):
-                        match_found = True
+                k_clean = val.replace("//", "").strip().upper()
+                if k_clean:
+                    all_final_keys.add(k_clean)
+                    if k_clean not in existing_keys:
+                        existing_keys[k_clean] = r
                 
-                if match_found:
-                    src_rows.append(r)
+                # Find source rows
+                if r >= 2:
+                    c1 = val.lower()
+                    c2 = str(ws.cell(r, 2).value or "").lower()
+                    if src_lower in c1 or src_lower in c2 or (src_digits and src_digits in c1):
+                        src_rows.append(r)
             
             if src_rows:
-                # Add a divider
-                new_divider = ws.max_row + 1
-                ws.cell(new_divider, 1, f"// {tgt_upper} AUTO-CLONED")
-                
                 cloned_in_sheet = 0
                 for r in src_rows:
                     new_key = swap_name(ws.cell(r, 1).value)
                     new_key_upper = str(new_key).upper().strip()
-                    if new_key and new_key_upper in existing_keys:
+                    
+                    if new_key_upper in existing_keys:
                         row_idx = existing_keys[new_key_upper]
-                        val = str(ws.cell(row_idx, 1).value or "").strip()
-                        if val.startswith("//"):
-                            ws.cell(row_idx, 1, val[2:].strip())
-                            log(f"localization: Uncommented existing key {new_key} in [{sheet_name}]")
+                        c1_val = str(ws.cell(row_idx, 1).value or "").strip()
+                        if c1_val.startswith("//"):
+                            ws.cell(row_idx, 1, c1_val[2:].strip())
                             modified = True
-                        continue # Skip cloning if already exists
+                        continue
                         
                     new_row_idx = ws.max_row + 1
                     for c in range(1, ws.max_column + 1):
                         ws.cell(new_row_idx, c, swap_name(ws.cell(r, c).value))
+                    
+                    existing_keys[new_key_upper] = new_row_idx
+                    all_final_keys.add(new_key_upper)
                     cloned_in_sheet += 1
                 
                 if cloned_in_sheet > 0:
                     log(f"localization: Cloned {cloned_in_sheet} rows in [{sheet_name}] for {tgt_evt}")
                     modified = True
         
-        # 2. Final verification against REQUIRED keys from target excel
-        # Just in case some keys were missed in the cloning phase
-        missing_keys = []
-        # Pre-scan EVERYTHING again to be sure
-        all_final_keys = set()
-        for sheet_name in wb.sheetnames:
-            ws = wb[sheet_name]
-            for r in range(2, ws.max_row + 1):
-                all_final_keys.add(str(ws.cell(r, 1).value or "").upper().strip())
-        
-        for r_key in required_tgt_keys:
-            if r_key not in all_final_keys:
-                missing_keys.append(r_key)
-        
-        if missing_keys:
-            # Try to recover missing keys from ANY sheet of localization.xlsx
-            # (e.g. if SIM2512_ROOMNAME_1 was in a different sheet than expected)
-            ws_fix = wb[wb.sheetnames[0]] # Just put in first sheet or a common one
-            if "localize_room" in wb.sheetnames: ws_fix = wb["localize_room"]
-            
-            recovery_count = 0
-            # Build global source map for recovery
-            source_map = {}
-            for sheet_name in wb.sheetnames:
-                ws_s = wb[sheet_name]
-                for r in range(2, ws_s.max_row + 1):
-                    k_val = str(ws_s.cell(r, 1).value or "")
-                    if k_val: source_map[k_val.upper()] = [ws_s.cell(r, c).value for c in range(1, ws_s.max_column + 1)]
-            
-            new_divider = ws_fix.max_row + 1
-            ws_fix.cell(new_divider, 1, f"// {tgt_upper} INTELLIGENT RECOVERY")
-            
-            for m_key in missing_keys:
-                src_key = m_key.replace(tgt_upper, src_upper).replace(tgt_digits, src_digits)
-                if src_key in source_map:
-                    new_r = ws_fix.max_row + 1
-                    row_data = source_map[src_key]
-                    for c_idx, val in enumerate(row_data):
-                        ws_fix.cell(new_r, c_idx + 1, swap_name(val))
-                    recovery_count += 1
-                    log(f"localization: Recovered missing key '{m_key}' from source '{src_key}'")
-                else:
-                    # Pure placeholder
+        # 2. Final verification against REQUIRED keys
+        if required_tgt_keys:
+            missing = [k for k in required_tgt_keys if k not in all_final_keys]
+            if missing:
+                log(f"localization: {len(missing)} keys missing. Adding placeholders to localize_room.")
+                ws_fix = wb["localize_room"] if "localize_room" in wb.sheetnames else wb[wb.sheetnames[0]]
+                for m_key in missing:
                     new_r = ws_fix.max_row + 1
                     ws_fix.cell(new_r, 1, m_key)
                     ws_fix.cell(new_r, 2, f"[FIX ME] {m_key}")
-                    log(f"WARNING: Localization key '{m_key}' is REQUIRED by {tgt_evt}.xlsx but was NOT FOUND in localization.xlsx. Created placeholder.")
+                modified = True
             
-            if len(missing_keys) > 0:
-                modified = True
-            for r in range(2, ws.max_row + 1):
-                val1 = str(ws.cell(r, 1).value or "").lower()  # type: ignore
-                val2 = str(ws.cell(r, 2).value or "").lower()  # type: ignore
-                
-                match = False
-                if src_lower and (src_lower in val1 or src_lower in val2):
-                    match = True
-                elif src_digits and (src_digits in val1 or src_digits in val2):
-                    match = True
-                    
-                if match:
-                    src_rows.append(r)
-                    
-            if src_rows:
-                divider_row = ws.max_row + 1
-                ws.cell(divider_row, 1, f"// {tgt_upper}")
-                
-                for r in src_rows:
-                    new_row_idx = ws.max_row + 1
-                    for c in range(1, ws.max_column + 1):
-                        old_val = ws.cell(r, c).value  # type: ignore
-                        ws.cell(new_row_idx, c, swap_name(old_val))  # type: ignore
-                        
-                log(f"localization.xlsx [{sheet_name}]: Cloned {len(src_rows)} rows for {tgt_evt}.")
-                modified = True
-                
         if modified:
             wb.save(file_path)
             log(f"localization.xlsx successfully updated for {tgt_evt}.")
         else:
-            log(f"localization.xlsx: No changes needed. No source strings found.")
+            log(f"localization.xlsx: No changes needed.")
             
     except Exception as e:
         log(f"Error updating localization.xlsx: {e}")
@@ -2842,36 +3663,36 @@ def update_answer_challenge_excel(proj_root, src_evt, tgt_evt, log_dir, step_ind
             else:
                 new_id = last_id + 1
                 new_row = last_row + 1
-            
-            # Copy the last row as template and swap names
-            for c in range(1, ws_list.max_column + 1):
-                old_val = ws_list.cell(last_row, c).value  # type: ignore
-                ws_list.cell(new_row, c, swap_name(old_val))  # type: ignore
-            
-            # Override the ID
-            ws_list.cell(new_row, 1, new_id)  # type: ignore
-            
-            # Ensure Alias is unique by appending target event if it doesn't already contain it
-            current_alias = str(ws_list.cell(new_row, 2).value or "")
-            if tgt_evt.lower() not in current_alias.lower():
-                ws_list.cell(new_row, 2, f"{current_alias}_{tgt_evt}")
-                
-            # Override Event ID and Times using extra_args
-            extra_args_path = os.path.join(log_dir, "extra_args.json")
-            if os.path.exists(extra_args_path):
-                try:
-                    with open(extra_args_path, "r") as f:
-                        extra = json.load(f)
-                    start_time_str = extra.get("start_time", "")
-                    end_time_str = extra.get("end_time", "")
-                    event_id_str = extra.get("event_id", "")
-                    
-                    if start_time_str: ws_list.cell(new_row, 4, start_time_str)
-                    if end_time_str: ws_list.cell(new_row, 5, end_time_str)
-                    if event_id_str: ws_list.cell(new_row, 6, int(event_id_str))
-                except Exception as e:
-                    log(f"Warning: Failed to inject extra args into answer_challenge_list: {e}")
-            
+
+                # Copy the last row as template and swap names
+                for c in range(1, ws_list.max_column + 1):
+                    old_val = ws_list.cell(last_row, c).value  # type: ignore
+                    ws_list.cell(new_row, c, swap_name(old_val))  # type: ignore
+
+                # Override the ID
+                ws_list.cell(new_row, 1, new_id)  # type: ignore
+
+                # Ensure Alias is unique by appending target event if it doesn't already contain it
+                current_alias = str(ws_list.cell(new_row, 2).value or "")
+                if tgt_evt.lower() not in current_alias.lower():
+                    ws_list.cell(new_row, 2, f"{current_alias}_{tgt_evt}")
+
+                # Override Event ID and Times using extra_args
+                extra_args_path = os.path.join(log_dir, "extra_args.json")
+                if os.path.exists(extra_args_path):
+                    try:
+                        with open(extra_args_path, "r") as f:
+                            extra = json.load(f)
+                        start_time_str = extra.get("start_time", "")
+                        end_time_str = extra.get("end_time", "")
+                        event_id_str = extra.get("event_id", "")
+
+                        if start_time_str: ws_list.cell(new_row, 4, start_time_str)
+                        if end_time_str: ws_list.cell(new_row, 5, end_time_str)
+                        if event_id_str: ws_list.cell(new_row, 6, int(event_id_str))
+                    except Exception as e:
+                        log(f"Warning: Failed to inject extra args into answer_challenge_list: {e}")
+
                 log(f"answer_challenge [answer_challenge_list]: Added row {new_row} with ID={new_id}")
                 modified = True
         
@@ -2934,7 +3755,7 @@ def update_answer_challenge_excel(proj_root, src_evt, tgt_evt, log_dir, step_ind
                 det_upper = detected_event_name.upper()
                 det_pascal = detected_event_name[0].upper() + detected_event_name[1:]
                 
-                log(f"answer_challenge [stage]: Detected '{detected_event_name}{detected_event_digits}' in rewards, replacing with '{tgt_pascal}{tgt_digits}'")
+                log(f"answer_challenge [stage]: Detected '{detected_event_name}{detected_event_digits}' in rewards, replacing with '{tgt_pascal}'")
                 
                 for r in range(2, ws_stage.max_row + 1):
                     for c in range(1, ws_stage.max_column + 1):
@@ -3274,23 +4095,19 @@ def update_store_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                         old_recharge_ids.append(str(ws_r.cell(r, 1).value or ""))  # type: ignore
             
             if src_recharge_rows:
-                existing_target_rows = []
-                for r in range(2, ws_r.max_row + 1):
-                    alias_val = str(ws_r.cell(r, 2).value or "").strip()
-                    if tgt_evt.lower() in alias_val.lower() and not alias_val.startswith("B-") and not alias_val.startswith("A-"):
-                        existing_target_rows.append(r)
-                
-                if existing_target_rows:
-                    log(f"store_recharge: Target event {tgt_evt} already exists. Ensuring rows are uncommented.")
-                    for r in existing_target_rows:
-                        val = str(ws_r.cell(r, 1).value or "").strip()
-                        if val.startswith("//"):
-                            ws_r.cell(r, 1, val[2:].strip())
-                            modified = True
-                    # If modified, we still need the new IDs for mapping to other sheets
-                    for r in existing_target_rows:
-                        id_val = str(ws_r.cell(r, 1).value or "").replace("//", "").strip()
-                        if id_val: new_recharge_ids.append(id_val)
+                exists, row_idx = check_and_handle_existing(ws_r, "store_recharge", tgt_evt)
+                if exists:
+                    log(f"store_recharge: Target event {tgt_evt} already exists.")
+                    # If it exists (and was uncommented), we still need the IDs for mapping to other sheets
+                    # Let's collect existing IDs in this section
+                    # Search for rows matching tgt_evt that are active
+                    for r in range(2, ws_r.max_row + 1):
+                        alias_val = str(ws_r.cell(r, 2).value or "").strip()
+                        if tgt_evt.lower() in alias_val.lower() and not alias_val.startswith("B-") and not alias_val.startswith("A-"):
+                            id_val = str(ws_r.cell(r, 1).value or "").strip()
+                            if id_val and not id_val.startswith("//"):
+                                new_recharge_ids.append(id_val)
+                    src_recharge_rows = [] # Skip cloning logic
                 else:
                     # Find max ID in same event section as source
                     # Source rows define the section; find next section divider after them
@@ -3359,19 +4176,9 @@ def update_store_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                     src_package_rows.append(r)
             
             if src_package_rows:
-                existing_target_rows = []
-                for r in range(2, ws_p.max_row + 1):
-                    id_val = str(ws_p.cell(r, 1).value or "").replace("//", "").strip()
-                    if id_val in new_recharge_ids:
-                        existing_target_rows.append(r)
-                
-                if existing_target_rows:
-                    log(f"store_package: Target IDs already exist. Ensuring rows are uncommented.")
-                    for r in existing_target_rows:
-                        val = str(ws_p.cell(r, 1).value or "").strip()
-                        if val.startswith("//"):
-                            ws_p.cell(r, 1, val[2:].strip())
-                            modified = True
+                exists, row_idx = check_and_handle_existing(ws_p, "store_package", tgt_evt)
+                if exists:
+                    src_package_rows = [] # Skip cloning
                 else:
                     # Insert after last source event row in the section
                     last_pkg_src = src_package_rows[-1]
@@ -3422,19 +4229,11 @@ def update_store_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                         old_gift_ids.append(str(int(id_val)))
             
             if src_gift_rows:
-                existing_target_rows = []
-                for r in range(2, ws_g.max_row + 1):
-                    alias_val = str(ws_g.cell(r, 2).value or "").strip()
-                    if tgt_evt.lower() in alias_val.lower():
-                        existing_target_rows.append(r)
-                
-                if existing_target_rows:
-                    log(f"recommend_gift: Target event {tgt_evt} already exists. Ensuring rows are uncommented.")
-                    for r in existing_target_rows:
-                        val = str(ws_g.cell(r, 1).value or "").strip()
-                        if val.startswith("//"):
-                            ws_g.cell(r, 1, val[2:].strip())
-                            modified = True
+                exists, row_idx = check_and_handle_existing(ws_g, "recommend_gift", tgt_evt)
+                if exists:
+                    # Collect existing IDs for gift_id_map if needed, 
+                    # but for reopen we usually don't need to remap unless IDs changed.
+                    src_gift_rows = [] # Skip cloning
                 else:
                     # Find max ID only in the event gift section (row 61+)
                     # The event section starts after "// 活动商店与进度礼包" row
@@ -3540,19 +4339,10 @@ def update_store_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                     src_style_rows.append(r)
             
             if src_style_rows:
-                existing_target_rows = []
-                for r in range(2, ws_s.max_row + 1):
-                    id_val = str(ws_s.cell(r, 1).value or "").replace("//", "").strip()
-                    if id_val in main_new_ids:
-                        existing_target_rows.append(r)
-                
-                if existing_target_rows:
-                    log(f"event_gift_style: Target IDs already exist. Ensuring rows are uncommented.")
-                    for r in existing_target_rows:
-                        val = str(ws_s.cell(r, 1).value or "").strip()
-                        if val.startswith("//"):
-                            ws_s.cell(r, 1, val[2:].strip())
-                            modified = True
+                main_new_ids = new_gift_ids[:12] if len(new_gift_ids) >= 12 else new_gift_ids
+                exists, row_idx = check_and_handle_existing(ws_s, "event_gift_style", tgt_evt)
+                if exists:
+                    src_style_rows = [] # Skip cloning
                 else:
                     insert_row = ws_s.max_row + 1
                     for r in range(ws_s.max_row, 1, -1):
@@ -3649,19 +4439,11 @@ def update_pack_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
             log(f"pack.xlsx: No source rows found for {src_evt}")
             return True
             
-        existing_target_rows = []
-        for r in range(2, ws.max_row + 1):
-            alias_val = str(ws.cell(r, 2).value or "").strip()
-            if tgt_evt.lower() in alias_val.lower():
-                existing_target_rows.append(r)
-        
-        if existing_target_rows:
-            log(f"pack.xlsx: Target event {tgt_evt} already exists. Ensuring rows are uncommented.")
-            for r in existing_target_rows:
-                val = str(ws.cell(r, 1).value or "").strip()
-                if val.startswith("//"):
-                    ws.cell(r, 1, val[2:].strip())
-                    modified = True
+        exists, _ = check_and_handle_existing(ws, "pack", tgt_evt)
+        if exists:
+            if modified:
+                wb.save(file_path)
+            return True
             if modified:
                 wb.save(file_path)
             return True
@@ -3787,23 +4569,8 @@ def update_guide_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                 if tgt_evt.lower() in alias_val.lower():
                     existing_target_rows.append(r)
             
-            if existing_target_rows:
-                log(f"guide_section: Target event {tgt_evt} already exists. Ensuring rows are uncommented.")
-                for r in existing_target_rows:
-                    val = str(ws_sec.cell(r, 1).value or "").strip()
-                    if val.startswith("//"):
-                        ws_sec.cell(r, 1, val[2:].strip())
-                        modified = True
-                    
-                    # Populate old_id_to_new_id mapping for downstream sheets (guide/guide_backup)
-                    # We need to map from source event IDs to these existing target event IDs
-                    # But if we are re-opening the same event (src=tgt), it's already mapped.
-                    # If src != tgt, we'll try to find corresponding IDs.
-                    pass 
-                
-                # If we have existing target rows, we should probably SKIP the cloning logic below
-                # unless the user specifically wants to refresh them.
-                # For now, let's just skip cloning to be safe and idempotent.
+            exists, row_idx = check_and_handle_existing(ws_sec, "guide_section", tgt_evt)
+            if exists:
                 src_rows = [] # This effectively skips the cloning block below
             
             if src_rows:
@@ -3937,13 +4704,8 @@ def update_guide_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                 if tgt_evt.lower() in alias or tgt_evt.lower() in id_val:
                     existing_target_rows.append(r)
                     
-            if existing_target_rows:
-                log(f"guide_trigger: Target event {tgt_evt} already exists. Ensuring rows are uncommented.")
-                for r in existing_target_rows:
-                    val = str(ws_trig.cell(r, 1).value or "").strip()
-                    if val.startswith("//"):
-                        ws_trig.cell(r, 1, val[2:].strip())
-                        modified = True
+            exists, _ = check_and_handle_existing(ws_trig, "guide_trigger", tgt_evt)
+            if exists:
                 src_rows = [] # Skip cloning
             
             if src_rows:
@@ -3986,13 +4748,8 @@ def update_guide_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                 if tgt_evt.lower() in alias or tgt_evt.lower() in id_val:
                     existing_target_rows.append(r)
                     
-            if existing_target_rows:
-                log(f"guide_refui: Target event {tgt_evt} already exists. Ensuring rows are uncommented.")
-                for r in existing_target_rows:
-                    val = str(ws_ui.cell(r, 1).value or "").strip()
-                    if val.startswith("//"):
-                        ws_ui.cell(r, 1, val[2:].strip())
-                        modified = True
+            exists, _ = check_and_handle_existing(ws_ui, "guide_refui", tgt_evt)
+            if exists:
                 src_rows = [] # Skip cloning
             
             if src_rows:
@@ -4355,6 +5112,8 @@ def main():
         success, id_map = update_item_excel(proj_root, src_evt, tgt_evt, log_dir, step_index)
         if success and id_map:
             sync_events_excel_item_ids(proj_root, tgt_evt, id_map, log_dir, step_index)
+        if success:
+            backfill_item_icon_columns(proj_root, src_evt, tgt_evt, log_dir)
         if not success: sys.exit(1)
     elif step_index == 12:
         # Step 13: Update icon.xlsx

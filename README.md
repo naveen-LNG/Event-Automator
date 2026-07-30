@@ -1,32 +1,57 @@
-# SkipBo Event Automation Tool
+# Event Automator (Standalone)
 
-A specialized Unity Editor extension designed to automate the repetitive tasks of event creation and reopening for the SkipBo mobile game.
+A standalone Windows desktop tool that automates the repetitive parts of creating
+and reopening SkipBo game events — Excel config cloning, localization, icons,
+convert.json/convert_layout.lua registration, and more. No Unity Editor required.
 
-## 🚀 Key Features
-- **Centralized Pipeline**: Executes 21 critical steps (Proto injection, Excel cloning, Localization updates, etc.) through a single GUI.
-- **Intelligent Synchronization**:
-  - Automatically remaps **Item IDs** between `item.xlsx` and `events.xlsx`.
-  - Duplicates and renames **Icon Items** (Token/Material) based on template rows 69-70.
-  - Updates **Sprite Names** using 8-digit Event IDs.
-- **Safety First**: Automatically creates backups (`.bak`) before modifying any Excel file.
-- **Coder Convert Integration**: Triggers the standard `coder_convert` tool as part of the final validation step.
+## For everyone — just run it
 
-## 🛠️ Installation
-1. Copy the `EventAutomation` folder into your Unity project's `Assets/Editor/` directory.
-2. Ensure you have **Python 3.x** installed with the following dependencies:
-   ```bash
-   pip install openpyxl
-   ```
-3. Open the tool in Unity via **Tools > Event Automator**.
+1. Go to [Releases](../../releases/latest) and download **`Event Automator Setup.exe`**
+   (installer, adds a Start Menu shortcut) or **`Event Automator.exe`** (portable, no
+   install — just run it from wherever you put it).
+2. Double-click it. That's it — no terminal, no Python install, nothing else needed.
+   The Python backend is bundled inside the app.
+3. First launch: open **Settings** and point the three branch paths (trunk / Misc /
+   Feature) at your local checkout, if the auto-detected defaults aren't right for
+   your machine.
 
-## 📖 Usage
-1. **Source Event**: Enter the name of the previous event to clone from (e.g., `Sim2507`).
-2. **Target Event**: Enter the name of the new event (e.g., `Sim2605`).
-3. **Workspace Path**: Provide the absolute path to your project root.
-4. **New Event Settings**: For new events, fill in the Event ID (8 digits) and scheduling times.
-5. **Execute**: Click "Execute" to run the full pipeline, or run individual steps manually if needed.
+## What it does
 
-## 📁 Repository Structure
-- `EventAutomationWindow.cs`: The Unity UI logic and process manager.
-- `PythonBackend/event_pipeline.py`: The core automation logic.
-- `EventAutomationWindow.uxml/uss`: UI Layout and Styling.
+- **Main Events**: pick an event type (Merge/Sim/Blocks/Sort/Dessert), pick a source
+  event to clone from (defaults to that type's latest), set a start date + duration,
+  and run the full pipeline — proto config, local service registration, Excel
+  cloning (items, shop, icons, localization, quiz, answer_challenge, asset refs,
+  store, guide, sys.xlsx deep links), and final `coder_convert`.
+- **Minigame Configs / Pet Battlepass / Holiday Battlepass**: dedicated tabs for
+  those recurring config updates, independent of the main event pipeline.
+- **Settings**: branch/workspace selection, Unity executable path (only needed for
+  the one step — ProtoToLua — that's genuinely Unity-coupled; it's run headlessly),
+  and a manual "Update Cache from SVN" action for the source-event history cache.
+
+## For developers — building from source
+
+Requires Node.js and Python 3 (with `pip install pyinstaller openpyxl`) only for
+*building* — end users never need either.
+
+```bash
+npm install
+npm run dist
+```
+
+This compiles the Python backend (`pybackend-src/`) into a bundled executable via
+PyInstaller, then packages the Electron app with `electron-builder`. Output lands in
+`release/` — both a portable `.exe` and an NSIS installer.
+
+For local development without a full rebuild each time:
+
+```bash
+npm run build:py   # once, or whenever pybackend-src/ changes
+npm start           # launches the app against the local pybackend_dist/ build
+```
+
+## Repository layout
+
+- `main.js` / `preload.js` — Electron main process and the IPC bridge to the renderer.
+- `renderer/` — the UI (HTML/CSS/JS, no framework).
+- `pybackend-src/` — the Python backend (Excel/SVN automation logic), compiled at
+  build time into a standalone executable so end users never need Python installed.

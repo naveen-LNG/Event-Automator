@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Event Automator (Standalone)</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div class="app-container">
+
+  <!-- Sidebar -->
+  <nav class="sidebar-wrapper" aria-label="Main navigation">
+    <div class="sidebar-board">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg>
+        </div>
+        <div class="brand-text">
+          <span class="brand-title">Event Automator</span>
+          <span class="brand-subtitle">SkipBo Ops</span>
+        </div>
+      </div>
+
+      <button class="menu-btn active-btn" data-view="main-events-view" title="Main Events">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>
+        <span class="btn-text">Main Events</span>
+      </button>
+      <button class="menu-btn" data-view="minigames-view" title="Minigame Configs">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="10" rx="5"/><path d="M7 12h.01M9.5 9.5v5M17 12h.01M14.5 12h.01"/></svg>
+        <span class="btn-text">Minigame Configs</span>
+      </button>
+      <button class="menu-btn" data-view="battlepass-view" title="Pet Battlepass">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 3 7v6c0 5 4 8 9 9 5-1 9-4 9-9V7l-9-5z"/><path d="M9 12l2 2 4-4"/></svg>
+        <span class="btn-text">Pet Battlepass</span>
+      </button>
+      <button class="menu-btn" data-view="holiday-bp-view" title="Holiday Battlepass">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M4.5 6.5l15 11M19.5 6.5l-15 11M2 12h20"/></svg>
+        <span class="btn-text">Holiday Battlepass</span>
+      </button>
+      <button class="menu-btn" data-view="placeholder-view" data-title="Decoration Shop" title="Decoration Shop">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2 3 7v13a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7l-3-5"/><path d="M3 7h18M9 11a3 3 0 0 0 6 0"/></svg>
+        <span class="btn-text">Decoration Shop</span>
+      </button>
+      <button class="menu-btn" data-view="placeholder-view" data-title="Streak Challenge" title="Streak Challenge">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2c1 4-3 5-3 9a3 3 0 0 0 6 0c1 2-1 3-1 5a4 4 0 0 1-8 0c0-6 6-7 6-14z"/></svg>
+        <span class="btn-text">Streak Challenge</span>
+      </button>
+
+      <div class="sidebar-spacer"></div>
+
+      <button class="menu-btn" data-view="settings-view" title="Settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        <span class="btn-text">Settings</span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- Content -->
+  <main class="content-area">
+
+    <!-- Persistent branch/workspace bar -->
+    <div class="context-bar" id="context-bar">
+      <div class="context-item">
+        <label for="active-branch-select">Branch</label>
+        <select id="active-branch-select"></select>
+      </div>
+      <div class="context-item">
+        <label for="active-workspace-select">Workspace</label>
+        <select id="active-workspace-select"></select>
+      </div>
+      <div class="context-item resolved">
+        <label id="context-resolved-label">Resolved design path</label>
+        <span id="context-resolved-path" aria-labelledby="context-resolved-label">—</span>
+      </div>
+      <div class="context-status" id="context-status" role="status">Not configured</div>
+    </div>
+
+    <!-- MAIN EVENTS VIEW -->
+    <section id="main-events-view" class="main-container view" aria-labelledby="main-events-heading">
+      <div class="header-section">
+        <h1 id="main-events-heading" class="header-title">Event Automation Tool</h1>
+        <p class="header-subtitle">Streamline event generation and deployment</p>
+      </div>
+
+      <div class="stacked-card">
+        <h2 class="card-title">Configuration</h2>
+        <div class="form-row">
+          <label class="form-label" for="event-type-select">Event Type</label>
+          <select id="event-type-select" class="text-input"></select>
+        </div>
+        <div class="form-row">
+          <label class="form-label" for="source-event-select">Source Event</label>
+          <select id="source-event-select" class="text-input"></select>
+        </div>
+        <div class="form-row" id="target-row">
+          <label class="form-label" for="target-event-input">Target Event Name</label>
+          <input type="text" id="target-event-input" class="text-input" placeholder="e.g. blocks2601" />
+        </div>
+        <div id="new-event-settings">
+          <div class="form-row">
+            <label class="form-label" for="event-id-input">Event ID</label>
+            <input type="text" id="event-id-input" class="text-input" placeholder="e.g. 20260501" title="8-digit ID: yyyymmNN" />
+          </div>
+          <div class="form-row">
+            <label class="form-label" for="start-date-input">Start Date (UTC0)</label>
+            <input type="date" id="start-date-input" class="text-input mono" style="max-width:200px;" />
+          </div>
+          <div class="form-row">
+            <label class="form-label" for="duration-days-input">Duration (days)</label>
+            <input type="number" id="duration-days-input" class="text-input mono" style="max-width:120px;" min="1" value="14" />
+          </div>
+          <div class="board-divider"></div>
+          <div class="preview-grid">
+            <div class="preview-cell"><span class="preview-label">Start Time</span><span id="preview-start-time" class="preview-value">...</span></div>
+            <div class="preview-cell"><span class="preview-label">End Time</span><span id="preview-end-time" class="preview-value">...</span></div>
+            <div class="preview-cell"><span class="preview-label">Near-End Time</span><span id="preview-near-end-time" class="preview-value">...</span></div>
+            <div class="preview-cell"><span class="preview-label">Entry Close Time</span><span id="preview-close-time" class="preview-value">...</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="stacked-card">
+        <h2 class="card-title">Pipeline Checklist</h2>
+        <div class="checklist-container" id="checklist-container"></div>
+        <div class="execution-footer">
+          <button id="undo-all-btn" class="danger-btn">Undo All Executed</button>
+          <div style="flex-grow:1;"></div>
+          <button id="execute-btn" class="primary-btn">Run All Pipeline Steps</button>
+        </div>
+      </div>
+
+      <div class="stacked-card console-section">
+        <h2 class="console-title">Pipeline Output</h2>
+        <div class="console-scroll-container" id="console-scrollview" role="log" aria-live="polite"></div>
+      </div>
+    </section>
+
+    <!-- MINIGAMES VIEW -->
+    <section id="minigames-view" class="main-container view" aria-labelledby="minigames-heading">
+      <div class="header-section">
+        <h1 id="minigames-heading" class="header-title">Minigame Configurations</h1>
+        <p class="header-subtitle">Add and manage multiple minigame runs</p>
+      </div>
+      <div class="stacked-card">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+          <h2 class="card-title" style="margin-bottom:0;">Minigame Run Entries</h2>
+          <button id="add-minigame-row-btn" class="primary-btn small">+ Add Run</button>
+        </div>
+        <div id="minigame-rows-container"></div>
+      </div>
+      <div class="stacked-card">
+        <h2 class="card-title">Pipeline Action</h2>
+        <div class="execution-footer" style="justify-content:flex-end;">
+          <button id="minigame-execute-btn" class="primary-btn">Commit to mini_mgr.xlsx</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- BATTLEPASS VIEW -->
+    <section id="battlepass-view" class="main-container view" aria-labelledby="bp-heading">
+      <div class="header-section">
+        <h1 id="bp-heading" class="header-title">Battle Pass Configuration</h1>
+        <p class="header-subtitle">Automate multi-sheet updates for the next BP cycle</p>
+      </div>
+      <div class="stacked-card">
+        <h2 class="card-title">Schedule &amp; Duration</h2>
+        <div class="form-row"><label class="form-label" for="bp-start-time">Start Time (UTC0)</label><input type="text" id="bp-start-time" class="text-input mono" placeholder="yyyy-mm-dd hh:mm:ss" /></div>
+        <div class="form-row"><label class="form-label" for="bp-end-time">End Time (UTC0)</label><input type="text" id="bp-end-time" class="text-input mono" placeholder="yyyy-mm-dd hh:mm:ss" /></div>
+      </div>
+      <div class="stacked-card">
+        <h2 class="card-title">Configuration Preview</h2>
+        <div class="form-row"><span class="form-label">Point Mode</span><span id="bp-point-mode" class="preview-highlight">Calculating...</span></div>
+        <div class="preview-grid">
+          <div class="preview-cell"><span class="preview-label">Next Cycle ID</span><span id="bp-prev-cycle" class="preview-value">...</span></div>
+          <div class="preview-cell"><span class="preview-label">Next Plan ID</span><span id="bp-prev-plan" class="preview-value">...</span></div>
+          <div class="preview-cell"><span class="preview-label">Next Month (YYMM)</span><span id="bp-prev-yymm" class="preview-value">...</span></div>
+          <div class="preview-cell"><span class="preview-label">Template Target</span><span id="bp-prev-template" class="preview-value">...</span></div>
+          <div class="preview-cell"><span class="preview-label">Related Item ID</span><span id="bp-prev-item" class="preview-value">...</span></div>
+        </div>
+        <div class="board-divider"></div>
+        <p class="header-subtitle small">* Duplicates the 800/900 point rewards group from the Template Target and updates all cross-sheet and cross-file references.</p>
+      </div>
+      <div class="stacked-card">
+        <div class="execution-footer" style="justify-content:flex-end;">
+          <button id="bp-execute-btn" class="primary-btn">Commit BattlePass Config</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- HOLIDAY BP VIEW -->
+    <section id="holiday-bp-view" class="main-container view" aria-labelledby="hbp-heading">
+      <div class="header-section">
+        <h1 id="hbp-heading" class="header-title">Holiday Battle Pass Configuration</h1>
+        <p class="header-subtitle">Automate complex 4-variant flows for festive events</p>
+      </div>
+      <div class="stacked-card">
+        <h2 class="card-title">Event Configuration</h2>
+        <div class="form-row"><label class="form-label" for="hbp-holiday-id">Holiday ID</label><input type="text" id="hbp-holiday-id" class="text-input mono" placeholder="e.g. 260509" title="Used for Aliases like 260509节日BP1" /></div>
+        <div class="form-row"><label class="form-label" for="hbp-start-time">Start Time (UTC0)</label><input type="text" id="hbp-start-time" class="text-input mono" placeholder="yyyy-mm-dd hh:mm:ss" /></div>
+        <div class="form-row"><label class="form-label" for="hbp-end-time">End Time (UTC0)</label><input type="text" id="hbp-end-time" class="text-input mono" placeholder="yyyy-mm-dd hh:mm:ss" /></div>
+      </div>
+      <div class="stacked-card">
+        <h2 class="card-title">Meta &amp; ID Preview</h2>
+        <div class="preview-grid four">
+          <div class="preview-cell"><span class="preview-label">Next Cycle ID</span><span id="hbp-next-cycle" class="preview-value">...</span></div>
+          <div class="preview-cell"><span class="preview-label">Next Recommend ID</span><span id="hbp-next-recommend" class="preview-value">...</span></div>
+          <div class="preview-cell"><span class="preview-label">Next Item ID</span><span id="hbp-next-item" class="preview-value">...</span></div>
+          <div class="preview-cell"><span class="preview-label">Next Scheme ID</span><span id="hbp-next-scheme" class="preview-value">...</span></div>
+        </div>
+        <div class="board-divider"></div>
+        <span class="preview-label">Suffix Format Mirroring</span>
+        <div id="hbp-suffix-preview" class="preview-suffix">Detecting previous group...</div>
+      </div>
+      <div class="stacked-card">
+        <div class="execution-footer" style="justify-content:flex-end;">
+          <button id="hbp-execute-btn" class="primary-btn">Commit Holiday BP</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- SETTINGS VIEW -->
+    <section id="settings-view" class="main-container view" aria-labelledby="settings-heading">
+      <div class="header-section">
+        <h1 id="settings-heading" class="header-title">Tool Settings</h1>
+        <p class="header-subtitle">Configure branch paths, workspace, and environment</p>
+      </div>
+
+      <div class="stacked-card">
+        <h2 class="card-title">Branch Paths</h2>
+        <div id="branch-paths-container"></div>
+        <p class="settings-hint">Each branch's path defaults to a guess based on where this app is installed, shown as placeholder text until confirmed. If your checkout lives somewhere else, use Browse — this is saved per-machine, locally.</p>
+      </div>
+
+      <div class="stacked-card">
+        <h2 class="card-title">Active Selection</h2>
+        <div class="form-row">
+          <label class="form-label" for="settings-branch-select">Active Branch</label>
+          <select id="settings-branch-select" class="text-input"></select>
+        </div>
+        <div class="form-row">
+          <label class="form-label" for="settings-workspace-select">Active Workspace</label>
+          <select id="settings-workspace-select" class="text-input"></select>
+        </div>
+        <div class="board-divider"></div>
+        <div class="info-box">
+          <div class="info-label">Resolved Design Path</div>
+          <div id="settings-resolved-path" class="info-value">...</div>
+        </div>
+      </div>
+
+      <div class="stacked-card">
+        <h2 class="card-title">Environment</h2>
+        <div class="form-row">
+          <label class="form-label" for="unity-exe-input">Unity Executable</label>
+          <input type="text" id="unity-exe-input" class="text-input mono" placeholder="C:\Program Files\Unity\Hub\Editor\...\Unity.exe" readonly />
+          <button class="secondary-btn" id="browse-unity-exe-btn">Browse</button>
+        </div>
+        <p class="settings-hint">Needed only for step 2 (ProtoToLua), run headlessly via <code>Unity.exe -batchmode -executeMethod ProtoTool.ProtoToLua</code> against the active branch's Unity project.</p>
+      </div>
+
+      <div class="stacked-card">
+        <h2 class="card-title">Convert Layout Cache</h2>
+        <p class="settings-hint">Step 8 caches each source event's convert_layout.lua placement locally so reopening the same event again is instant instead of re-scanning SVN history. This re-checks everything already cached, plus the current latest event of each type, against the live file (free) and SVN (only if not live) — updating the cache only where the data actually changed.</p>
+        <div class="execution-footer" style="margin-top: 14px;">
+          <button id="refresh-cache-btn" class="primary-btn small">Update Cache from SVN</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- PLACEHOLDER VIEW -->
+    <section id="placeholder-view" class="main-container view placeholder-outer" aria-labelledby="placeholder-title">
+      <div class="huge-blue-board">
+        <div class="card-icon-container" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v6M12 16v6M2 12h6M16 12h6"/><circle cx="12" cy="12" r="3"/></svg>
+        </div>
+        <h1 class="board-title" id="placeholder-title">Streak Challenge</h1>
+        <p class="board-subtitle">Under development</p>
+        <p class="board-description">Advanced automation for this flow is currently in development. Keep an eye out for updates!</p>
+        <div class="board-divider"></div>
+        <p class="board-footer">Event Automation Team</p>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<div class="toast-stack" id="toast-stack" aria-live="polite"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
