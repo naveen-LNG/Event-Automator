@@ -30,17 +30,26 @@ convert.json/convert_layout.lua registration, and more. No Unity Editor required
 
 ## For developers — building from source
 
-Requires Node.js and Python 3 (with `pip install pyinstaller openpyxl`) only for
-*building* — end users never need either.
+Requires Node.js and Python 3 (with `pip` available) only for *building* — end
+users never need either.
 
 ```bash
 npm install
 npm run dist
 ```
 
-This compiles the Python backend (`pybackend-src/`) into a bundled executable via
-PyInstaller, then packages the Electron app with `electron-builder`. Output lands in
-`release/` — both a portable `.exe` and an NSIS installer.
+`npm run build:py` downloads the official python.org **embeddable** interpreter
+(PSF-signed `python.exe` — its signature is verified during the build, and the
+build fails if that check doesn't pass), drops `openpyxl`/`et_xmlfile` into its
+`Lib/site-packages`, and copies `pybackend-src/*.py` alongside it — no compiler,
+no PyInstaller. `npm run dist` runs that, then packages the Electron app with
+`electron-builder`. Output lands in `release/` — both a portable `.exe` and an
+NSIS installer.
+
+We deliberately don't compile the backend into a custom executable (e.g. via
+PyInstaller): unsigned, freshly-compiled bootloaders routinely trip antivirus/EDR
+heuristics (SentinelOne, Defender) as generic-packer false positives. Shipping
+the officially-signed interpreter instead avoids that class of problem entirely.
 
 For local development without a full rebuild each time:
 
@@ -53,5 +62,7 @@ npm start           # launches the app against the local pybackend_dist/ build
 
 - `main.js` / `preload.js` — Electron main process and the IPC bridge to the renderer.
 - `renderer/` — the UI (HTML/CSS/JS, no framework).
-- `pybackend-src/` — the Python backend (Excel/SVN automation logic), compiled at
-  build time into a standalone executable so end users never need Python installed.
+- `pybackend-src/` — the Python backend (Excel/SVN automation logic), run at
+  runtime by the bundled python.org embeddable interpreter — end users never
+  install Python themselves.
+- `scripts/build-pybackend.ps1` — assembles the bundled interpreter + dependencies.

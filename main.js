@@ -5,14 +5,19 @@ const { spawn, execFile } = require('child_process');
 
 // ---- Static config ----
 
-// All 9 backend scripts are compiled into one PyInstaller bundle (pybackend_cli.exe)
-// with a shared runtime — no system Python required on the end user's machine at all.
-// Dev mode: built locally into pybackend_dist/ next to this file (see BUILD.md).
+// Backend runs on the official python.org embeddable interpreter (PSF-signed
+// python.exe) bundled alongside our scripts + openpyxl, rather than a custom
+// PyInstaller-compiled exe — unsigned PyInstaller bootloaders routinely trip
+// AV/EDR heuristics (SentinelOne, Defender) as generic-packer false positives.
+// No system Python required on the end user's machine either way.
+// Dev mode: built locally into pybackend_dist/python/ (npm run build:py).
 // Packaged mode: electron-builder ships it under resources/pybackend/ (extraResources).
-const PYBACKEND_EXE = app.isPackaged
-  ? path.join(process.resourcesPath, 'pybackend', 'pybackend_cli.exe')
-  : path.join(__dirname, 'pybackend_dist', 'pybackend_cli', 'pybackend_cli.exe');
-const PYBACKEND_CWD = path.dirname(PYBACKEND_EXE);
+const PYBACKEND_DIR = app.isPackaged
+  ? path.join(process.resourcesPath, 'pybackend')
+  : path.join(__dirname, 'pybackend_dist', 'python');
+const PYTHON_EXE = path.join(PYBACKEND_DIR, 'python.exe');
+const PYBACKEND_SCRIPT = path.join(PYBACKEND_DIR, 'pybackend_cli.py');
+const PYBACKEND_CWD = PYBACKEND_DIR;
 
 const BRANCH_KEYS = ['trunk', 'Misc', 'Feature'];
 const WORKSPACES = ['WorkSpcae_Design', 'WorkSpcae_NE', 'WorkSpcae_FC', 'WorkSpcae3'];
@@ -31,7 +36,7 @@ const PIPELINE_STEPS = [
   '11. Update event_shop.xlsx (Shop config)',
   '12. Update item.xlsx (Item definitions)',
   '13. Update icon.xlsx (Icon references)',
-  '14. Update localization, quiz & answer_challenge',
+  '14. Update localization & answer_challenge (stage rewards)',
   '15. Update asset_ref.xlsx (Asset references)',
   '16. Update store.xlsx (Store config)',
   '17. Update card.xlsx (Card config)',
@@ -195,7 +200,7 @@ ipcMain.handle('path:resolveDesign', (evt, { branchRoot, workspace }) => {
 
 function runPython(scriptId, args) {
   return new Promise((resolve) => {
-    execFile(PYBACKEND_EXE, [scriptId, ...args], { cwd: PYBACKEND_CWD, maxBuffer: 20 * 1024 * 1024 }, (error, stdout, stderr) => {
+    execFile(PYTHON_EXE, [PYBACKEND_SCRIPT, scriptId, ...args], { cwd: PYBACKEND_CWD, maxBuffer: 20 * 1024 * 1024 }, (error, stdout, stderr) => {
       resolve({
         success: !error,
         code: error ? (error.code || 1) : 0,
@@ -288,8 +293,8 @@ ipcMain.handle('pipeline:runStep', async (evt, params) => {
   // output the UI would show nothing and look hung instead of just slow.
   return new Promise((resolve) => {
     let output = '';
-    const proc = spawn(PYBACKEND_EXE, [
-      'event_pipeline', String(stepIndex), srcEvt, tgtEvt, branchRoot, isRevert ? '1' : '0', workspace
+    const proc = spawn(PYTHON_EXE, [
+      PYBACKEND_SCRIPT, 'event_pipeline', String(stepIndex), srcEvt, tgtEvt, branchRoot, isRevert ? '1' : '0', workspace
     ], { cwd: PYBACKEND_CWD });
 
     proc.stdout.on('data', (d) => {
@@ -361,8 +366,8 @@ ipcMain.handle('convertLayoutCache:refresh', async (evt, { branchRoot, workspace
   // events that aren't live and aren't cached yet, so silence would look hung.
   return new Promise((resolve) => {
     let output = '';
-    const proc = spawn(PYBACKEND_EXE, [
-      'refresh_convert_layout_cache', branchRoot, logDir, workspace, JSON.stringify(eventNames)
+    const proc = spawn(PYTHON_EXE, [
+      PYBACKEND_SCRIPT, 'refresh_convert_layout_cache', branchRoot, logDir, workspace, JSON.stringify(eventNames)
     ], { cwd: PYBACKEND_CWD });
 
     proc.stdout.on('data', (d) => { output += d.toString(); evt.sender.send('pipeline:log-line', d.toString()); });

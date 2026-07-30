@@ -6,7 +6,7 @@
   "author": "SkipBo Event Automation",
   "scripts": {
     "start": "electron .",
-    "build:py": "cd pybackend-src && python -m PyInstaller --onedir --noconfirm --distpath \"../pybackend_dist\" --workpath \"build/pybackend_work\" --specpath \"build/pybackend_work\" --collect-all openpyxl --exclude-module pytest --exclude-module _pytest --exclude-module numpy --exclude-module scipy --exclude-module pandas --exclude-module matplotlib --exclude-module PIL --exclude-module cryptography --exclude-module lxml --exclude-module psycopg2 --exclude-module psycopg2_binary --exclude-module tkinter --exclude-module pydantic --exclude-module pydantic_core --name pybackend_cli pybackend_cli.py",
+    "build:py": "powershell -ExecutionPolicy Bypass -File scripts/build-pybackend.ps1",
     "dist": "npm run build:py && electron-builder"
   },
   "devDependencies": {
@@ -27,7 +27,7 @@
     ],
     "extraResources": [
       {
-        "from": "pybackend_dist/pybackend_cli",
+        "from": "pybackend_dist/python",
         "to": "pybackend"
       }
     ],
