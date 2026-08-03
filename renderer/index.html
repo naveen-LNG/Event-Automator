@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Event Automator (Standalone)</title>
-<link rel="stylesheet" href="style.css" />
+<link rel="stylesheet" href="style.css?v=6" />
 </head>
 <body>
 <div class="app-container">
@@ -22,35 +22,51 @@
         </div>
       </div>
 
-      <button class="menu-btn active-btn" data-view="main-events-view" title="Main Events">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>
+      <button class="menu-btn chip-violet active-btn" data-view="main-events-view" title="Main Events">
+        <span class="icon-chip chip-violet"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg></span>
         <span class="btn-text">Main Events</span>
       </button>
-      <button class="menu-btn" data-view="minigames-view" title="Minigame Configs">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="10" rx="5"/><path d="M7 12h.01M9.5 9.5v5M17 12h.01M14.5 12h.01"/></svg>
+      <button class="menu-btn chip-cyan" data-view="minigames-view" title="Minigame Configs">
+        <span class="icon-chip chip-cyan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="10" rx="5"/><path d="M7 12h.01M9.5 9.5v5M17 12h.01M14.5 12h.01"/></svg></span>
         <span class="btn-text">Minigame Configs</span>
       </button>
-      <button class="menu-btn" data-view="battlepass-view" title="Pet Battlepass">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 3 7v6c0 5 4 8 9 9 5-1 9-4 9-9V7l-9-5z"/><path d="M9 12l2 2 4-4"/></svg>
+      <button class="menu-btn chip-amber" data-view="battlepass-view" title="Pet Battlepass">
+        <span class="icon-chip chip-amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 3 7v6c0 5 4 8 9 9 5-1 9-4 9-9V7l-9-5z"/><path d="M9 12l2 2 4-4"/></svg></span>
         <span class="btn-text">Pet Battlepass</span>
       </button>
-      <button class="menu-btn" data-view="holiday-bp-view" title="Holiday Battlepass">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M4.5 6.5l15 11M19.5 6.5l-15 11M2 12h20"/></svg>
+      <button class="menu-btn chip-rose" data-view="holiday-bp-view" title="Holiday Battlepass">
+        <span class="icon-chip chip-rose"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M4.5 6.5l15 11M19.5 6.5l-15 11M2 12h20"/></svg></span>
         <span class="btn-text">Holiday Battlepass</span>
       </button>
-      <button class="menu-btn" data-view="placeholder-view" data-title="Decoration Shop" title="Decoration Shop">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2 3 7v13a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7l-3-5"/><path d="M3 7h18M9 11a3 3 0 0 0 6 0"/></svg>
+      <button class="menu-btn chip-teal" data-view="decoration-shop-view" title="Decoration Shop">
+        <span class="icon-chip chip-teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2 3 7v13a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7l-3-5"/><path d="M3 7h18M9 11a3 3 0 0 0 6 0"/></svg></span>
         <span class="btn-text">Decoration Shop</span>
       </button>
-      <button class="menu-btn" data-view="placeholder-view" data-title="Streak Challenge" title="Streak Challenge">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2c1 4-3 5-3 9a3 3 0 0 0 6 0c1 2-1 3-1 5a4 4 0 0 1-8 0c0-6 6-7 6-14z"/></svg>
+      <button class="menu-btn chip-orange" data-view="streak-challenge-view" title="Streak Challenge">
+        <span class="icon-chip chip-orange"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2c1 4-3 5-3 9a3 3 0 0 0 6 0c1 2-1 3-1 5a4 4 0 0 1-8 0c0-6 6-7 6-14z"/></svg></span>
         <span class="btn-text">Streak Challenge</span>
+      </button>
+      <button class="menu-btn chip-pink" data-view="weekly-gift-view" title="Weekly Gift">
+        <span class="icon-chip chip-pink"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="8" width="18" height="13" rx="2"/><path d="M3 12h18M12 8v13"/><path d="M12 8c-1.5 0-4-1-4-3a2 2 0 0 1 4 0 2 2 0 0 1 4 0c0 2-2.5 3-4 3z"/></svg></span>
+        <span class="btn-text">Weekly Gift</span>
+      </button>
+      <button class="menu-btn chip-indigo" data-view="full-screen-gift-view" title="Full Screen Gift">
+        <span class="icon-chip chip-indigo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="18" rx="2"/><path d="M8 3v18M16 3v18M2 9h6M2 15h6M16 9h6M16 15h6"/></svg></span>
+        <span class="btn-text">Full Screen Gift</span>
+      </button>
+      <button class="menu-btn chip-blue" data-view="trivia-challenge-view" title="Trivia Challenge">
+        <span class="icon-chip chip-blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 2-2.5 2-2.5 4"/><path d="M12 17h.01"/></svg></span>
+        <span class="btn-text">Trivia Challenge</span>
+      </button>
+      <button class="menu-btn chip-emerald" data-view="endless-treasure-view" title="Endless Treasure">
+        <span class="icon-chip chip-emerald"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="10" width="18" height="10" rx="1"/><path d="M3 10 5 4h14l2 6M9 14a3 3 0 0 0 6 0"/></svg></span>
+        <span class="btn-text">Endless Treasure</span>
       </button>
 
       <div class="sidebar-spacer"></div>
 
-      <button class="menu-btn" data-view="settings-view" title="Settings">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      <button class="menu-btn chip-slate" data-view="settings-view" title="Settings">
+        <span class="icon-chip chip-slate"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>
         <span class="btn-text">Settings</span>
       </button>
     </div>
@@ -138,14 +154,22 @@
         <p class="header-subtitle">Add and manage multiple minigame runs</p>
       </div>
       <div class="stacked-card">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
-          <h2 class="card-title" style="margin-bottom:0;">Minigame Run Entries</h2>
-          <button id="add-minigame-row-btn" class="primary-btn small">+ Add Run</button>
+        <h2 class="card-title">Auto-Generate Next Set</h2>
+        <p class="header-subtitle small" style="margin-top:-8px; margin-bottom:12px;">Fills all 5 runs of the next set (<span id="minigame-next-set-preview">-</span>) from a single start time, using each minigame's fixed duration and a 1-day gap between runs.</p>
+        <div style="display:flex; align-items:flex-end; gap:12px; flex-wrap:wrap;">
+          <label style="display:flex; flex-direction:column; gap:4px;">
+            <span style="font-size:12px; opacity:0.7;">First minigame start time</span>
+            <input type="text" id="minigame-set-start-input" class="mg-time" value="2026-06-01 00:00:00">
+          </label>
+          <button id="minigame-generate-set-btn" class="primary-btn small">Generate Set</button>
         </div>
-        <div id="minigame-rows-container"></div>
       </div>
       <div class="stacked-card">
-        <h2 class="card-title">Pipeline Action</h2>
+        <h2 class="card-title">Preview</h2>
+        <div id="minigame-preview-container">
+          <p class="header-subtitle small" style="margin:0;">Generate a set above to preview the rows here.</p>
+        </div>
+        <div class="board-divider"></div>
         <div class="execution-footer" style="justify-content:flex-end;">
           <button id="minigame-execute-btn" class="primary-btn">Commit to mini_mgr.xlsx</button>
         </div>
@@ -175,9 +199,7 @@
         </div>
         <div class="board-divider"></div>
         <p class="header-subtitle small">* Duplicates the 800/900 point rewards group from the Template Target and updates all cross-sheet and cross-file references.</p>
-      </div>
-      <div class="stacked-card">
-        <div class="execution-footer" style="justify-content:flex-end;">
+        <div class="execution-footer" style="justify-content:flex-end; margin-top:14px;">
           <button id="bp-execute-btn" class="primary-btn">Commit BattlePass Config</button>
         </div>
       </div>
@@ -206,10 +228,290 @@
         <div class="board-divider"></div>
         <span class="preview-label">Suffix Format Mirroring</span>
         <div id="hbp-suffix-preview" class="preview-suffix">Detecting previous group...</div>
-      </div>
-      <div class="stacked-card">
+        <div class="board-divider"></div>
         <div class="execution-footer" style="justify-content:flex-end;">
           <button id="hbp-execute-btn" class="primary-btn">Commit Holiday BP</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- DECORATION SHOP VIEW -->
+    <section id="decoration-shop-view" class="main-container view" aria-labelledby="decoshop-heading">
+      <div class="header-section">
+        <h1 id="decoshop-heading" class="header-title">Decoration Shop Configuration</h1>
+        <p class="header-subtitle">Card Back &amp; Frame Configuration + PVP Bots Card Back Update</p>
+      </div>
+      <div class="stacked-card">
+        <h2 class="card-title">Event Configuration</h2>
+        <div class="form-row">
+          <label class="form-label">Event ID</label>
+          <input type="text" id="decoshop-event-id-display" class="text-input mono" disabled title="Reused from the Event ID field on the Main Events tab" />
+        </div>
+        <div class="form-row"><label class="form-label" for="decoshop-event-name">Event Name</label><input type="text" id="decoshop-event-name" class="text-input mono" placeholder="e.g. AliceInWonderland" title="No spaces; used verbatim in every alias" /></div>
+        <div class="form-row">
+          <label class="form-label" for="decoshop-mode-1">Game Mode 1</label>
+          <select id="decoshop-mode-1" class="text-input">
+            <option value="Merge">Merge</option>
+            <option value="Blocks">Blocks</option>
+            <option value="Sim">Sim</option>
+            <option value="Sort">Sort</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label class="form-label" for="decoshop-mode-2">Game Mode 2</label>
+          <select id="decoshop-mode-2" class="text-input">
+            <option value="Blocks">Blocks</option>
+            <option value="Merge">Merge</option>
+            <option value="Sim">Sim</option>
+            <option value="Sort">Sort</option>
+          </select>
+        </div>
+        <div class="form-row"><label class="form-label" for="decoshop-price-frame">Frame Price</label><input type="text" id="decoshop-price-frame" class="text-input mono" value="4" /></div>
+        <div class="form-row"><label class="form-label" for="decoshop-price-cardback">Card Back Price</label><input type="text" id="decoshop-price-cardback" class="text-input mono" value="10" /></div>
+      </div>
+      <div class="stacked-card">
+        <h2 class="card-title">Alias Preview</h2>
+        <div class="preview-grid four">
+          <div class="preview-cell"><span class="preview-label">Frame 1</span><span id="decoshop-preview-frame1" class="preview-value">...</span></div>
+          <div class="preview-cell"><span class="preview-label">Frame 2</span><span id="decoshop-preview-frame2" class="preview-value">...</span></div>
+          <div class="preview-cell"><span class="preview-label">Card Back</span><span id="decoshop-preview-cardback" class="preview-value">...</span></div>
+        </div>
+        <div class="board-divider"></div>
+        <div class="execution-footer" style="justify-content:flex-end;">
+          <button id="decoshop-execute-btn" class="primary-btn">Commit Decoration Shop Config</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- STREAK CHALLENGE VIEW -->
+    <section id="streak-challenge-view" class="main-container view" aria-labelledby="streak-heading">
+      <div class="header-section">
+        <h1 id="streak-heading" class="header-title">Streak Challenge Configuration</h1>
+        <p class="header-subtitle">Appends a new resident_task.xlsx cycle (任务链 + 任务列表) — independent of the Main Events checklist</p>
+      </div>
+      <div class="stacked-card">
+        <h2 class="card-title">Event Configuration</h2>
+        <div class="form-row">
+          <label class="form-label">Event ID</label>
+          <input type="text" id="streak-event-id-display" class="text-input mono" disabled title="Reused from the Event ID field on the Main Events tab" />
+        </div>
+        <div class="form-row"><label class="form-label" for="streak-event-name">Event Name</label><input type="text" id="streak-event-name" class="text-input mono" placeholder="e.g. Dessert2610" title="Used to swap the extra-reward token name (col I/J) in 任务列表" /></div>
+        <div class="form-row">
+          <label class="form-label">Start Date</label>
+          <input type="text" id="streak-start-date-display" class="text-input mono" disabled title="Reused from the Start Date field on the Main Events tab" />
+        </div>
+        <div class="form-row">
+          <label class="form-label">Duration (days)</label>
+          <input type="text" id="streak-duration-display" class="text-input mono" disabled title="Reused from the Duration (days) field on the Main Events tab" />
+        </div>
+      </div>
+      <div class="stacked-card">
+        <h2 class="card-title">Preview</h2>
+        <div class="preview-grid four">
+          <div class="preview-cell"><span class="preview-label">End Date</span><span id="streak-preview-end-date" class="preview-value">...</span></div>
+          <div class="preview-cell"><span class="preview-label">New 任务链 Rows</span><span id="streak-preview-rows" class="preview-value">...</span></div>
+        </div>
+        <details class="info-disclosure">
+          <summary>
+            <span class="info-disclosure-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>
+            <span>How 任务链 continuation works</span>
+            <svg class="info-disclosure-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+          </summary>
+          <div class="info-disclosure-body">
+            <p class="settings-hint">任务链 is a gapless weekly chain — new rows always continue from wherever the last existing row ends, not from Start Date above. If they don't match, the tool logs a warning and uses the chain's own continuation date instead.</p>
+          </div>
+        </details>
+        <div class="board-divider"></div>
+        <div class="execution-footer" style="justify-content:flex-end;">
+          <button id="streak-execute-btn" class="primary-btn">Commit Streak Challenge Config</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- WEEKLY GIFT VIEW -->
+    <section id="weekly-gift-view" class="main-container view" aria-labelledby="weekly-gift-heading">
+      <div class="header-section">
+        <h1 id="weekly-gift-heading" class="header-title">Weekly Gift Configuration</h1>
+        <p class="header-subtitle">Enables store.xlsx "weekly_gift" rows for this event — a fixed, gapless weekly grid (10001, 10002, ...) that events claim rows from by date overlap, not by cloning</p>
+      </div>
+      <div class="stacked-card">
+        <h2 class="card-title">Event Configuration</h2>
+        <div class="form-row">
+          <label class="form-label">Event ID</label>
+          <input type="text" id="weeklygift-event-id-display" class="text-input mono" disabled title="Reused from the Event ID field on the Main Events tab" />
+        </div>
+        <div class="form-row">
+          <label class="form-label">Start Date</label>
+          <input type="text" id="weeklygift-start-date-display" class="text-input mono" disabled title="Reused from the Start Date field on the Main Events tab" />
+        </div>
+        <div class="form-row">
+          <label class="form-label">Duration (days)</label>
+          <input type="text" id="weeklygift-duration-display" class="text-input mono" disabled title="Reused from the Duration (days) field on the Main Events tab" />
+        </div>
+      </div>
+      <div class="stacked-card">
+        <h2 class="card-title">Preview</h2>
+        <div class="preview-grid four">
+          <div class="preview-cell"><span class="preview-label">End Date</span><span id="weeklygift-preview-end-date" class="preview-value">...</span></div>
+          <div class="preview-cell"><span class="preview-label">Weekly Slots Claimed</span><span id="weeklygift-preview-rows" class="preview-value">...</span></div>
+        </div>
+        <details class="info-disclosure">
+          <summary>
+            <span class="info-disclosure-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>
+            <span>How weekly slot claiming works</span>
+            <svg class="info-disclosure-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+          </summary>
+          <div class="info-disclosure-body">
+            <p class="settings-hint">weekly_gift rows aren't cloned per event — they're a fixed, always-on weekly grid. This claims (enables) however many existing weekly slots overlap this event's date range, extending the grid with new disabled weeks first if it doesn't reach that far yet. A 14-day event claims 2 rows, a 21-day event claims 3, etc. (verified against production data, not a fixed count).</p>
+          </div>
+        </details>
+        <div class="board-divider"></div>
+        <div class="execution-footer" style="justify-content:flex-end;">
+          <button id="weeklygift-execute-btn" class="primary-btn">Commit Weekly Gift Config</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- FULL SCREEN GIFT VIEW -->
+    <section id="full-screen-gift-view" class="main-container view" aria-labelledby="fsg-heading">
+      <div class="header-section">
+        <h1 id="fsg-heading" class="header-title">Full Screen Gift Configuration</h1>
+        <p class="header-subtitle">Appends a new store.xlsx "recommend_gift" full-screen gift (栏位归属=16) — clones the most recent instance's config, recurring on a ~14-day cadence</p>
+      </div>
+      <div class="stacked-card">
+        <h2 class="card-title">Schedule</h2>
+        <div class="form-row"><label class="form-label" for="fsg-start-date">Start Date</label><input type="text" id="fsg-start-date" class="text-input mono" placeholder="yyyy-mm-dd" /></div>
+      </div>
+      <div class="stacked-card">
+        <h2 class="card-title">Preview</h2>
+        <div class="preview-grid four">
+          <div class="preview-cell"><span class="preview-label">Next ID</span><span id="fsg-preview-id" class="preview-value">...</span></div>
+          <div class="preview-cell"><span class="preview-label">Alias</span><span id="fsg-preview-alias" class="preview-value">...</span></div>
+          <div class="preview-cell"><span class="preview-label">Start</span><span id="fsg-preview-start" class="preview-value">...</span></div>
+          <div class="preview-cell"><span class="preview-label">End</span><span id="fsg-preview-end" class="preview-value">...</span></div>
+        </div>
+        <details class="info-disclosure">
+          <summary>
+            <span class="info-disclosure-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>
+            <span>What gets cloned from the template row</span>
+            <svg class="info-disclosure-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+          </summary>
+          <div class="info-disclosure-body">
+            <p class="settings-hint">Window length and every other column (recharge list, formula, purchase count, open condition, etc.) are cloned from the most recent slot-16 row — verified identical across the whole existing series. 开关 (switch) is always set to FALSE on the new row regardless of the template, matching the sheet's own default.</p>
+          </div>
+        </details>
+        <div class="board-divider"></div>
+        <div class="execution-footer" style="justify-content:flex-end;">
+          <button id="fsg-execute-btn" class="primary-btn">Commit Full Screen Gift</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- TRIVIA CHALLENGE VIEW -->
+    <section id="trivia-challenge-view" class="main-container view" aria-labelledby="trivia-heading">
+      <div class="header-section">
+        <h1 id="trivia-heading" class="header-title">Trivia Challenge (答题挑战) Cycle Refresh</h1>
+        <p class="header-subtitle">Archives the current live quiz batch to Quiz_备份 and writes a fresh 100-question set into localization_quiz.xlsx + answer_challenge.xlsx, keyed to the upcoming 答题挑战 cycle's start date in mini_mgr.xlsx</p>
+      </div>
+      <div class="stacked-card">
+        <h2 class="card-title">Upcoming Cycle</h2>
+        <div class="preview-grid four">
+          <div class="preview-cell"><span class="preview-label">Quiz ID Prefix</span><span id="trivia-preview-prefix" class="preview-value">...</span></div>
+          <div class="preview-cell"><span class="preview-label">Batch # (this branch)</span><span id="trivia-preview-batch" class="preview-value">...</span></div>
+          <div class="preview-cell"><span class="preview-label">Questions Ready</span><span id="trivia-preview-count" class="preview-value">...</span></div>
+          <div class="preview-cell"><span class="preview-label">Tier 1 / 2 / 3</span><span id="trivia-preview-tiers" class="preview-value">...</span></div>
+          <div class="preview-cell"><span class="preview-label">Status</span><span id="trivia-preview-status" class="preview-value">...</span></div>
+        </div>
+        <details class="info-disclosure">
+          <summary>
+            <span class="info-disclosure-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>
+            <span>How the quiz ID and question batch are derived</span>
+            <svg class="info-disclosure-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+          </summary>
+          <div class="info-disclosure-body">
+            <p class="settings-hint">Quiz ID prefix is derived from the 答题挑战 row in mini_mgr.xlsx's 活动数据 sheet whose 控制开关 is TRUE (e.g. a 2026-08-27 start date produces QUIZ260827). Question content comes from a numbered batch pool (trivia_questions_batch_01.py, _02.py, ...) — not tied to the date — and each branch tracks its own progress through the pool independently, so parallel branches never need to agree on a schedule. When the current batch runs out, author the next trivia_questions_batch_NN.py before running this.</p>
+          </div>
+        </details>
+        <div class="board-divider"></div>
+        <div class="execution-footer" style="justify-content:space-between;">
+          <button id="trivia-refresh-btn" class="secondary-btn">Refresh Preview</button>
+          <button id="trivia-execute-btn" class="primary-btn">Run Trivia Challenge Cycle</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ENDLESS TREASURE VIEW -->
+    <section id="endless-treasure-view" class="main-container view" aria-labelledby="endless-treasure-heading">
+      <div class="header-section">
+        <h1 id="endless-treasure-heading" class="header-title">Endless Treasure (折扣链)</h1>
+        <p class="header-subtitle">endless_treasure.xlsx — 折扣链数据 / 折扣链推荐 / 折扣链阶段数据 / 折扣链常量. Analysis only for now — no automation wired up yet.</p>
+      </div>
+      <details class="stacked-card info-disclosure as-card">
+        <summary>
+          <span class="info-disclosure-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>
+          <span>How it fits together</span>
+          <svg class="info-disclosure-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+        </summary>
+        <div class="info-disclosure-body">
+          <p class="settings-hint">
+            折扣链推荐 (recommendation) is the scheduler: one row per ~2-week window, with a spend-tier formula
+            ([TotalPayment]/[LastWeekPayment]/[LastWeekCount]) that picks one of 3 sibling chain IDs (low/mid/high
+            spender) from 折扣链数据. Only the current window has 开关=TRUE; 节日主题 tags the window with the live
+            event (e.g. "202608dessert"). 折扣链数据 defines each chain's price tier, valid time, and its ordered
+            stage-ID list; 折扣链阶段数据 holds the actual reward content per stage ID. 折扣链常量 holds engine-side
+            unlock thresholds and the currently-valid chain ID allowlist.
+          </p>
+        </div>
+      </details>
+      <details class="stacked-card info-disclosure as-card">
+        <summary>
+          <span class="info-disclosure-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>
+          <span>Key finding: stage content is generic, not per-event</span>
+          <svg class="info-disclosure-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+        </summary>
+        <div class="info-disclosure-body">
+          <p class="settings-hint">
+            Every type-2 (event) chain triplet's 固定阶段列表 points at one of only two shared stage-ID templates —
+            Slot A (24801-24824 / 24901-24921 / 25001-25024) or Slot B (25101-25124 / 25201-25221 / 25301-25324) —
+            alternating with every new event window. The actual reward content at matching positions in Slot A and
+            Slot B is identical (verified: e.g. stage 24801 and 25101 both pay "免费金币:200"). So cloning a new
+            event's endless treasure chain does not require creating new 折扣链阶段数据 rows at all — only 3 new
+            折扣链数据 rows (one per price tier) pointing at whichever slot isn't in use by the still-winding-down
+            previous event, plus one new 折扣链推荐 scheduling row. The two-slot alternation exists purely so a
+            player mid-purchase on the outgoing event's chain doesn't have their stage progression IDs reassigned
+            when the next event's chain goes live.
+          </p>
+        </div>
+      </details>
+      <div class="stacked-card">
+        <h2 class="card-title">折扣链类型 (chain type) reference</h2>
+        <div class="preview-grid four">
+          <div class="preview-cell"><span class="preview-label">1</span><span class="preview-value">Normal (placeholder, unused live)</span></div>
+          <div class="preview-cell"><span class="preview-label">2</span><span class="preview-value">Event chain — 3/window, alternating slots</span></div>
+          <div class="preview-cell"><span class="preview-label">3</span><span class="preview-value">Resident 1 (purple) — currently commented out</span></div>
+          <div class="preview-cell"><span class="preview-label">4</span><span class="preview-value">Resident 2 (yellow) — currently commented out</span></div>
+        </div>
+      </div>
+
+      <div class="stacked-card">
+        <h2 class="card-title">New Event Window</h2>
+        <div class="form-row"><label class="form-label" for="et-start-date">Start Date</label><input type="text" id="et-start-date" class="text-input mono" placeholder="yyyy-mm-dd" /></div>
+        <div class="form-row"><label class="form-label" for="et-event-name">Event Name</label><input type="text" id="et-event-name" class="text-input" placeholder="e.g. PicnicParkDessert" /></div>
+        <p class="settings-hint">Event Name feeds both 折扣链数据's 说明 (e.g. "PicnicParkDessert1.99折扣链") and the 节日主题 tag (YYYYMM + lowercased alnum, e.g. "202608picnicparkdessert").</p>
+      </div>
+      <div class="stacked-card">
+        <h2 class="card-title">Preview</h2>
+        <div class="preview-grid four">
+          <div class="preview-cell"><span class="preview-label">Next Rec ID</span><span id="et-preview-rec-id" class="preview-value">...</span></div>
+          <div class="preview-cell"><span class="preview-label">New Chain IDs</span><span id="et-preview-chain-ids" class="preview-value">...</span></div>
+          <div class="preview-cell"><span class="preview-label">Start</span><span id="et-preview-start" class="preview-value">...</span></div>
+          <div class="preview-cell"><span class="preview-label">End</span><span id="et-preview-end" class="preview-value">...</span></div>
+          <div class="preview-cell"><span class="preview-label">Theme Tag</span><span id="et-preview-theme" class="preview-value">...</span></div>
+        </div>
+        <div class="board-divider"></div>
+        <div class="execution-footer" style="justify-content:space-between;">
+          <button id="et-refresh-btn" class="secondary-btn">Refresh Preview</button>
+          <button id="et-execute-btn" class="primary-btn">Commit Endless Treasure</button>
         </div>
       </div>
     </section>
@@ -255,10 +557,10 @@
       </div>
 
       <div class="stacked-card">
-        <h2 class="card-title">Convert Layout Cache</h2>
-        <p class="settings-hint">Step 8 caches each source event's convert_layout.lua placement locally so reopening the same event again is instant instead of re-scanning SVN history. This re-checks everything already cached, plus the current latest event of each type, against the live file (free) and SVN (only if not live) — updating the cache only where the data actually changed.</p>
+        <h2 class="card-title">Source Event Caches</h2>
+        <p class="settings-hint">Several steps (convert_layout.lua placement, icon.xlsx/item.xlsx icon references, localization.xlsx rows) cache each source event's data locally so reopening the same event again is instant instead of re-scanning SVN history. This re-checks everything already cached, plus the current latest event of each type, against the live files (free) and SVN (only if not live) — updating each cache only where the data actually changed.</p>
         <div class="execution-footer" style="margin-top: 14px;">
-          <button id="refresh-cache-btn" class="primary-btn small">Update Cache from SVN</button>
+          <button id="refresh-cache-btn" class="primary-btn small">Update All Caches from SVN</button>
         </div>
       </div>
     </section>

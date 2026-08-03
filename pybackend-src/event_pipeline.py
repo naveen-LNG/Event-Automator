@@ -4,10 +4,24 @@ import shutil
 import json
 import traceback
 import re
+import copy as _copy
 
 
 WORKSPACE_NAME = "WorkSpcae_Design"
 UNDO_LOG_FILE = "undo_log.json"
+
+def copy_cell_format(src_cell, dst_cell):
+    """Copy number format + style from src_cell to dst_cell. Call this after
+    writing dst_cell.value when cloning a row — plain value-only writes leave
+    the destination cell's format at openpyxl's default ("General"), which
+    silently diverges from source cells formatted as e.g. Text."""
+    dst_cell.number_format = src_cell.number_format
+    if src_cell.has_style:
+        dst_cell.font = _copy.copy(src_cell.font)
+        dst_cell.fill = _copy.copy(src_cell.fill)
+        dst_cell.border = _copy.copy(src_cell.border)
+        dst_cell.alignment = _copy.copy(src_cell.alignment)
+        dst_cell.protection = _copy.copy(src_cell.protection)
 
 def log(msg):
     try:
@@ -882,10 +896,19 @@ def load_convert_layout_cache(log_dir):
     return {}
 
 
+def _json_safe_default(obj):
+    """json.dump default= handler — cached row data can contain openpyxl's native
+    datetime/date cell values, which aren't JSON-serializable on their own."""
+    from datetime import datetime, date
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    return str(obj)
+
+
 def save_convert_layout_cache(log_dir, cache):
     p = convert_layout_cache_path(log_dir)
     with open(p, 'w', encoding='utf-8') as f:
-        json.dump(cache, f, indent=2, ensure_ascii=False)
+        json.dump(cache, f, indent=2, ensure_ascii=False, default=_json_safe_default)
 
 
 def _cache_timestamp():
@@ -1002,7 +1025,7 @@ def load_named_cache(log_dir, cache_name):
 def save_named_cache(log_dir, cache_name, cache):
     p = os.path.join(log_dir, f"{cache_name}_{WORKSPACE_NAME}.json")
     with open(p, 'w', encoding='utf-8') as f:
-        json.dump(cache, f, indent=2, ensure_ascii=False)
+        json.dump(cache, f, indent=2, ensure_ascii=False, default=_json_safe_default)
 
 
 def _strip_event_name(value, evt_name):
@@ -1034,11 +1057,13 @@ def find_icon_item_group_bounds(ws, group_marker="活动物品"):
     return start, end
 
 
-def extract_icon_item_group_rows(wb, evt_lower, group_marker="活动物品"):
-    """Return raw row value-lists within the icon_item group whose col1 mentions evt_lower."""
-    if "icon_item" not in wb.sheetnames:
+def extract_icon_item_group_rows(wb, evt_lower, group_marker="活动物品", sheet_name="icon_item"):
+    """Return raw row value-lists within a divider-bounded group whose col1 mentions
+    evt_lower. Generalized beyond icon_item — also used for localize_event_fixed's
+    '活动名' group, which follows the identical divider-bounded-accumulation shape."""
+    if sheet_name not in wb.sheetnames:
         return None
-    ws = wb["icon_item"]
+    ws = wb[sheet_name]
     start, end = find_icon_item_group_bounds(ws, group_marker)
     if start is None:
         return None
@@ -1384,6 +1409,170 @@ def refresh_icon_and_item_caches(proj_root, log_dir, event_names):
         log(f"Cache warm [{evt_lower}]: icon_item={stats[evt_lower]['icon_item']['count']} "
             f"icon_event={stats[evt_lower]['icon_event']['count']} "
             f"item_icon={stats[evt_lower]['item_icon']['count']}")
+
+    return stats
+
+
+# ================================================================================
+# localization.xlsx source-event data: same live -> cache -> SVN-history pattern,
+# for the three sheets that actually need it — localize_event_fixed (divider-bounded
+# 2-row group, same shape as icon_item), localize_event (backup-first, same shape as
+# icon_event), and localize_server (pure accumulator, always live so far — no sheet
+# ever observed missing an older event).
+# ================================================================================
+
+def get_localize_event_fixed_rows_for_source(loc_path, src_lower, hint_date, log_dir):
+    """(rows, source_label) for src_lower's 2-row group in localize_event_fixed's
+    '活动名 & 礼包名区 & 成就分享区' divider-bounded section."""
+    import openpyxl as _oxl
+    import io as _io
+
+    wb_live = _oxl.load_workbook(loc_path, data_only=True)
+    live_rows = extract_icon_item_group_rows(wb_live, src_lower, group_marker="活动名", sheet_name="localize_event_fixed")
+    if live_rows:
+        cache = load_named_cache(log_dir, "localize_event_fixed_cache")
+        cache[src_lower] = {"rows": live_rows, "source": "live", "cached_at": _cache_timestamp()}
+        save_named_cache(log_dir, "localize_event_fixed_cache", cache)
+        return live_rows, f"current live file ({len(live_rows)} row(s))"
+
+    cache = load_named_cache(log_dir, "localize_event_fixed_cache")
+    cached_entry = cache.get(src_lower)
+    if cached_entry and cached_entry.get("rows"):
+        return cached_entry["rows"], f"local cache (from {cached_entry.get('source', '?')}, cached {cached_entry.get('cached_at', '?')})"
+
+    if not event_ever_registered_in_convert_json(loc_path, src_lower, hint_date):
+        log(f"localize_event_fixed: {src_lower} never appears in convert.json (current or history) — skipping the expensive SVN search.")
+        return None, None
+
+    revisions = get_svn_revisions_in_date_range(loc_path, hint_date) if hint_date else None
+    if not revisions:
+        revisions = get_svn_log_revisions(loc_path, limit=60)
+    if not revisions:
+        return None, None
+
+    for rev in revisions:
+        content_bytes = svn_cat_revision_bytes(loc_path, rev)
+        if content_bytes is None:
+            continue
+        try:
+            wb_hist = _oxl.load_workbook(_io.BytesIO(content_bytes), data_only=True)
+        except Exception:
+            continue
+        rows = extract_icon_item_group_rows(wb_hist, src_lower, group_marker="活动名", sheet_name="localize_event_fixed")
+        if rows:
+            cache[src_lower] = {"rows": rows, "source": f"svn r{rev}", "cached_at": _cache_timestamp()}
+            save_named_cache(log_dir, "localize_event_fixed_cache", cache)
+            return rows, f"SVN history (r{rev}, freshly fetched and cached)"
+
+    return None, None
+
+
+def get_localize_event_rows_for_source(loc_path, src_lower, hint_date, log_dir):
+    """(rows, source_label) for src_lower's localize_event rows — checked against
+    localize_旧活动备份 first (a maintained in-repo archive, free), then cache, then
+    SVN history of localize_event itself. Deliberately never falls back to a
+    placeholder — if this returns (None, None), the caller must log that plainly."""
+    import openpyxl as _oxl
+    import io as _io
+
+    backup_sheet_name = "localize_旧活动备份"
+    active_sheet_name = "localize_event"
+
+    wb_live = _oxl.load_workbook(loc_path, data_only=True)
+
+    def _rows_from_sheet(ws):
+        rows = []
+        for r in range(2, ws.max_row + 1):
+            c1 = str(ws.cell(r, 1).value or "").lower()
+            if src_lower in c1:
+                rows.append([ws.cell(r, c).value for c in range(1, ws.max_column + 1)])
+        return rows
+
+    if backup_sheet_name in wb_live.sheetnames:
+        rows = _rows_from_sheet(wb_live[backup_sheet_name])
+        if rows:
+            cache = load_named_cache(log_dir, "localize_event_cache")
+            cache[src_lower] = {"rows": rows, "source": f"{backup_sheet_name} (live)", "cached_at": _cache_timestamp()}
+            save_named_cache(log_dir, "localize_event_cache", cache)
+            return rows, f"{backup_sheet_name} backup sheet ({len(rows)} row(s))"
+
+    if active_sheet_name in wb_live.sheetnames:
+        rows = _rows_from_sheet(wb_live[active_sheet_name])
+        if rows:
+            cache = load_named_cache(log_dir, "localize_event_cache")
+            cache[src_lower] = {"rows": rows, "source": f"{active_sheet_name} (live)", "cached_at": _cache_timestamp()}
+            save_named_cache(log_dir, "localize_event_cache", cache)
+            return rows, f"{active_sheet_name} active sheet ({len(rows)} row(s))"
+
+    cache = load_named_cache(log_dir, "localize_event_cache")
+    cached_entry = cache.get(src_lower)
+    if cached_entry and cached_entry.get("rows"):
+        return cached_entry["rows"], f"local cache (from {cached_entry.get('source', '?')}, cached {cached_entry.get('cached_at', '?')})"
+
+    if not event_ever_registered_in_convert_json(loc_path, src_lower, hint_date):
+        log(f"localize_event: {src_lower} never appears in convert.json (current or history) and wasn't in "
+            f"{backup_sheet_name} or the live {active_sheet_name} sheet — skipping the expensive SVN search.")
+        return None, None
+
+    revisions = get_svn_revisions_in_date_range(loc_path, hint_date) if hint_date else None
+    if not revisions:
+        revisions = get_svn_log_revisions(loc_path, limit=60)
+    if not revisions:
+        return None, None
+
+    for rev in revisions:
+        content_bytes = svn_cat_revision_bytes(loc_path, rev)
+        if content_bytes is None:
+            continue
+        try:
+            wb_hist = _oxl.load_workbook(_io.BytesIO(content_bytes), data_only=True)
+        except Exception:
+            continue
+        if active_sheet_name not in wb_hist.sheetnames:
+            continue
+        rows = _rows_from_sheet(wb_hist[active_sheet_name])
+        if rows:
+            cache[src_lower] = {"rows": rows, "source": f"svn r{rev} ({active_sheet_name})", "cached_at": _cache_timestamp()}
+            save_named_cache(log_dir, "localize_event_cache", cache)
+            return rows, f"SVN history (r{rev}, freshly fetched and cached)"
+
+    return None, None
+
+
+def get_localize_server_rows_for_source(loc_path, src_lower):
+    """(rows, source_label) for src_lower's localize_server rows — this sheet is a
+    pure accumulator (every event checked, back to 2024, is still present live), so
+    unlike the other two this never needs cache/SVN — just read the live sheet."""
+    import openpyxl as _oxl
+    wb_live = _oxl.load_workbook(loc_path, data_only=True)
+    if "localize_server" not in wb_live.sheetnames:
+        return None, None
+    ws = wb_live["localize_server"]
+    rows = []
+    for r in range(2, ws.max_row + 1):
+        c1 = str(ws.cell(r, 1).value or "").lower()
+        if src_lower in c1:
+            rows.append([ws.cell(r, c).value for c in range(1, ws.max_column + 1)])
+    return (rows, f"current live file ({len(rows)} row(s))") if rows else (None, None)
+
+
+def refresh_localize_event_cache(proj_root, log_dir, event_names):
+    """Pre-populate localize_event_fixed / localize_event caches for the given event
+    names (e.g. each type's current latest event)."""
+    loc_path = os.path.join(proj_root, "design", "DesignData", WORKSPACE_NAME, "design", "localization.xlsx")
+
+    stats = {}
+    for evt in event_names:
+        evt_lower = evt.lower()
+        fixed_rows, fixed_label = get_localize_event_fixed_rows_for_source(loc_path, evt_lower, None, log_dir)
+        event_rows, event_label = get_localize_event_rows_for_source(loc_path, evt_lower, None, log_dir)
+
+        stats[evt_lower] = {
+            "localize_event_fixed": {"count": len(fixed_rows) if fixed_rows else 0, "source": fixed_label},
+            "localize_event": {"count": len(event_rows) if event_rows else 0, "source": event_label},
+        }
+        log(f"Cache warm [{evt_lower}]: localize_event_fixed={stats[evt_lower]['localize_event_fixed']['count']} "
+            f"localize_event={stats[evt_lower]['localize_event']['count']}")
 
     return stats
 
@@ -1750,8 +1939,11 @@ def update_bi_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
                 if src_row:
                     new_row = ws.max_row + 1
                     for c in range(1, ws.max_column + 1):
-                        old_val = ws.cell(src_row, c).value
-                        ws.cell(new_row, c, swap_event_name(old_val))
+                        src_c = ws.cell(src_row, c)
+                        old_val = src_c.value
+                        dst_c = ws.cell(new_row, c)
+                        dst_c.value = swap_event_name(old_val)
+                        copy_cell_format(src_c, dst_c)
                     log(f"bi_reason: Added row {new_row} for {tgt_evt}.")
                     modified = True
                 else:
@@ -1780,8 +1972,8 @@ def update_bi_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
                         
                         row_data = []
                         for c in range(1, ws.max_column + 1):
-                            row_data.append(ws.cell(r, c).value)
-                        
+                            row_data.append((ws.cell(r, c).value, ws.cell(r, c)))
+
                         if group_key not in groups:
                             groups[group_key] = []
                         groups[group_key].append((r, row_data))
@@ -1806,7 +1998,10 @@ def update_bi_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
                     
                     for i, (_, cell_values) in enumerate(rows_data):
                         for c in range(1, len(cell_values) + 1):
-                            ws.cell(insert_at + i, c, swap_event_name(cell_values[c-1]))
+                            val, src_c = cell_values[c-1]
+                            dst_c = ws.cell(insert_at + i, c)
+                            dst_c.value = swap_event_name(val)
+                            copy_cell_format(src_c, dst_c)
                     
                     log(f"{ad_sheet_name}: Inserted {num_new} rows for {tgt_evt} in {group_key} group at row {insert_at}.")
                     modified = True
@@ -1828,8 +2023,11 @@ def update_bi_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
                 if src_row:
                     new_row = ws.max_row + 1
                     for c in range(1, ws.max_column + 1):
-                        old_val = ws.cell(src_row, c).value
-                        ws.cell(new_row, c, swap_event_name(old_val))
+                        src_c = ws.cell(src_row, c)
+                        old_val = src_c.value
+                        dst_c = ws.cell(new_row, c)
+                        dst_c.value = swap_event_name(old_val)
+                        copy_cell_format(src_c, dst_c)
                     log(f"bi_event_names: Added row {new_row} for {tgt_evt}.")
                     modified = True
                 else:
@@ -1960,8 +2158,11 @@ def update_events_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
                     
                     # Copy all columns from template source
                     for c in range(1, ws.max_column + 1):
-                        old_val = ws.cell(src_row, c).value
-                        ws.cell(target_row, c, swap_name(old_val))
+                        src_c = ws.cell(src_row, c)
+                        old_val = src_c.value
+                        dst_c = ws.cell(target_row, c)
+                        dst_c.value = swap_name(old_val)
+                        copy_cell_format(src_c, dst_c)
                     
                     # Set previous event ref (col 23)
                     if last_row_idx >= 2:
@@ -2029,8 +2230,11 @@ def update_events_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
                     last_id = get_last_numeric_id(ws, 1)
                     
                     for c in range(1, ws.max_column + 1):
-                        old_val = ws.cell(src_row, c).value
-                        ws.cell(new_row, c, swap_name(old_val))
+                        src_c = ws.cell(src_row, c)
+                        old_val = src_c.value
+                        dst_c = ws.cell(new_row, c)
+                        dst_c.value = swap_name(old_val)
+                        copy_cell_format(src_c, dst_c)
                     
                     # Col 1: Auto-increment type ID
                     ws.cell(new_row, 1, last_id + 1)
@@ -2058,8 +2262,11 @@ def update_events_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
                     last_id = get_last_numeric_id(ws, 1)
                     
                     for c in range(1, ws.max_column + 1):
-                        old_val = ws.cell(src_row, c).value
-                        ws.cell(new_row, c, swap_name(old_val))
+                        src_c = ws.cell(src_row, c)
+                        old_val = src_c.value
+                        dst_c = ws.cell(new_row, c)
+                        dst_c.value = swap_name(old_val)
+                        copy_cell_format(src_c, dst_c)
                     
                     ws.cell(new_row, 1, last_id + 1)
                     
@@ -2086,8 +2293,11 @@ def update_events_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
                     last_id = get_last_numeric_id(ws, 1)
                     
                     for c in range(1, ws.max_column + 1):
-                        old_val = ws.cell(src_row, c).value
-                        ws.cell(new_row, c, swap_name(old_val))
+                        src_c = ws.cell(src_row, c)
+                        old_val = src_c.value
+                        dst_c = ws.cell(new_row, c)
+                        dst_c.value = swap_name(old_val)
+                        copy_cell_format(src_c, dst_c)
                     
                     ws.cell(new_row, 1, last_id + 1)
                     
@@ -2115,8 +2325,11 @@ def update_events_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
                 if src_row:
                     new_row = real_max + 1
                     for c in range(1, ws.max_column + 1):
-                        old_val = ws.cell(src_row, c).value
-                        ws.cell(new_row, c, swap_name(old_val))
+                        src_c = ws.cell(src_row, c)
+                        old_val = src_c.value
+                        dst_c = ws.cell(new_row, c)
+                        dst_c.value = swap_name(old_val)
+                        copy_cell_format(src_c, dst_c)
                     
                     # Col 1: Use new event ID
                     if event_id:
@@ -2146,8 +2359,11 @@ def update_events_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
                 if src_row:
                     new_row = real_max + 1
                     for c in range(1, ws.max_column + 1):
-                        old_val = ws.cell(src_row, c).value
-                        ws.cell(new_row, c, swap_name(old_val))
+                        src_c = ws.cell(src_row, c)
+                        old_val = src_c.value
+                        dst_c = ws.cell(new_row, c)
+                        dst_c.value = swap_name(old_val)
+                        copy_cell_format(src_c, dst_c)
                     
                     if event_id:
                         ws.cell(new_row, 1, int(event_id))
@@ -2191,8 +2407,11 @@ def update_events_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
                 if src_row:
                     new_row = real_max + 1
                     for c in range(1, ws.max_column + 1):
-                        old_val = ws.cell(src_row, c).value
-                        ws.cell(new_row, c, swap_name(old_val))
+                        src_c = ws.cell(src_row, c)
+                        old_val = src_c.value
+                        dst_c = ws.cell(new_row, c)
+                        dst_c.value = swap_name(old_val)
+                        copy_cell_format(src_c, dst_c)
                     
                     if event_id:
                         ws.cell(new_row, 1, int(event_id))
@@ -2243,8 +2462,11 @@ def update_events_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
                     new_row = real_max + 1
                     target_row = new_row
                     for c in range(1, ws.max_column + 1):
-                        old_val = ws.cell(src_row, c).value
-                        ws.cell(target_row, c, swap_name(old_val))
+                        src_c = ws.cell(src_row, c)
+                        old_val = src_c.value
+                        dst_c = ws.cell(target_row, c)
+                        dst_c.value = swap_name(old_val)
+                        copy_cell_format(src_c, dst_c)
                     
                     # Col 3: Switch = TRUE
                     ws.cell(target_row, 3, "TRUE")
@@ -2292,11 +2514,11 @@ def update_events_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
                     evt_name = name_match.group(1) if name_match else "Unknown"
                     current_group = {
                         'name': evt_name,
-                        'rows': [[ws.cell(r, cc).value for cc in range(1, ws.max_column + 1)]]
+                        'rows': [[(ws.cell(r, cc).value, ws.cell(r, cc)) for cc in range(1, ws.max_column + 1)]]
                     }
                 elif current_group and s1.startswith("202"):
                     # Data row belonging to the event
-                    current_group['rows'].append([ws.cell(r, cc).value for cc in range(1, ws.max_column + 1)])
+                    current_group['rows'].append([(ws.cell(r, cc).value, ws.cell(r, cc)) for cc in range(1, ws.max_column + 1)])
                 else:
                     # Some other row: beginner or something else
                     if current_group:
@@ -2321,8 +2543,10 @@ def update_events_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
                     log(f"buff_constants: Backing up event {group['name']} to {buff_backup_sheet}")
                     for row_vals in group['rows']:
                         next_bk_row = get_real_max_row(ws_backup) + 1
-                        for c_idx, val in enumerate(row_vals):
-                            ws_backup.cell(next_bk_row, c_idx + 1, val)
+                        for c_idx, (val, src_c) in enumerate(row_vals):
+                            dst_c = ws_backup.cell(next_bk_row, c_idx + 1)
+                            dst_c.value = val
+                            copy_cell_format(src_c, dst_c)
                     modified = True
             
             # Step 3: Clear Main sheet of all bi-weekly events before injecting target
@@ -2355,13 +2579,13 @@ def update_events_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
                     if c1 and str(c1).startswith("//\u6b63\u5e38\u53cc\u5468\u6d3b\u52a8") and src_lower in str(c1).lower():
                         # Found it!
                         found_src = True
-                        src_template_rows.append([ws_backup.cell(r, cc).value for cc in range(1, ws_backup.max_column + 1)])
+                        src_template_rows.append([(ws_backup.cell(r, cc).value, ws_backup.cell(r, cc)) for cc in range(1, ws_backup.max_column + 1)])
                         # Collect following 202xxxxx rows
                         nr = r + 1
                         while nr <= ws_backup.max_row:
                             nc1 = ws_backup.cell(nr, 1).value
                             if nc1 and str(nc1).startswith("202"):
-                                data_row = [ws_backup.cell(nr, cc).value for cc in range(1, ws_backup.max_column + 1)]
+                                data_row = [(ws_backup.cell(nr, cc).value, ws_backup.cell(nr, cc)) for cc in range(1, ws_backup.max_column + 1)]
                                 if not src_id_prefix:
                                     src_id_prefix = str(nc1).split('_')[0]
                                 src_template_rows.append(data_row)
@@ -2377,13 +2601,15 @@ def update_events_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
                     curr_row = get_real_max_row(ws) + 1
                     
                     for row_data in src_template_rows:
-                        for c_idx, val in enumerate(row_data):
+                        for c_idx, (val, src_c) in enumerate(row_data):
                             new_val = swap_name(val)
                             # Replacement for Col 1 (Program Enum with ID prefix)
                             if c_idx == 0 and new_val and src_id_prefix and event_id:
                                 if str(new_val).startswith(src_id_prefix):
                                     new_val = event_id + str(new_val)[len(src_id_prefix):]
-                            ws.cell(curr_row, c_idx + 1, new_val)
+                            dst_c = ws.cell(curr_row, c_idx + 1)
+                            dst_c.value = new_val
+                            copy_cell_format(src_c, dst_c)
                         curr_row += 1
                     modified = True
                 else:
@@ -2536,12 +2762,14 @@ def update_item_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                 new_rows_data = []
                 for src_r in src_rows:
                     row_data = []
+                    src_cells = []
                     for c in range(1, ws.max_column + 1):
                         row_data.append(ws.cell(src_r, c).value)
-                    
+                        src_cells.append(ws.cell(src_r, c))
+
                     old_id_str = str(row_data[0]).strip()
                     if old_id_str.startswith("//"): old_id_str = old_id_str[2:].strip()
-                    
+
                     new_id = -1
                     if old_id_str.isdigit():
                         old_id = int(old_id_str)
@@ -2554,14 +2782,14 @@ def update_item_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                     else:
                         row_data[0] = swap_name(row_data[0])
                         new_id = 99999999 # Fallback
-                    
+
                     for i in range(1, len(row_data)):
                         row_data[i] = swap_name(row_data[i])
-                        
-                    new_rows_data.append((new_id, row_data))
-                
+
+                    new_rows_data.append((new_id, row_data, src_cells))
+
                 new_rows_data.sort(key=lambda x: x[0], reverse=True)
-                for new_id, row_data in new_rows_data:
+                for new_id, row_data, src_cells in new_rows_data:
                     best_row = 1
                     max_id_seen = -1
                     for r in range(2, ws.max_row + 1):
@@ -2574,11 +2802,13 @@ def update_item_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                                 if current_id < new_id and current_id > max_id_seen:
                                     max_id_seen = current_id
                                     best_row = r
-                    
+
                     insert_pos = best_row + 1
                     ws.insert_rows(insert_pos)
                     for c_idx, val in enumerate(row_data):
-                        ws.cell(insert_pos, c_idx + 1, val)
+                        dst_c = ws.cell(insert_pos, c_idx + 1)
+                        dst_c.value = val
+                        copy_cell_format(src_cells[c_idx], dst_c)
                     log(f"item_sheet: Inserted item {new_id} at row {insert_pos}")
                     
                 modified = True
@@ -2783,18 +3013,21 @@ def update_event_shop_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
                 current_id = new_group_start
                 insert_pos = real_max + 1
                 for src_r in src_item_rows:
-                    row_data = [ws_item.cell(src_r, c).value for c in range(1, ws_item.max_column + 1)]
+                    src_cells = [ws_item.cell(src_r, c) for c in range(1, ws_item.max_column + 1)]
+                    row_data = [c.value for c in src_cells]
                     # Update ID (Column 1)
                     row_data[0] = current_id
                     # Swap names in ALL other columns (Column 2 onwards)
                     for i in range(1, len(row_data)):
                         if row_data[i] is not None:
                             row_data[i] = swap_name(row_data[i])
-                    
+
                     # Write to new row
                     for c_idx, val in enumerate(row_data):
-                        ws_item.cell(insert_pos, c_idx + 1, val)
-                    
+                        dst_c = ws_item.cell(insert_pos, c_idx + 1)
+                        dst_c.value = val
+                        copy_cell_format(src_cells[c_idx], dst_c)
+
                     new_item_ids.append(current_id)
                     log(f"item_sheet: Added link item {current_id} (cloned from {src_r})")
                     current_id += 1
@@ -2860,8 +3093,11 @@ def update_event_shop_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
             if src_row:
                 new_row = real_max + 1
                 for c in range(1, ws_shop.max_column + 1):
-                    old_val = ws_shop.cell(src_row, c).value
-                    ws_shop.cell(new_row, c, swap_name(old_val))
+                    src_c = ws_shop.cell(src_row, c)
+                    old_val = src_c.value
+                    dst_c = ws_shop.cell(new_row, c)
+                    dst_c.value = swap_name(old_val)
+                    copy_cell_format(src_c, dst_c)
                 
                 # Update Shop ID
                 if event_id:
@@ -3132,12 +3368,15 @@ def update_icon_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                         continue
                     new_row_idx = ws.max_row + 1
                     for c in range(1, ws.max_column + 1):
-                        old_v = ws.cell(r_src, c).value
+                        src_c = ws.cell(r_src, c)
+                        old_v = src_c.value
                         new_v = swap_name(old_v)
                         # Sync Event ID in Sprite Name (Col 3)
                         if c == 3 and new_v and gui_event_id:
                             new_v = re.sub(r'\d{8}', gui_event_id, str(new_v))
-                        ws.cell(new_row_idx, c, new_v)
+                        dst_c = ws.cell(new_row_idx, c)
+                        dst_c.value = new_v
+                        copy_cell_format(src_c, dst_c)
                     cloned_in_sheet += 1
                 
                 if cloned_in_sheet > 0:
@@ -3177,11 +3416,14 @@ def update_icon_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                     ws_src, r_idx = source_to_clone[src_icon_name.upper()]
                     new_r = ws_target_fix.max_row + 1
                     for c in range(1, ws_src.max_column + 1):
-                        old_v = ws_src.cell(r_idx, c).value
+                        src_c = ws_src.cell(r_idx, c)
+                        old_v = src_c.value
                         new_v = swap_name(old_v)
                         if c == 3 and new_v and gui_event_id:
                             new_v = re.sub(r'\d{8}', gui_event_id, str(new_v))
-                        ws_target_fix.cell(new_r, c, new_v)
+                        dst_c = ws_target_fix.cell(new_r, c)
+                        dst_c.value = new_v
+                        copy_cell_format(src_c, dst_c)
                     log(f"icon_sheet: Successfully RECOVERED icon '{m_icon}' from {ws_src.title}")
                     recovered.append(m_icon)
                 else:
@@ -3331,10 +3573,17 @@ def update_localization_main_excel(proj_root, src_evt, tgt_evt, log_dir, step_in
         wb = openpyxl.load_workbook(file_path)
         
         modified = False
-        # 1. Process each sheet efficiently
+        extra_for_hint = load_extra_args(log_dir)
+        src_start_time = extra_for_hint.get("src_start_time", "")
+
+        # 1. Process each sheet efficiently — excludes the three sheets with their own
+        # dedicated handling below (localize_event_fixed's divider group, localize_event's
+        # backup-first lookup, localize_server's accumulator scan) and the backup sheet
+        # itself (nothing should write into an archive via the generic pass).
         all_final_keys = set()
         for sheet_name in wb.sheetnames:
-            if sheet_name in ["languages", "country", "localize_零使用"]:
+            if sheet_name in ["languages", "country", "localize_零使用",
+                               "localize_event_fixed", "localize_event", "localize_server", "localize_旧活动备份"]:
                 continue
                 
             ws = wb[sheet_name]
@@ -3375,8 +3624,11 @@ def update_localization_main_excel(proj_root, src_evt, tgt_evt, log_dir, step_in
                         
                     new_row_idx = ws.max_row + 1
                     for c in range(1, ws.max_column + 1):
-                        ws.cell(new_row_idx, c, swap_name(ws.cell(r, c).value))
-                    
+                        src_c = ws.cell(r, c)
+                        dst_c = ws.cell(new_row_idx, c)
+                        dst_c.value = swap_name(src_c.value)
+                        copy_cell_format(src_c, dst_c)
+
                     existing_keys[new_key_upper] = new_row_idx
                     all_final_keys.add(new_key_upper)
                     cloned_in_sheet += 1
@@ -3384,7 +3636,77 @@ def update_localization_main_excel(proj_root, src_evt, tgt_evt, log_dir, step_in
                 if cloned_in_sheet > 0:
                     log(f"localization: Cloned {cloned_in_sheet} rows in [{sheet_name}] for {tgt_evt}")
                     modified = True
-        
+
+        # 1b. localize_event_fixed — divider-bounded '活动名 & 礼包名区 & 成就分享区' group.
+        # Append the target's 2 rows (<EVENT>_EVENTNAME, ACHIEVEMENT_<EVENT>) at the end
+        # of the group, before the next divider — never at the end of the whole sheet.
+        if "localize_event_fixed" in wb.sheetnames:
+            ws_lef = wb["localize_event_fixed"]
+            start, end = find_icon_item_group_bounds(ws_lef, "活动名")
+            if start is None:
+                log("localize_event_fixed: '活动名' group marker not found — skipping.")
+            else:
+                tgt_already_present = any(tgt_lower in str(ws_lef.cell(r, 1).value or "").lower() for r in range(start, end))
+                if tgt_already_present:
+                    log(f"localize_event_fixed: {tgt_evt} already has row(s) in the group. Skipping.")
+                else:
+                    lef_rows, lef_label = get_localize_event_fixed_rows_for_source(file_path, src_lower, src_start_time, log_dir)
+                    if lef_rows:
+                        log(f"localize_event_fixed: Resolved {len(lef_rows)} row(s) for {src_evt} from {lef_label}.")
+                        insert_at = end
+                        for row_vals in lef_rows:
+                            ws_lef.insert_rows(insert_at)
+                            for c_idx, v in enumerate(row_vals):
+                                ws_lef.cell(insert_at, c_idx + 1, swap_name(v))
+                            insert_at += 1
+                        log(f"localize_event_fixed: Appended {len(lef_rows)} row(s) for {tgt_evt} to the 活动名 group.")
+                        modified = True
+                    else:
+                        log(f"localize_event_fixed: WARNING — no data found for {src_evt} anywhere (not live, not cached, not in SVN history).")
+
+        # 1c. localize_event — backup-first (localize_旧活动备份), then cache, then SVN
+        # history. Never falls back to a placeholder — if nothing is found anywhere,
+        # that's logged plainly and left for a human, not papered over.
+        if "localize_event" in wb.sheetnames:
+            ws_le = wb["localize_event"]
+            tgt_already_present = any(tgt_lower in str(ws_le.cell(r, 1).value or "").lower() for r in range(2, ws_le.max_row + 1))
+            if tgt_already_present:
+                log(f"localize_event: {tgt_evt} already present. Skipping.")
+            else:
+                le_rows, le_label = get_localize_event_rows_for_source(file_path, src_lower, src_start_time, log_dir)
+                if le_rows:
+                    log(f"localize_event: Resolved {len(le_rows)} row(s) for {src_evt} from {le_label}.")
+                    insert_at = ws_le.max_row + 1
+                    for row_vals in le_rows:
+                        for c_idx, v in enumerate(row_vals):
+                            ws_le.cell(insert_at, c_idx + 1, swap_name(v))
+                        insert_at += 1
+                    log(f"localize_event: Appended {len(le_rows)} row(s) for {tgt_evt}.")
+                    modified = True
+                else:
+                    log(f"localize_event: WARNING — no data found for {src_evt} anywhere (not live, not in "
+                        f"localize_旧活动备份, not cached, not in SVN history). Needs manual entry — no placeholder created.")
+
+        # 1d. localize_server — pure accumulator, always live so far. Simple scan + clone.
+        if "localize_server" in wb.sheetnames:
+            ws_ls = wb["localize_server"]
+            tgt_already_present = any(tgt_lower in str(ws_ls.cell(r, 1).value or "").lower() for r in range(2, ws_ls.max_row + 1))
+            if tgt_already_present:
+                log(f"localize_server: {tgt_evt} already present. Skipping.")
+            else:
+                ls_rows, ls_label = get_localize_server_rows_for_source(file_path, src_lower)
+                if ls_rows:
+                    log(f"localize_server: Resolved {len(ls_rows)} row(s) for {src_evt} from {ls_label}.")
+                    insert_at = ws_ls.max_row + 1
+                    for row_vals in ls_rows:
+                        for c_idx, v in enumerate(row_vals):
+                            ws_ls.cell(insert_at, c_idx + 1, swap_name(v))
+                        insert_at += 1
+                    log(f"localize_server: Appended {len(ls_rows)} row(s) for {tgt_evt}.")
+                    modified = True
+                else:
+                    log(f"localize_server: WARNING — no data found live for {src_evt}.")
+
         # 2. Final verification against REQUIRED keys
         if required_tgt_keys:
             missing = [k for k in required_tgt_keys if k not in all_final_keys]
@@ -3548,188 +3870,39 @@ def update_localization_quiz_excel(proj_root, src_evt, tgt_evt, log_dir, step_in
 
 
 def update_answer_challenge_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
-    """Step 14 Part C: Update answer_challenge.xlsx (list, questions, stage rewards)."""
+    """
+    Step 14 Part C: Update answer_challenge.xlsx — stage (rewards) only.
+
+    answer_challenge_list and 题目 (questions) are deliberately NOT handled here
+    anymore — both are being rebuilt as a separate step later (they were quiz-date
+    coupled, and quiz handling itself moved out of this step). This function no
+    longer depends on quiz-date derivation at all, since 'stage' doesn't need it.
+    """
     import openpyxl
     import stat
     import os
     import re
-    import json
-    
+
     design_dir = os.path.join(proj_root, "design", "DesignData", WORKSPACE_NAME, "design")
     file_path = os.path.join(design_dir, "answer_challenge.xlsx")
-    
+
     if not os.path.exists(file_path):
         log(f"Warning: answer_challenge.xlsx not found. Skipping.")
         return True
-    
-    # --- Get quiz date prefixes ---
-    src_quiz_date = get_quiz_date_prefix(proj_root, src_evt)
-    # Primary: derive from events.xlsx (Step 10 already populated correct dates)
-    tgt_quiz_date = get_quiz_date_prefix(proj_root, tgt_evt)
-    
-    # Fallback: check extra_args.json start_time if events.xlsx doesn't have target yet
-    if not tgt_quiz_date:
-        extra_args_path = os.path.join(log_dir, "extra_args.json")
-        if os.path.exists(extra_args_path):
-            try:
-                with open(extra_args_path, "r") as f:
-                    extra = json.load(f)
-                start_time_str = extra.get("start_time", "")
-                if start_time_str:
-                    from datetime import datetime
-                    try:
-                        dt = datetime.strptime(start_time_str[:10], "%Y-%m-%d")
-                        tgt_quiz_date = dt.strftime("%y%m%d")
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-    
-    if not tgt_quiz_date or not src_quiz_date:
-        log(f"Warning: Could not derive quiz dates for answer_challenge update. Skipping.")
-        return True
-    
-    src_quiz_prefix = f"QUIZ{src_quiz_date}"
-    tgt_quiz_prefix = f"QUIZ{tgt_quiz_date}"
-    
-    # Swap helpers for event names in stage rewards
+
     src_lower = src_evt.lower()
     tgt_lower = tgt_evt.lower()
     src_upper = src_evt.upper()
     tgt_upper = tgt_evt.upper()
     src_pascal = src_evt[0].upper() + src_evt[1:] if src_evt else src_evt
     tgt_pascal = tgt_evt[0].upper() + tgt_evt[1:] if tgt_evt else tgt_evt
-    src_num = re.search(r'\d+', src_evt)
-    tgt_num = re.search(r'\d+', tgt_evt)
-    src_digits = src_num.group() if src_num else ""
-    tgt_digits = tgt_num.group() if tgt_num else ""
-    
-    def swap_name(value):
-        if value is None: return None
-        s = str(value)  # type: ignore
-        # Swap quiz prefixes
-        s = s.replace(src_quiz_prefix.upper(), tgt_quiz_prefix.upper())
-        s = s.replace(src_quiz_prefix.lower(), tgt_quiz_prefix.lower())
-        s = s.replace(src_quiz_prefix, tgt_quiz_prefix)
-        # Swap event names
-        if src_evt:
-            s = s.replace(src_upper, tgt_upper)
-            s = s.replace(src_lower, tgt_lower)
-            s = s.replace(src_pascal, tgt_pascal)
-            s = s.replace(src_evt, tgt_evt)
-        # ONLY swap digits if they aren't already part of the target event name
-        # to prevent "Sim26052605" errors
-        if src_digits and tgt_digits and src_digits not in tgt_evt:
-            s = s.replace(src_digits, tgt_digits)
-        return s
-    
+
     try:
         os.chmod(file_path, stat.S_IWRITE | stat.S_IREAD)
         wb = openpyxl.load_workbook(file_path)
         modified = False
-        
-        # === Part C1: answer_challenge_list — add new row ===
-        if "answer_challenge_list" in wb.sheetnames:
-            ws_list = wb["answer_challenge_list"]
-            
-            # Find last data row and auto-increment ID
-            last_id = 0
-            last_row = 1
-            for r in range(2, ws_list.max_row + 1):
-                id_val = ws_list.cell(r, 1).value  # type: ignore
-                if id_val is not None:
-                    try:
-                        last_id = int(id_val)
-                        last_row = r
-                    except (ValueError, TypeError):
-                        pass
-            
-            # Check for idempotency: if an alias for this target event is already on the list, skip appending!
-            already_exists = False
-            for r in range(2, ws_list.max_row + 1):
-                val = str(ws_list.cell(r, 2).value or "")
-                if tgt_evt.lower() in val.lower():
-                    already_exists = True
-                    # Uncomment if needed
-                    c1_val = str(ws_list.cell(r, 1).value or "").strip()
-                    if c1_val.startswith("//"):
-                        ws_list.cell(r, 1, c1_val[2:].strip())
-                        log(f"answer_challenge [answer_challenge_list]: Uncommented existing row for {tgt_evt}")
-                        modified = True
-                    break
-            
-            if already_exists:
-                log(f"answer_challenge [answer_challenge_list]: Target event {tgt_evt} already exists.")
-            else:
-                new_id = last_id + 1
-                new_row = last_row + 1
 
-                # Copy the last row as template and swap names
-                for c in range(1, ws_list.max_column + 1):
-                    old_val = ws_list.cell(last_row, c).value  # type: ignore
-                    ws_list.cell(new_row, c, swap_name(old_val))  # type: ignore
-
-                # Override the ID
-                ws_list.cell(new_row, 1, new_id)  # type: ignore
-
-                # Ensure Alias is unique by appending target event if it doesn't already contain it
-                current_alias = str(ws_list.cell(new_row, 2).value or "")
-                if tgt_evt.lower() not in current_alias.lower():
-                    ws_list.cell(new_row, 2, f"{current_alias}_{tgt_evt}")
-
-                # Override Event ID and Times using extra_args
-                extra_args_path = os.path.join(log_dir, "extra_args.json")
-                if os.path.exists(extra_args_path):
-                    try:
-                        with open(extra_args_path, "r") as f:
-                            extra = json.load(f)
-                        start_time_str = extra.get("start_time", "")
-                        end_time_str = extra.get("end_time", "")
-                        event_id_str = extra.get("event_id", "")
-
-                        if start_time_str: ws_list.cell(new_row, 4, start_time_str)
-                        if end_time_str: ws_list.cell(new_row, 5, end_time_str)
-                        if event_id_str: ws_list.cell(new_row, 6, int(event_id_str))
-                    except Exception as e:
-                        log(f"Warning: Failed to inject extra args into answer_challenge_list: {e}")
-
-                log(f"answer_challenge [answer_challenge_list]: Added row {new_row} with ID={new_id}")
-                modified = True
-        
-        # === Part C2: 题目 (Questions) — auto-detect current quiz prefix and replace ===
-        if "题目" in wb.sheetnames:
-            ws_q = wb["题目"]
-            q_modified = 0
-            
-            # Auto-detect the current quiz prefix from first data row
-            current_prefix = None
-            for c in range(1, ws_q.max_column + 1):
-                cell_val = str(ws_q.cell(2, c).value or "")  # type: ignore
-                prefix_match = re.search(r'(QUIZ\d{6})', cell_val, re.IGNORECASE)
-                if prefix_match:
-                    current_prefix = prefix_match.group(1).upper()
-                    break
-            
-            if current_prefix and current_prefix != tgt_quiz_prefix:
-                log(f"answer_challenge [题目]: Detected current prefix '{current_prefix}', replacing with '{tgt_quiz_prefix}'")
-                for r in range(2, ws_q.max_row + 1):
-                    for c in range(1, ws_q.max_column + 1):
-                        cell_val = ws_q.cell(r, c).value  # type: ignore
-                        if cell_val is not None:
-                            s = str(cell_val)
-                            if current_prefix in s or current_prefix.lower() in s.lower():
-                                new_s = s.replace(current_prefix, tgt_quiz_prefix)
-                                new_s = new_s.replace(current_prefix.lower(), tgt_quiz_prefix.lower())
-                                ws_q.cell(r, c, new_s)  # type: ignore
-                                q_modified += 1
-                
-                if q_modified > 0:
-                    log(f"answer_challenge [题目]: Updated {q_modified} quiz key references ({current_prefix} -> {tgt_quiz_prefix})")
-                    modified = True
-            else:
-                log(f"answer_challenge [题目]: No prefix change needed (current: {current_prefix}, target: {tgt_quiz_prefix})")
-        
-        # === Part C3: stage (Rewards) — auto-detect event reward references and replace ===
+        # === stage (Rewards) — auto-detect event reward references and replace ===
         if "stage" in wb.sheetnames:
             ws_stage = wb["stage"]
             stage_modified = 0
@@ -3855,7 +4028,9 @@ def update_asset_ref_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
         
         # === Part 1: Clone source event asset block ===
         def find_event_block(ws, event_upper):
-            """Find all rows between //EVENT divider and the next divider or end."""
+            """Find all rows between //EVENT divider and the next divider or end.
+            Each row is a list of (value, source_cell) pairs so the caller can
+            copy formatting, not just values, when cloning."""
             block = []
             found_start = False
             for r in range(1, ws.max_row + 1):
@@ -3863,9 +4038,7 @@ def update_asset_ref_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                 normalized = cell1.strip().replace(" ", "").upper()
                 if normalized == f"//{event_upper}" or normalized == f"//{event_upper}活动":
                     found_start = True
-                    row_data = []
-                    for c in range(1, ws.max_column + 1):
-                        row_data.append(ws.cell(r, c).value)  # type: ignore
+                    row_data = [(ws.cell(r, c).value, ws.cell(r, c)) for c in range(1, ws.max_column + 1)]
                     block.append(row_data)
                     continue
                 if found_start:
@@ -3873,9 +4046,7 @@ def update_asset_ref_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                         break
                     if cell1.strip() == "":
                         break
-                    row_data = []
-                    for c in range(1, ws.max_column + 1):
-                        row_data.append(ws.cell(r, c).value)  # type: ignore
+                    row_data = [(ws.cell(r, c).value, ws.cell(r, c)) for c in range(1, ws.max_column + 1)]
                     block.append(row_data)
             return block
         
@@ -3904,21 +4075,29 @@ def update_asset_ref_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                         break
                 
                 # Shift existing rows down to make space
+                # NOTE: openpyxl's ws.cell(r, c, value) is a no-op when value is None
+                # (it only sets cell.value when value is not None), so None values must
+                # be assigned via `.value =` directly or stale data is left behind.
                 num_new_rows = len(src_block_rows)
                 for r in range(ws_main.max_row, insert_row - 1, -1):
                     for c in range(1, ws_main.max_column + 1):
-                        ws_main.cell(r + num_new_rows, c, ws_main.cell(r, c).value)  # type: ignore
-                
+                        src_c = ws_main.cell(r, c)
+                        dst_c = ws_main.cell(r + num_new_rows, c)
+                        dst_c.value = src_c.value
+                        copy_cell_format(src_c, dst_c)
+
                 # Clear original cells to avoid duplicates
                 for r in range(insert_row, insert_row + num_new_rows):
                     for c in range(1, ws_main.max_column + 1):
-                        ws_main.cell(r, c, None)  # type: ignore
-                
+                        ws_main.cell(r, c).value = None  # type: ignore
+
                 # Insert cloned block
                 for i, row_data in enumerate(src_block_rows):
                     target_r = insert_row + i
-                    for c_idx, val in enumerate(row_data):
-                        ws_main.cell(target_r, c_idx + 1, swap_name(val))  # type: ignore
+                    for c_idx, (val, src_c) in enumerate(row_data):
+                        dst_c = ws_main.cell(target_r, c_idx + 1)
+                        dst_c.value = swap_name(val)  # type: ignore
+                        copy_cell_format(src_c, dst_c)
                 
                 log(f"asset_ref [key_asset]: Inserted {num_new_rows} rows at R{insert_row} for //{tgt_upper}")
                 modified = True
@@ -3967,19 +4146,25 @@ def update_asset_ref_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                         break
                 
                 new_row = insert_after + 1
-                
-                # Shift rows down
+
+                # Shift rows down (see note above re: openpyxl None no-op)
                 for r in range(ws_main.max_row, new_row - 1, -1):
                     for c in range(1, ws_main.max_column + 1):
-                        ws_main.cell(r + 1, c, ws_main.cell(r, c).value)  # type: ignore
-                
+                        src_c = ws_main.cell(r, c)
+                        dst_c = ws_main.cell(r + 1, c)
+                        dst_c.value = src_c.value  # type: ignore
+                        copy_cell_format(src_c, dst_c)
+
                 # Clone the source achievement row with name swap
                 for c in range(1, ws_main.max_column + 1):
-                    old_val = ws_main.cell(achieve_src_row, c).value  # type: ignore
+                    src_c = ws_main.cell(achieve_src_row, c)
+                    old_val = src_c.value  # type: ignore
                     new_val = swap_name(old_val)
                     if c == 3 and isinstance(new_val, str):
                         new_val = re.sub(r'icon_Chronicle\d+', f'icon_Chronicle{new_chronicle}', new_val)
-                    ws_main.cell(new_row, c, new_val)  # type: ignore
+                    dst_c = ws_main.cell(new_row, c)
+                    dst_c.value = new_val  # type: ignore
+                    copy_cell_format(src_c, dst_c)
                 
                 log(f"asset_ref [achievement]: Added ACHIEVEMENT_E_{tgt_upper} at R{new_row} with Chronicle{new_chronicle}")
                 modified = True
@@ -4144,20 +4329,33 @@ def update_store_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                             except (ValueError, TypeError):
                                 pass
                     
-                    # Insert right after last data row in the event section
+                    # Insert right after last data row in the event section.
+                    # This is NOT the end of the sheet — a shared template section
+                    # (e.g. "// 活动进度礼包 - A") follows immediately, so existing
+                    # rows must be shifted down first or they get silently overwritten.
                     insert_row = section_end + 1
-                    
+                    num_new_rows = len(src_recharge_rows)
+                    for r in range(ws_r.max_row, insert_row - 1, -1):
+                        for c in range(1, ws_r.max_column + 1):
+                            src_c = ws_r.cell(r, c)
+                            dst_c = ws_r.cell(r + num_new_rows, c)
+                            dst_c.value = src_c.value  # type: ignore
+                            copy_cell_format(src_c, dst_c)
+
                     next_id = max_id + 1
                     for i, src_r in enumerate(src_recharge_rows):
                         new_id = next_id + i
                         new_recharge_ids.append(str(new_id))
                         for c in range(1, ws_r.max_column + 1):
-                            old_val = ws_r.cell(src_r, c).value  # type: ignore
+                            src_c = ws_r.cell(src_r, c)
+                            old_val = src_c.value  # type: ignore
                             new_val = swap_name(old_val)
                             if c == 1:
                                 new_val = new_id
-                            ws_r.cell(insert_row + i, c, new_val)  # type: ignore
-                    
+                            dst_c = ws_r.cell(insert_row + i, c)
+                            dst_c.value = new_val  # type: ignore
+                            copy_cell_format(src_c, dst_c)
+
                     log(f"store_recharge: Cloned {len(src_recharge_rows)} rows at R{insert_row}. IDs {new_recharge_ids[0]}-{new_recharge_ids[-1]}")
                     modified = True
             else:
@@ -4191,18 +4389,28 @@ def update_store_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                         pkg_section_end = r
                     
                     insert_row = pkg_section_end + 1
-                    
+                    num_new_rows = len(src_package_rows)
+                    for r in range(ws_p.max_row, insert_row - 1, -1):
+                        for c in range(1, ws_p.max_column + 1):
+                            src_c = ws_p.cell(r, c)
+                            dst_c = ws_p.cell(r + num_new_rows, c)
+                            dst_c.value = src_c.value  # type: ignore
+                            copy_cell_format(src_c, dst_c)
+
                     old_to_new_recharge = dict(zip(old_recharge_ids, new_recharge_ids))
-                    
+
                     for i, src_r in enumerate(src_package_rows):
                         for c in range(1, ws_p.max_column + 1):
-                            old_val = ws_p.cell(src_r, c).value  # type: ignore
+                            src_c = ws_p.cell(src_r, c)
+                            old_val = src_c.value  # type: ignore
                             new_val = swap_name(old_val)
                             if c == 1:
                                 old_id = str(old_val)
                                 new_val = int(old_to_new_recharge.get(old_id, old_val))
-                            ws_p.cell(insert_row + i, c, new_val)  # type: ignore
-                    
+                            dst_c = ws_p.cell(insert_row + i, c)
+                            dst_c.value = new_val  # type: ignore
+                            copy_cell_format(src_c, dst_c)
+
                     log(f"store_package: Cloned {len(src_package_rows)} rows at R{insert_row} with matching IDs")
                     modified = True
             else:
@@ -4290,8 +4498,9 @@ def update_store_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                     
                     for i, src_r in enumerate(src_gift_rows):
                         for c in range(1, ws_g.max_column + 1):
-                            old_val = ws_g.cell(src_r, c).value  # type: ignore
-                            
+                            src_c = ws_g.cell(src_r, c)
+                            old_val = src_c.value  # type: ignore
+
                             if c == 1:
                                 # Replace ID
                                 old_id_str = str(int(old_val))
@@ -4315,9 +4524,11 @@ def update_store_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                                     new_val = swap_name(old_val)
                             else:
                                 new_val = swap_name(old_val)
-                            
-                            ws_g.cell(insert_row + i, c, new_val)  # type: ignore
-                    
+
+                            dst_c = ws_g.cell(insert_row + i, c)
+                            dst_c.value = new_val  # type: ignore
+                            copy_cell_format(src_c, dst_c)
+
                     log(f"recommend_gift: Cloned {len(src_gift_rows)} rows at R{insert_row}. IDs {new_gift_ids[0]}-{new_gift_ids[-1]}")
                     modified = True
             else:
@@ -4352,13 +4563,16 @@ def update_store_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                     
                     for i, src_r in enumerate(src_style_rows):
                         for c in range(1, ws_s.max_column + 1):
-                            old_val = ws_s.cell(src_r, c).value  # type: ignore
+                            src_c = ws_s.cell(src_r, c)
+                            old_val = src_c.value  # type: ignore
                             if c == 1:
                                 old_id_str = str(old_val)
                                 new_val = int(gift_id_map.get(old_id_str, old_val))
                             else:
                                 new_val = old_val  # Style values don't contain event names
-                            ws_s.cell(insert_row + i, c, new_val)  # type: ignore
+                            dst_c = ws_s.cell(insert_row + i, c)
+                            dst_c.value = new_val  # type: ignore
+                            copy_cell_format(src_c, dst_c)
                     
                     log(f"event_gift_style: Cloned {len(src_style_rows)} rows")
                     modified = True
@@ -4469,11 +4683,14 @@ def update_pack_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
         for i, src_r in enumerate(src_rows):
             new_id = next_id + i
             for c in range(1, ws.max_column + 1):
-                old_val = ws.cell(src_r, c).value  # type: ignore
+                src_c = ws.cell(src_r, c)  # type: ignore
+                old_val = src_c.value
                 new_val = swap_name(old_val)
                 if c == 1:
                     new_val = new_id
-                ws.cell(insert_row + i, c, new_val)  # type: ignore
+                dst_c = ws.cell(insert_row + i, c)  # type: ignore
+                dst_c.value = new_val
+                copy_cell_format(src_c, dst_c)
                 
         log(f"pack.xlsx: Cloned {len(src_rows)} rows. New IDs {next_id} to {next_id + len(src_rows) - 1}")
         
@@ -4587,14 +4804,17 @@ def update_guide_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                 for i, src_r in enumerate(src_rows):
                     actual_src_r = src_r if src_r < insert_sec_row else src_r + len(src_rows)
                     for c in range(1, ws_sec.max_column + 1):
-                        old_val = ws_sec.cell(actual_src_r, c).value
+                        src_c = ws_sec.cell(actual_src_r, c)
+                        old_val = src_c.value
                         new_val = swap_name(old_val)
                         if c == 1 and new_val:
                             old_id_str = str(old_val).replace("//", "")
                             if old_id_str.isdigit() and int(old_id_str) in old_id_to_new_id:
                                 parsed_id = int(old_id_to_new_id[int(old_id_str)])
                                 new_val = str(parsed_id) if isinstance(old_val, str) else parsed_id
-                        ws_sec.cell(insert_sec_row + i, c, new_val)
+                        dst_c = ws_sec.cell(insert_sec_row + i, c)
+                        dst_c.value = new_val
+                        copy_cell_format(src_c, dst_c)
                         
                 # Comment out previous events starting from 619 up to our new insertion
                 for r in range(start_commenting_idx, insert_sec_row):
@@ -4653,7 +4873,10 @@ def update_guide_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                             break
                     if not exists_in_gb and id_val:
                         for c in range(1, ws_guide.max_column + 1):
-                            ws_gb.cell(gb_insert_row, c, ws_guide.cell(r, c).value)
+                            src_c = ws_guide.cell(r, c)
+                            dst_c = ws_gb.cell(gb_insert_row, c)
+                            dst_c.value = src_c.value
+                            copy_cell_format(src_c, dst_c)
                         gb_insert_row += 1
                 
                 # Delete rows from guide
@@ -4676,7 +4899,8 @@ def update_guide_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                 ws_guide.insert_rows(insert_g_row, amount=len(src_gb_rows))
                 for i, src_r in enumerate(src_gb_rows):
                     for c in range(1, ws_gb.max_column + 1):
-                        old_val = ws_gb.cell(src_r, c).value
+                        src_c = ws_gb.cell(src_r, c)
+                        old_val = src_c.value
                         new_val = swap_name(old_val)
                         if c == 1 and new_val:
                             old_id_str = str(old_val).replace("//", "")
@@ -4686,7 +4910,9 @@ def update_guide_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                                 if base_old in old_id_to_new_id:
                                     mapped = int(f"{old_id_to_new_id[base_old]}{remng}")
                                     new_val = str(mapped) if isinstance(old_val, str) else mapped
-                        ws_guide.cell(insert_g_row + i, c, new_val)
+                        dst_c = ws_guide.cell(insert_g_row + i, c)
+                        dst_c.value = new_val
+                        copy_cell_format(src_c, dst_c)
                 modified = True
                 log(f"guide & guide_backup: Transferred {len(rows_to_transfer)} rows, Cloned {len(src_gb_rows)} rows to row {insert_g_row}.")
                         
@@ -4718,11 +4944,14 @@ def update_guide_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                 # We append to the bottom for triggers 
                 for i, src_r in enumerate(src_rows):
                     for c in range(1, ws_trig.max_column + 1):
-                        old_val = ws_trig.cell(src_r, c).value
+                        src_c = ws_trig.cell(src_r, c)
+                        old_val = src_c.value
                         new_val = swap_name(old_val)
                         if c == 1 and new_val:
                             new_val = str(new_val).replace("//", "") # Uncomment
-                        ws_trig.cell(insert_row + i, c, new_val)
+                        dst_c = ws_trig.cell(insert_row + i, c)
+                        dst_c.value = new_val
+                        copy_cell_format(src_c, dst_c)
                         
                 start_commenting_row = 148
                 for r in range(start_commenting_row, insert_row):
@@ -4761,11 +4990,14 @@ def update_guide_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                         
                 for i, src_r in enumerate(src_rows):
                     for c in range(1, ws_ui.max_column + 1):
-                        old_val = ws_ui.cell(src_r, c).value
+                        src_c = ws_ui.cell(src_r, c)
+                        old_val = src_c.value
                         new_val = swap_name(old_val)
                         if c == 1 and new_val:
                             new_val = str(new_val).replace("//", "") # Uncomment
-                        ws_ui.cell(insert_row + i, c, new_val)
+                        dst_c = ws_ui.cell(insert_row + i, c)
+                        dst_c.value = new_val
+                        copy_cell_format(src_c, dst_c)
                         
                 start_commenting_row = 97
                 for r in range(start_commenting_row, insert_row):
@@ -4794,27 +5026,31 @@ def update_guide_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
 
 
 def update_localization_all(proj_root, src_evt, tgt_evt, log_dir, step_index):
-    """Step 14: Orchestrator for all localization and quiz updates."""
-    
+    """
+    Step 14: Orchestrator for localization + answer_challenge (stage rewards only).
+
+    localization_quiz.xlsx (formerly Part B) is deliberately NOT called here — it's
+    being rebuilt as a separate step later. update_localization_quiz_excel still
+    exists in the codebase (not deleted) for when that work picks back up.
+
+    answer_challenge_list and 题目 (formerly parts of Part C) were removed entirely
+    from update_answer_challenge_excel, not just skipped — they'll be rebuilt fresh
+    as a separate step, same as the quiz work.
+    """
+
     # Part A: localization.xlsx
     log("=== Step 14 Part A: localization.xlsx ===")
     success_a = update_localization_main_excel(proj_root, src_evt, tgt_evt, log_dir, step_index)
     if not success_a:
         return False
-    
-    # Part B: localization_quiz.xlsx
-    log("=== Step 14 Part B: localization_quiz.xlsx ===")
-    success_b = update_localization_quiz_excel(proj_root, src_evt, tgt_evt, log_dir, step_index)
-    if not success_b:
-        return False
-    
-    # Part C: answer_challenge.xlsx
-    log("=== Step 14 Part C: answer_challenge.xlsx ===")
+
+    # Part C: answer_challenge.xlsx — stage (rewards) only
+    log("=== Step 14 Part C: answer_challenge.xlsx (stage rewards only) ===")
     success_c = update_answer_challenge_excel(proj_root, src_evt, tgt_evt, log_dir, step_index)
     if not success_c:
         return False
-    
-    log("=== Step 14 Complete: All localization and quiz files updated. ===")
+
+    log("=== Step 14 Complete. ===")
     return True
 
 def update_sys_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
@@ -4979,10 +5215,13 @@ def update_sys_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
             else:
                 ws.insert_rows(row_invite_divider)
                 for c in range(1, ws.max_column + 1):
-                    old_val = ws.cell(src_achieve_row_idx, c).value
+                    src_c = ws.cell(src_achieve_row_idx, c)
+                    old_val = src_c.value
                     new_val = swap_name(old_val)
                     if c == 1: new_val = int(tgt_achievement_dl_id)
-                    ws.cell(row_invite_divider, c, new_val)
+                    dst_c = ws.cell(row_invite_divider, c)
+                    dst_c.value = new_val
+                    copy_cell_format(src_c, dst_c)
                 log(f"Inserted Achievement ID {tgt_achievement_dl_id} at row {row_invite_divider}")
                 modified = True
 
@@ -5014,10 +5253,13 @@ def update_sys_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                     new_row_pos = row_achieve_divider + i
                     ws.insert_rows(new_row_pos)
                     for c in range(1, ws.max_column + 1):
-                        old_val = ws.cell(r_idx, c).value
+                        src_c = ws.cell(r_idx, c)
+                        old_val = src_c.value
                         new_val = swap_name(old_val)
                         if c == 1: new_val = src_ref_ids[i] + offset
-                        ws.cell(new_row_pos, c, new_val)
+                        dst_c = ws.cell(new_row_pos, c)
+                        dst_c.value = new_val
+                        copy_cell_format(src_c, dst_c)
                 log(f"Inserted {len(src_share_rows)} Share IDs starting at {new_first_id}")
 
         wb.save(sys_path)
@@ -5029,14 +5271,399 @@ def update_sys_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
         import traceback
         traceback.print_exc()
         return False
-    
+
+
+# ===================== Trivia Challenge (答题挑战) cycle refresh =====================
+# Unlike the numbered clone-event pipeline steps above, this is a standalone recurring
+# maintenance action: it doesn't clone from a source event, it refreshes the quiz content
+# for the upcoming 答题挑战 cycle using freshly-authored question data supplied as JSON.
+
+def get_quiz_prefix_from_mini_mgr(proj_root):
+    """Reads mini_mgr.xlsx's 活动数据 sheet and finds the upcoming (控制开关=True)
+    答题挑战 cycle's start date, returning an ID prefix like 'QUIZ260827'.
+    Returns None if no such row is found."""
+    import openpyxl
+    from datetime import datetime, date
+
+    design_dir = os.path.join(proj_root, "design", "DesignData", WORKSPACE_NAME, "design")
+    file_path = os.path.join(design_dir, "mini_mgr.xlsx")
+    if not os.path.exists(file_path):
+        log(f"Error: mini_mgr.xlsx not found at {file_path}")
+        return None
+
+    wb = openpyxl.load_workbook(file_path, data_only=True)
+    if "活动数据" not in wb.sheetnames:
+        log("Error: 活动数据 sheet not found in mini_mgr.xlsx")
+        return None
+    ws = wb["活动数据"]
+
+    for r in range(1, ws.max_row + 1):
+        event_type = ws.cell(r, 6).value  # type: ignore
+        enabled = ws.cell(r, 2).value  # type: ignore
+        start_time = ws.cell(r, 3).value  # type: ignore
+        if event_type != "答题挑战" or enabled is not True or start_time is None:
+            continue
+        if isinstance(start_time, (datetime, date)):
+            dt = start_time
+        else:
+            dt = datetime.strptime(str(start_time).split(" ")[0], "%Y-%m-%d")
+        prefix = f"QUIZ{dt.strftime('%y%m%d')}"
+        log(f"mini_mgr.xlsx: current 答题挑战 cycle starts {dt.strftime('%Y-%m-%d')} -> prefix {prefix}")
+        return prefix
+
+    log("Error: no enabled (控制开关=True) 答题挑战 row with a start date found in mini_mgr.xlsx")
+    return None
+
+
+# Column 9 of localization_quiz.xlsx's Quiz / Quiz_备份 sheets was always unused
+# (verified against real data) — used here to stamp which pool batch number a cycle's
+# content came from. Being a normal cell in the actual Excel file (not a side-channel
+# state file), this marker is version-controlled and travels through SVN merges just
+# like the questions themselves, so it stays meaningful across branches — unlike a
+# local JSON file, which would only ever describe one machine's one checkout.
+BATCH_MARKER_COL = 9
+
+
+def _questions_module_for_batch(batch_number):
+    """Batch content is deliberately NOT keyed by calendar date or QUIZ prefix —
+    multiple branches (different teams) advance 答题挑战 cycles independently, on
+    different real-world dates, so a date-keyed filename would force every branch to
+    agree on a schedule. Content instead lives in a numbered pool (trivia_questions_
+    batch_01.py, _02.py, ...); which number a given cycle uses is resolved by scanning
+    every configured branch's own localization_quiz.xlsx (see resolve_questions_source),
+    so branch A landing on batch 1 means branch B's next cycle gets batch 2, never a repeat —
+    even though the two branches are on physically separate checkouts, possibly separate machines."""
+    return f"trivia_questions_batch_{batch_number:02d}"
+
+
+def scan_max_used_batch_number(branch_design_dirs):
+    """Scans Quiz + Quiz_备份 in every given branch's localization_quiz.xlsx for the
+    highest batch-number marker ever written, across ALL branches — so a new cycle on
+    any one of them picks a batch nobody else has used yet. Missing files/sheets are
+    skipped silently (a branch that's never run this tool yet just contributes nothing)."""
+    import openpyxl
+    max_batch = 0
+    for design_dir in branch_design_dirs:
+        path = os.path.join(design_dir, "localization_quiz.xlsx")
+        if not os.path.exists(path):
+            continue
+        try:
+            wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+        except Exception as e:
+            log(f"Warning: could not scan {path} for batch markers: {e}")
+            continue
+        for sheet_name in ("Quiz", "Quiz_备份"):
+            if sheet_name not in wb.sheetnames:
+                continue
+            ws = wb[sheet_name]
+            # read_only worksheets only support efficient *sequential* access — random
+            # access via ws.cell(r, c) re-walks the XML stream each call, making a
+            # per-row loop over a ~16k-row archive effectively O(n^2) (verified: hung
+            # for 30s+ on real Quiz_备份 data). iter_rows streams it in one pass instead.
+            for row in ws.iter_rows(min_row=2, min_col=BATCH_MARKER_COL, max_col=BATCH_MARKER_COL):
+                v = row[0].value
+                if isinstance(v, (int, float)) and int(v) > max_batch:
+                    max_batch = int(v)
+    return max_batch
+
+
+def resolve_questions_source(own_design_dir, all_branch_design_dirs, prefix):
+    """Returns (module_name, batch_number) for this cycle. If this branch's OWN live
+    Quiz sheet already shows this exact prefix (re-run, or backfilling a missing
+    translation column), reuses whatever batch it used last time via that row's own
+    marker — it does NOT re-scan, so a repeat call never advances. Only a genuinely
+    new prefix triggers scan_max_used_batch_number() across every configured branch
+    to pick the next never-used-by-anyone batch."""
+    import openpyxl
+    import re
+
+    quiz_path = os.path.join(own_design_dir, "localization_quiz.xlsx")
+    if os.path.exists(quiz_path):
+        wb = openpyxl.load_workbook(quiz_path, read_only=True, data_only=True)
+        ws = wb["Quiz"]
+        live_id = str(ws.cell(2, 1).value or "")
+        live_prefix_match = re.match(r"(QUIZ\d+)_", live_id)
+        if live_prefix_match and live_prefix_match.group(1) == prefix:
+            marker = ws.cell(2, BATCH_MARKER_COL).value
+            if isinstance(marker, (int, float)):
+                batch_number = int(marker)
+                return _questions_module_for_batch(batch_number), batch_number
+            # Content for this exact prefix already exists but predates the batch-marker
+            # column (written by an older version of this tool) — it's still batch 1,
+            # the only batch that existed before this feature. Don't treat it as new.
+            log(f"{prefix} content has no batch marker (pre-dates batch tracking) — assuming batch 1.")
+            return _questions_module_for_batch(1), 1
+
+    batch_number = scan_max_used_batch_number(all_branch_design_dirs) + 1
+    return _questions_module_for_batch(batch_number), batch_number
+
+
+def load_trivia_questions(questions_source):
+    """Loads a question list. `questions_source` is either a path to a JSON file
+    (schema: {"questions": [{"category", "question", "opt1", "opt2",
+    "correct_index" (1 or 2), "tier" (1/2/3)}, ...]}), or the bare module name of a
+    bundled trivia_questions_batch_NN.py module exposing a QUESTIONS list in that
+    same per-question shape. Modules are loaded via a plain dynamic import — this
+    tool's Python backend ships as raw .py files next to a real interpreter, not a
+    frozen PyInstaller executable, so a normal filesystem-based import just works."""
+    if questions_source.endswith(".json"):
+        with open(questions_source, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data["questions"]
+    import importlib
+    try:
+        module = importlib.import_module(questions_source)
+    except ModuleNotFoundError:
+        raise ModuleNotFoundError(
+            f"{questions_source}.py not found — author this batch's 100 fresh trivia "
+            f"questions into a module of that name (see trivia_questions_batch_01.py for "
+            f"the expected shape) before running this tool."
+        )
+    return module.QUESTIONS
+
+
+def update_localization_quiz_excel(proj_root, log_dir, step_index, questions_source=None,
+                                    all_branch_design_dirs=None, batch_number=None):
+    """Refreshes localization_quiz.xlsx's 'Quiz' sheet for the upcoming 答题挑战 cycle:
+    archives the current live batch into 'Quiz_备份' (skipped if already archived),
+    then writes the fresh batch (all 7 language columns) under the new cycle's ID prefix,
+    stamping BATCH_MARKER_COL with the batch number used. `questions_source`/`batch_number`
+    default to this cycle's next never-used-anywhere batch (see resolve_questions_source) —
+    pass them explicitly only to override (e.g. testing, or a manual re-run)."""
+    import openpyxl
+
+    prefix = get_quiz_prefix_from_mini_mgr(proj_root)
+    if not prefix:
+        return False
+    design_dir = os.path.join(proj_root, "design", "DesignData", WORKSPACE_NAME, "design")
+    if not questions_source:
+        questions_source, batch_number = resolve_questions_source(design_dir, all_branch_design_dirs or [], prefix)
+
+    try:
+        questions = load_trivia_questions(questions_source)
+    except ModuleNotFoundError as e:
+        log(f"Error: {e}")
+        return False
+
+    file_path = os.path.join(design_dir, "localization_quiz.xlsx")
+    if not os.path.exists(file_path):
+        log(f"Error: localization_quiz.xlsx not found at {file_path}")
+        return False
+
+    import stat
+    backup_path = file_path + ".bak"
+    os.chmod(file_path, stat.S_IWRITE | stat.S_IREAD)
+    shutil.copy2(file_path, backup_path)
+    record_file_creation(log_dir, step_index, backup_path)
+
+    try:
+        wb = openpyxl.load_workbook(file_path)
+        if "Quiz" not in wb.sheetnames or "Quiz_备份" not in wb.sheetnames:
+            log("Error: 'Quiz' or 'Quiz_备份' sheet not found in localization_quiz.xlsx")
+            return False
+        ws_live = wb["Quiz"]
+        ws_backup = wb["Quiz_备份"]
+
+        live_id = str(ws_live.cell(2, 1).value or "")
+        live_prefix_match = re.match(r"(QUIZ\d+)_", live_id)
+        live_prefix = live_prefix_match.group(1) if live_prefix_match else None
+
+        if live_prefix == prefix:
+            # Content already matches this cycle — but if it was written by an older
+            # version of this tool (missing translations and/or the batch marker column),
+            # re-run only the write step (same content, same row positions) to backfill,
+            # rather than silently leaving those columns incomplete forever.
+            has_translations = bool(ws_live.cell(2, 3).value)  # German column
+            has_marker = isinstance(ws_live.cell(2, BATCH_MARKER_COL).value, (int, float))
+            if has_translations and has_marker:
+                log(f"Quiz sheet already contains {prefix} data with translations and batch marker. Nothing to do.")
+                return True
+            log(f"Quiz sheet has {prefix} data but is missing translations and/or the batch marker — backfilling.")
+        elif live_prefix:
+            already_archived = any(
+                str(ws_backup.cell(r, 1).value or "").startswith(live_prefix + "_")
+                for r in range(2, ws_backup.max_row + 1)
+            )
+            if already_archived:
+                log(f"{live_prefix} already present in Quiz_备份. Skipping archive.")
+            else:
+                num_cols = max(ws_live.max_column, BATCH_MARKER_COL)
+                insert_at = ws_backup.max_row + 1
+                copied = 0
+                for r in range(2, ws_live.max_row + 1):
+                    if ws_live.cell(r, 1).value is None:
+                        continue
+                    for c in range(1, num_cols + 1):
+                        src_c = ws_live.cell(r, c)
+                        dst_c = ws_backup.cell(insert_at + copied, c)
+                        dst_c.value = src_c.value
+                        copy_cell_format(src_c, dst_c)
+                    copied += 1
+                log(f"Archived {copied} rows of {live_prefix} to Quiz_备份 starting at row {insert_at}.")
+        else:
+            log("Quiz sheet has no existing ID prefix to archive (empty or unrecognized). Proceeding.")
+
+        # Clear the live sheet's data rows, then write the fresh batch.
+        for r in range(2, ws_live.max_row + 1):
+            for c in range(1, max(ws_live.max_column, BATCH_MARKER_COL) + 1):
+                ws_live.cell(r, c).value = None
+
+        # Sheet columns: 1=key, 2=English, 3=German, 4=Spanish, 5=Dutch, 6=Swedish, 7=French, 8=Danish.
+        LANG_COLS = [(2, "en"), (3, "de"), (4, "es"), (5, "nl"), (6, "sv"), (7, "fr"), (8, "da")]
+
+        def cell_text(field_value, lang):
+            # Supports both the translated {"en": ..., "de": ..., ...} shape and a
+            # plain string (English-only, left blank in other languages) for backward compat.
+            if isinstance(field_value, dict):
+                return field_value.get(lang) or field_value.get("en", "")
+            return field_value if lang == "en" else None
+
+        row = 2
+        for i, q in enumerate(questions):
+            qnum = i + 1
+            ws_live.cell(row, 1).value = f"{prefix}_Q_{qnum}_TITLE"
+            ws_live.cell(row + 1, 1).value = f"{prefix}_Q_{qnum}_OPT1"
+            ws_live.cell(row + 2, 1).value = f"{prefix}_Q_{qnum}_OPT2"
+            for col, lang in LANG_COLS:
+                ws_live.cell(row, col).value = cell_text(q["question"], lang)
+                ws_live.cell(row + 1, col).value = cell_text(q["opt1"], lang)
+                ws_live.cell(row + 2, col).value = cell_text(q["opt2"], lang)
+            row += 3
+
+        # Stamp which pool batch this cycle used, so resolve_questions_source (this
+        # branch re-running the same cycle) and scan_max_used_batch_number (a different
+        # branch picking its own next cycle) can both find it later.
+        if batch_number is not None:
+            ws_live.cell(2, BATCH_MARKER_COL).value = batch_number
+
+        wb.save(file_path)
+        log(f"localization_quiz.xlsx: wrote {len(questions)} fresh questions under {prefix} (batch {batch_number}).")
+        return True
+
     except Exception as e:
-        log(f"Error updating sys.xlsx: {e}")
+        log(f"Error updating localization_quiz.xlsx: {e}")
         import traceback
         traceback.print_exc()
         return False
 
+
+def update_answer_challenge_quiz_excel(proj_root, log_dir, step_index, questions_source=None):
+    """Refreshes answer_challenge.xlsx's '题目' sheet for the upcoming 答题挑战 cycle:
+    replaces the question list with categories/correct answers matching the freshly
+    written localization_quiz.xlsx batch, preserving the tier ID-range convention
+    (难度库: tier1=1001+, tier2=2001+, tier3=3001+) and appending in tier order.
+    Called via run_trivia_challenge_cycle, which always resolves and passes an explicit
+    `questions_source` so both files use the exact same batch — the fallback here (this
+    branch only, no cross-branch scan) only matters for a standalone/manual call."""
+    import openpyxl
+
+    prefix = get_quiz_prefix_from_mini_mgr(proj_root)
+    if not prefix:
+        return False
+    design_dir = os.path.join(proj_root, "design", "DesignData", WORKSPACE_NAME, "design")
+    if not questions_source:
+        questions_source, _ = resolve_questions_source(design_dir, [], prefix)
+
+    try:
+        questions = load_trivia_questions(questions_source)
+    except ModuleNotFoundError as e:
+        log(f"Error: {e}")
+        return False
+
+    file_path = os.path.join(design_dir, "answer_challenge.xlsx")
+    if not os.path.exists(file_path):
+        log(f"Error: answer_challenge.xlsx not found at {file_path}")
+        return False
+
+    import stat
+    backup_path = file_path + ".bak"
+    os.chmod(file_path, stat.S_IWRITE | stat.S_IREAD)
+    shutil.copy2(file_path, backup_path)
+    record_file_creation(log_dir, step_index, backup_path)
+
+    try:
+        wb = openpyxl.load_workbook(file_path)
+        if "题目" not in wb.sheetnames:
+            log("Error: '题目' sheet not found in answer_challenge.xlsx")
+            return False
+        ws = wb["题目"]
+
+        existing_id = str(ws.cell(2, 6).value or "")
+        if existing_id.startswith(prefix + "_"):
+            log(f"题目 sheet already references {prefix}. Nothing to do.")
+            return True
+
+        # Preserve header (row 1), replace all data rows.
+        for r in range(2, ws.max_row + 1):
+            for c in range(1, ws.max_column + 1):
+                ws.cell(r, c).value = None
+
+        tier_id_base = {1: 1001, 2: 2001, 3: 3001}
+        tier_counters = {1: 0, 2: 0, 3: 0}
+        ordered = sorted(enumerate(questions, start=1), key=lambda iq: iq[1]["tier"])
+
+        row = 2
+        sort_order = 1
+        for qnum, q in ordered:
+            tier = q["tier"]
+            question_id = tier_id_base[tier] + tier_counters[tier]
+            tier_counters[tier] += 1
+            ws.cell(row, 1).value = question_id
+            ws.cell(row, 2).value = sort_order
+            ws.cell(row, 3).value = q["category"]
+            ws.cell(row, 4).value = tier
+            ws.cell(row, 5).value = q["correct_index"]
+            ws.cell(row, 6).value = f"{prefix}_Q_{qnum}_TITLE"
+            ws.cell(row, 7).value = f"{prefix}_Q_{qnum}_OPT1"
+            ws.cell(row, 8).value = f"{prefix}_Q_{qnum}_OPT2"
+            row += 1
+            sort_order += 1
+
+        wb.save(file_path)
+        log(f"answer_challenge.xlsx [题目]: wrote {len(questions)} rows referencing {prefix}.")
+        return True
+
+    except Exception as e:
+        log(f"Error updating answer_challenge.xlsx: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def run_trivia_challenge_cycle(proj_root, log_dir, step_index, questions_source=None,
+                                all_branch_design_dirs=None):
+    """Orchestrates the full Trivia Challenge cycle refresh: localization_quiz.xlsx
+    then answer_challenge.xlsx, both keyed off the same mini_mgr-derived prefix and
+    the same resolved batch. `all_branch_design_dirs` should list every configured
+    branch's design directory (trunk/Misc/Feature/...) so a genuinely new cycle picks
+    the next batch nobody else has used yet — omit it and only this branch's own
+    history is considered (fine for a single-branch setup, wrong for a multi-team one)."""
+    prefix = get_quiz_prefix_from_mini_mgr(proj_root)
+    if not prefix:
+        return False
+    if not questions_source:
+        design_dir = os.path.join(proj_root, "design", "DesignData", WORKSPACE_NAME, "design")
+        questions_source, batch_number = resolve_questions_source(design_dir, all_branch_design_dirs or [], prefix)
+    else:
+        batch_number = None  # explicit override — not tracked in the batch pool
+
+    if not update_localization_quiz_excel(proj_root, log_dir, step_index, questions_source, batch_number=batch_number):
+        return False
+    if not update_answer_challenge_quiz_excel(proj_root, log_dir, step_index, questions_source):
+        return False
+    return True
+
+
 def main():
+    # Log messages include Chinese sheet/column names; when stdout isn't attached to a
+    # real UTF-8 console (e.g. piped from Electron's spawn on a non-UTF-8 Windows locale)
+    # the default encoding can be cp1252 and crash on write. Force UTF-8 defensively.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
     if len(sys.argv) < 6:
         log("Usage: python event_pipeline.py <step_index> <source_event> <target_event> <project_root> <is_revert>")
         sys.exit(1)

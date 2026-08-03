@@ -52,17 +52,15 @@ def main():
     # 2. Build history dict from 活动数据 to find 折扣链ID and 双周活动ID requirement
     history_map = {}
     
-    # Columns in 活动数据 (0-indexed logic)
-    # column=10 (Index 9 in python list) is 活动类型 (Minigame Name)
-    # column=11 (Index 10) is 双周活动ID 
-    # column=12 (Index 11) is 折扣链ID
+    # Columns in 活动数据 (1-indexed, matches real header row):
+    # column=6 is 活动类型 (Minigame Name), column=7 is 双周活动ID, column=8 is 折扣链ID
     for r in range(ws_data.max_row, 3, -1):
-        mg_name = ws_data.cell(row=r, column=10).value
+        mg_name = ws_data.cell(row=r, column=6).value
         if not mg_name or not isinstance(mg_name, str):
             continue
-            
-        discount_id = ws_data.cell(row=r, column=12).value
-        double_week_id = ws_data.cell(row=r, column=11).value
+
+        discount_id = ws_data.cell(row=r, column=8).value
+        double_week_id = ws_data.cell(row=r, column=7).value
         
         if mg_name not in history_map:
             history_map[mg_name] = {
@@ -80,15 +78,45 @@ def main():
         if not mg_name or not str(mg_name).strip():
             continue
         mg_name = str(mg_name).strip()
-        
+
         # Merge heuristic data if available
         heuristic = history_map.get(mg_name, {"discount_id": -1, "requires_double_week": False})
-        
+
         result["minigames"].append({
             "name": mg_name,
             "discount_id": heuristic["discount_id"],
             "requires_double_week": heuristic["requires_double_week"]
         })
+
+    # 4. Detect the recurring 5-minigame set pattern (verified against real production history):
+    # position 1 alternates between two minigames; positions 2-5 are always the same set,
+    # each minigame running back-to-back (1 day gap) for a fixed duration.
+    # ponytail: fixed template, not derived generically — matches the last ~5 real cycles;
+    # revisit if the studio's rotation itself changes shape.
+    SET_ALTERNATES = ("赢钱排行榜", "连胜空岛")
+    SHARED_TAIL = [("挖蘑菇", 3), ("答题挑战", 1), ("大富翁", 3), ("Merge_Mini", 3)]
+
+    last_position1 = None
+    for r in range(ws_data.max_row, 3, -1):
+        mg_name = ws_data.cell(row=r, column=6).value
+        if mg_name in SET_ALTERNATES:
+            last_position1 = mg_name
+            break
+    next_first = SET_ALTERNATES[1] if last_position1 == SET_ALTERNATES[0] else SET_ALTERNATES[0]
+
+    last_quiz_dw = None
+    for r in range(ws_data.max_row, 3, -1):
+        if str(ws_data.cell(row=r, column=6).value or "").strip() == "答题挑战":
+            dw_val = ws_data.cell(row=r, column=7).value
+            if dw_val is not None and str(dw_val).strip() != "":
+                last_quiz_dw = str(dw_val).strip()
+                break
+
+    result["next_set_template"] = [{"name": next_first, "duration_days": 3}] + [
+        {"name": name, "duration_days": days} for name, days in SHARED_TAIL
+    ]
+    result["gap_days"] = 1
+    result["last_quiz_dw"] = last_quiz_dw
 
     print(json.dumps(result, ensure_ascii=False))
 

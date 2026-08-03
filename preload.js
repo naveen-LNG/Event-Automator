@@ -17,8 +17,20 @@ contextBridge.exposeInMainWorld('api', {
   bpCommit: (params) => ipcRenderer.invoke('bp:commit', params),
   hbpGet: (params) => ipcRenderer.invoke('hbp:get', params),
   hbpCommit: (params) => ipcRenderer.invoke('hbp:commit', params),
+  decoShopCommit: (params) => ipcRenderer.invoke('decoshop:commit', params),
+  residentTaskCommit: (params) => ipcRenderer.invoke('residenttask:commit', params),
+  weeklyGiftCommit: (params) => ipcRenderer.invoke('weeklygift:commit', params),
+  fullScreenGiftGet: (params) => ipcRenderer.invoke('fullscreengift:get', params),
+  fullScreenGiftCommit: (params) => ipcRenderer.invoke('fullscreengift:commit', params),
 
   eventTypesGet: (params) => ipcRenderer.invoke('eventtypes:get', params),
 
-  refreshConvertLayoutCache: (params) => ipcRenderer.invoke('convertLayoutCache:refresh', params)
+  refreshConvertLayoutCache: (params) => ipcRenderer.invoke('convertLayoutCache:refresh', params),
+  refreshAllCaches: (params) => ipcRenderer.invoke('caches:refreshAll', params),
+
+  triviaGet: (params) => ipcRenderer.invoke('trivia:get', params),
+  triviaRun: (params) => ipcRenderer.invoke('trivia:run', params),
+
+  endlessTreasureGet: (params) => ipcRenderer.invoke('endlesstreasure:get', params),
+  endlessTreasureCommit: (params) => ipcRenderer.invoke('endlesstreasure:commit', params)
 });

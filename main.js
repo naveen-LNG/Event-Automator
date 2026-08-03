@@ -350,6 +350,79 @@ ipcMain.handle('hbp:commit', async (evt, { designPath, payload }) => {
   return runPython('update_hbp', [designPath, tmp]);
 });
 
+ipcMain.handle('decoshop:commit', async (evt, { designPath, payload }) => {
+  const tmp = tempJsonFile('decoshop_payload');
+  fs.writeFileSync(tmp, JSON.stringify(payload), 'utf-8');
+  return runPython('update_decoration_shop', [designPath, tmp]);
+});
+
+ipcMain.handle('residenttask:commit', async (evt, { designPath, payload }) => {
+  const tmp = tempJsonFile('residenttask_payload');
+  fs.writeFileSync(tmp, JSON.stringify(payload), 'utf-8');
+  return runPython('update_resident_task', [designPath, tmp]);
+});
+
+ipcMain.handle('weeklygift:commit', async (evt, { designPath, payload }) => {
+  const tmp = tempJsonFile('weeklygift_payload');
+  fs.writeFileSync(tmp, JSON.stringify(payload), 'utf-8');
+  return runPython('update_weekly_gift', [designPath, tmp]);
+});
+
+ipcMain.handle('fullscreengift:get', async (evt, { designPath }) => {
+  return runPython('get_full_screen_gift_info', [designPath]);
+});
+
+ipcMain.handle('fullscreengift:commit', async (evt, { designPath, payload }) => {
+  const tmp = tempJsonFile('fullscreengift_payload');
+  fs.writeFileSync(tmp, JSON.stringify(payload), 'utf-8');
+  return runPython('update_full_screen_gift', [designPath, tmp]);
+});
+
+ipcMain.handle('endlesstreasure:get', async (evt, { designPath }) => {
+  return runPython('get_endless_treasure_info', [designPath]);
+});
+
+ipcMain.handle('endlesstreasure:commit', async (evt, { designPath, payload }) => {
+  const tmp = tempJsonFile('endlesstreasure_payload');
+  fs.writeFileSync(tmp, JSON.stringify(payload), 'utf-8');
+  return runPython('update_endless_treasure', [designPath, tmp]);
+});
+
+// ---- IPC: Trivia Challenge (答题挑战) quiz cycle refresh ----
+
+// Every configured branch's design dir (trunk/Misc/Feature/...), same workspace —
+// so a genuinely new cycle picks the next batch nobody else has used yet, even
+// though each branch is a separate checkout (possibly on a separate machine for a
+// separate team). A branch with no path configured yet is just skipped.
+function allBranchDesignDirs(workspace) {
+  const cfg = loadConfig();
+  return BRANCH_KEYS
+    .map((key) => cfg.branchPaths[key])
+    .filter(Boolean)
+    .map((root) => resolveDesignPath(root, workspace));
+}
+
+ipcMain.handle('trivia:get', async (evt, { branchRoot, workspace }) => {
+  return runPython('get_trivia_challenge_info', [branchRoot, workspace, JSON.stringify(allBranchDesignDirs(workspace))]);
+});
+
+ipcMain.handle('trivia:run', async (evt, { branchRoot, workspace }) => {
+  const logDir = resolveLogDir(branchRoot);
+  fs.mkdirSync(logDir, { recursive: true });
+
+  return new Promise((resolve) => {
+    let output = '';
+    const proc = spawn(PYTHON_EXE, [
+      PYBACKEND_SCRIPT, 'trivia_challenge_cycle', branchRoot, workspace, 'run', JSON.stringify(allBranchDesignDirs(workspace))
+    ], { cwd: PYBACKEND_CWD });
+
+    proc.stdout.on('data', (d) => { output += d.toString(); evt.sender.send('pipeline:log-line', d.toString()); });
+    proc.stderr.on('data', (d) => { output += d.toString(); evt.sender.send('pipeline:log-line', d.toString()); });
+    proc.on('close', (code) => resolve({ success: code === 0, code, output }));
+    proc.on('error', (err) => resolve({ success: false, code: 1, output: `Failed to launch Python: ${err.message}` }));
+  });
+});
+
 // ---- IPC: Event type / history lookup (Main Events tab source picker) ----
 
 ipcMain.handle('eventtypes:get', async (evt, { designPath }) => {
@@ -368,6 +441,26 @@ ipcMain.handle('convertLayoutCache:refresh', async (evt, { branchRoot, workspace
     let output = '';
     const proc = spawn(PYTHON_EXE, [
       PYBACKEND_SCRIPT, 'refresh_convert_layout_cache', branchRoot, logDir, workspace, JSON.stringify(eventNames)
+    ], { cwd: PYBACKEND_CWD });
+
+    proc.stdout.on('data', (d) => { output += d.toString(); evt.sender.send('pipeline:log-line', d.toString()); });
+    proc.stderr.on('data', (d) => { output += d.toString(); evt.sender.send('pipeline:log-line', d.toString()); });
+    proc.on('close', (code) => resolve({ success: code === 0, code, output }));
+    proc.on('error', (err) => resolve({ success: false, code: 1, output: `Failed to launch Python: ${err.message}` }));
+  });
+});
+
+// ---- IPC: manual "Update all local caches from SVN" — convert_layout.lua,
+// icon.xlsx/item.xlsx, and localization.xlsx source-event data in one pass ----
+
+ipcMain.handle('caches:refreshAll', async (evt, { branchRoot, workspace, eventNames }) => {
+  const logDir = resolveLogDir(branchRoot);
+  fs.mkdirSync(logDir, { recursive: true });
+
+  return new Promise((resolve) => {
+    let output = '';
+    const proc = spawn(PYTHON_EXE, [
+      PYBACKEND_SCRIPT, 'refresh_all_caches', branchRoot, logDir, workspace, JSON.stringify(eventNames)
     ], { cwd: PYBACKEND_CWD });
 
     proc.stdout.on('data', (d) => { output += d.toString(); evt.sender.send('pipeline:log-line', d.toString()); });

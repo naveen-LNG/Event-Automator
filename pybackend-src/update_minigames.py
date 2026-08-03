@@ -71,24 +71,24 @@ def main():
         ws_data.cell(row=start_row, column=2).value = True
         
         # Start time
-        ws_data.cell(row=start_row, column=5).value = row_data['start_time']
+        ws_data.cell(row=start_row, column=3).value = row_data['start_time']
         # End time
-        ws_data.cell(row=start_row, column=6).value = row_data['end_time']
-        
-        # Minigame
-        ws_data.cell(row=start_row, column=10).value = row_data['minigame']
-        
-        # Double Week ID
+        ws_data.cell(row=start_row, column=4).value = row_data['end_time']
+
+        # Minigame (活动类型)
+        ws_data.cell(row=start_row, column=6).value = row_data['minigame']
+
+        # Double Week ID (双周活动ID)
         dw_val = row_data.get('double_week_id')
         if dw_val and str(dw_val).strip() != "":
             try:
-                ws_data.cell(row=start_row, column=11).value = int(dw_val)
+                ws_data.cell(row=start_row, column=7).value = int(dw_val)
             except ValueError:
-                ws_data.cell(row=start_row, column=11).value = dw_val
-                
-        # Discount ID
+                ws_data.cell(row=start_row, column=7).value = dw_val
+
+        # Discount ID (折扣链ID)
         if row_data.get('discount_id') != -1:
-            ws_data.cell(row=start_row, column=12).value = row_data['discount_id']
+            ws_data.cell(row=start_row, column=8).value = row_data['discount_id']
         
         start_row += 1
 

@@ -9,6 +9,9 @@
   let cachedBP = null;
   let cachedHBP = null;
   let cachedEventTypes = null;
+  let cachedFSG = null;
+  let cachedTrivia = null;
+  let cachedEndlessTreasure = null;
   let isExecuting = false;
 
   const $ = (sel) => document.querySelector(sel);
@@ -53,6 +56,12 @@
     if (viewId === 'minigames-view') loadMinigames();
     if (viewId === 'battlepass-view') loadBP();
     if (viewId === 'holiday-bp-view') loadHBP();
+    if (viewId === 'decoration-shop-view') updateDecoShopPreview();
+    if (viewId === 'streak-challenge-view') updateStreakPreview();
+    if (viewId === 'weekly-gift-view') updateWeeklyGiftPreview();
+    if (viewId === 'full-screen-gift-view') loadFullScreenGift();
+    if (viewId === 'trivia-challenge-view') loadTrivia();
+    if (viewId === 'endless-treasure-view') loadEndlessTreasure();
   }
 
   // Re-fetch whichever tab is currently open — called after branch/workspace
@@ -62,6 +71,9 @@
     else if (currentView === 'minigames-view') await loadMinigames(true);
     else if (currentView === 'battlepass-view') await loadBP(true);
     else if (currentView === 'holiday-bp-view') await loadHBP(true);
+    else if (currentView === 'full-screen-gift-view') await loadFullScreenGift(true);
+    else if (currentView === 'trivia-challenge-view') await loadTrivia(true);
+    else if (currentView === 'endless-treasure-view') await loadEndlessTreasure(true);
   }
 
   $$('.menu-btn').forEach(btn => {
@@ -128,7 +140,7 @@
     $('#settings-branch-select').value = branch;
     await window.api.saveConfig({ activeBranch: branch });
     // Invalidate sub-tool caches — different branch/workspace means different Excel files.
-    cachedMinigames = cachedBP = cachedHBP = cachedEventTypes = null;
+    cachedMinigames = cachedBP = cachedHBP = cachedEventTypes = cachedFSG = null;
     await refreshContext();
     await refreshSettingsResolvedPath();
     await refreshActiveViewData();
@@ -139,7 +151,7 @@
     $('#active-workspace-select').value = ws;
     $('#settings-workspace-select').value = ws;
     await window.api.saveConfig({ activeWorkspace: ws });
-    cachedMinigames = cachedBP = cachedHBP = cachedEventTypes = null;
+    cachedMinigames = cachedBP = cachedHBP = cachedEventTypes = cachedFSG = null;
     buildChecklist();
     await refreshContext();
     await refreshSettingsResolvedPath();
@@ -220,19 +232,19 @@
     const btn = $('#refresh-cache-btn');
     btn.disabled = true;
     btn.textContent = 'Refreshing...';
-    log('Refreshing convert_layout.lua source-event cache from SVN...');
+    log('Refreshing all source-event caches (convert_layout.lua, icon.xlsx/item.xlsx, localization.xlsx) from SVN...');
 
     if (!cachedEventTypes) await loadEventTypes(true);
     const eventNames = getLatestEventNamesPerType();
 
-    const res = await window.api.refreshConvertLayoutCache({
+    const res = await window.api.refreshAllCaches({
       branchRoot: activeBranchRoot(),
       workspace: cfg.activeWorkspace,
       eventNames
     });
 
     btn.disabled = false;
-    btn.textContent = 'Update Cache from SVN';
+    btn.textContent = 'Update All Caches from SVN';
 
     if (res.success) {
       toast('Cache refresh complete — see the Main Events console for what changed.', 'success');
@@ -527,94 +539,126 @@
   });
 
   // ---------------- Minigames tab ----------------
+  let generatedMinigameRows = [];
+
+  function renderMinigamePreview() {
+    const container = $('#minigame-preview-container');
+    if (!generatedMinigameRows.length) {
+      container.innerHTML = '<p class="header-subtitle small" style="margin:0;">Generate a set above to preview the rows here.</p>';
+      return;
+    }
+    const rowsHtml = generatedMinigameRows.map(r => `
+      <tr>
+        <td>${r.id}</td>
+        <td>${r.minigame}</td>
+        <td>${r.start_time}</td>
+        <td>${r.end_time}</td>
+        <td>${r.double_week_id || '-'}</td>
+        <td>${r.discount_id !== -1 ? r.discount_id : '-'}</td>
+      </tr>`).join('');
+    container.innerHTML = `
+      <table class="mg-preview-table">
+        <thead><tr><th>ID</th><th>Minigame</th><th>Start</th><th>End</th><th>Double Wk ID</th><th>Discount ID</th></tr></thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>`;
+  }
+
+  function setMinigameControlsEnabled(enabled) {
+    $('#minigame-generate-set-btn').disabled = !enabled;
+    $('#minigame-execute-btn').disabled = !enabled;
+  }
+
   async function loadMinigames(force) {
     if (cachedMinigames && !force) return;
     cachedMinigames = null;
-    $('#minigame-rows-container').innerHTML = '';
-    const root = activeBranchRoot();
-    if (!root) { log('Cannot load minigames: branch path not set.', 'console-log-error'); return; }
-    const designPath = await window.api.resolveDesignPath(root, cfg.activeWorkspace);
-    log('Loading Minigame configs from Excel...');
-    const res = await window.api.minigamesGet({ designPath });
-    if (!res.success) { log(`Error loading minigames: ${res.output}`, 'console-log-error'); toast('Could not load mini_mgr.xlsx for this branch/workspace.', 'error'); return; }
+    generatedMinigameRows = [];
+    renderMinigamePreview();
+    setMinigameControlsEnabled(false);
     try {
+      const root = activeBranchRoot();
+      if (!root) { log('Cannot load minigames: branch path not set.', 'console-log-error'); return; }
+      const designPath = await window.api.resolveDesignPath(root, cfg.activeWorkspace);
+      log('Loading Minigame configs from Excel...');
+      const res = await window.api.minigamesGet({ designPath });
+      if (!res.success) { log(`Error loading minigames: ${res.output}`, 'console-log-error'); toast('Could not load mini_mgr.xlsx for this branch/workspace.', 'error'); return; }
       const data = JSON.parse(res.stdout);
       if (data.error) { log(`Error: ${data.error}`, 'console-log-error'); toast('Could not load mini_mgr.xlsx for this branch/workspace.', 'error'); return; }
       cachedMinigames = data;
       log(`Loaded ${data.minigames.length} minigames. Max ID: ${data.max_id}`);
-      addMinigameRow();
+      const preview = $('#minigame-next-set-preview');
+      if (preview && data.next_set_template) preview.textContent = data.next_set_template.map(t => t.name).join(' → ');
     } catch (e) {
       log(`Error parsing minigame JSON: ${e.message}`, 'console-log-error');
+    } finally {
+      setMinigameControlsEnabled(!!cachedMinigames);
     }
   }
 
-  function addMinigameRow() {
-    if (!cachedMinigames) { log('Minigame configs still loading...', 'console-log-error'); return; }
-    const container = $('#minigame-rows-container');
-    const nextId = cachedMinigames.max_id + container.children.length + 1;
-
-    const row = document.createElement('div');
-    row.className = 'minigame-row';
-
-    const idInput = document.createElement('input');
-    idInput.className = 'mg-id'; idInput.value = nextId;
-
-    const nameSelect = document.createElement('select');
-    nameSelect.className = 'mg-name';
-    cachedMinigames.minigames.forEach(m => {
-      const opt = document.createElement('option');
-      opt.value = m.name; opt.textContent = m.name;
-      nameSelect.appendChild(opt);
-    });
-
-    const startInput = document.createElement('input');
-    startInput.className = 'mg-time'; startInput.value = '2026-06-01 00:00:00';
-    const endInput = document.createElement('input');
-    endInput.className = 'mg-time'; endInput.value = '2026-06-03 23:59:59';
-
-    const dwInput = document.createElement('input');
-    dwInput.className = 'mg-time'; dwInput.placeholder = 'Double Wk ID'; dwInput.style.display = 'none';
-
-    function syncDw() {
-      const mg = cachedMinigames.minigames.find(m => m.name === nameSelect.value);
-      dwInput.style.display = (mg && mg.requires_double_week) ? '' : 'none';
-    }
-    nameSelect.addEventListener('change', syncDw);
-    syncDw();
-
-    const removeBtn = document.createElement('button');
-    removeBtn.className = 'mg-remove-btn';
-    removeBtn.textContent = '✕';
-    removeBtn.addEventListener('click', () => row.remove());
-
-    row.appendChild(idInput);
-    row.appendChild(nameSelect);
-    row.appendChild(startInput);
-    row.appendChild(endInput);
-    row.appendChild(dwInput);
-    row.appendChild(removeBtn);
-    container.appendChild(row);
+  function parseMgDateTime(str) {
+    const [datePart, timePart] = str.trim().split(' ');
+    const [y, m, d] = datePart.split('-').map(Number);
+    const [hh, mm, ss] = (timePart || '00:00:00').split(':').map(Number);
+    return new Date(y, m - 1, d, hh || 0, mm || 0, ss || 0);
+  }
+  function formatMgDateTime(dt) {
+    const pad = n => String(n).padStart(2, '0');
+    return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}:${pad(dt.getSeconds())}`;
+  }
+  function addMgDays(dt, days) {
+    const copy = new Date(dt);
+    copy.setDate(copy.getDate() + days);
+    return copy;
   }
 
-  $('#add-minigame-row-btn').addEventListener('click', addMinigameRow);
+  $('#minigame-generate-set-btn').addEventListener('click', () => {
+    if (!cachedMinigames || !cachedMinigames.next_set_template) { log('Minigame configs still loading...', 'console-log-error'); return; }
 
-  $('#minigame-execute-btn').addEventListener('click', async () => {
+    const startInput = $('#minigame-set-start-input');
+    const cursorStart = parseMgDateTime(startInput.value);
+    if (isNaN(cursorStart.getTime())) { toast('Invalid start time. Use YYYY-MM-DD HH:MM:SS.', 'error'); return; }
+
+    const gapDays = cachedMinigames.gap_days || 1;
+    let lastQuizDw = cachedMinigames.last_quiz_dw;
+    let nextId = cachedMinigames.max_id + 1;
+    let cursor = cursorStart;
     const rows = [];
-    $$('#minigame-rows-container .minigame-row').forEach(row => {
-      const [idInput, nameSelect, startInput, endInput, dwInput] = row.children;
-      const id = parseInt(idInput.value, 10);
-      if (Number.isNaN(id)) return;
-      const mg = cachedMinigames.minigames.find(m => m.name === nameSelect.value);
+
+    cachedMinigames.next_set_template.forEach(item => {
+      const start = cursor;
+      const end = addMgDays(start, item.duration_days - 1);
+      end.setHours(23, 59, 59);
+
+      let dw = '';
+      if (item.name === '答题挑战') {
+        const yyyymm = `${start.getFullYear()}${String(start.getMonth() + 1).padStart(2, '0')}`;
+        let counter = 1;
+        if (lastQuizDw && lastQuizDw.slice(0, 6) === yyyymm) counter = parseInt(lastQuizDw.slice(6), 10) + 1;
+        dw = `${yyyymm}${String(counter).padStart(2, '0')}`;
+        lastQuizDw = dw;
+      }
+
+      const mg = cachedMinigames.minigames.find(m => m.name === item.name);
       rows.push({
-        id,
-        minigame: nameSelect.value,
-        start_time: startInput.value,
-        end_time: endInput.value,
-        double_week_id: dwInput.style.display === 'none' ? '' : dwInput.value,
+        id: nextId++,
+        minigame: item.name,
+        start_time: formatMgDateTime(start),
+        end_time: formatMgDateTime(end),
+        double_week_id: dw,
         discount_id: mg ? mg.discount_id : -1
       });
+
+      cursor = addMgDays(end, gapDays);
+      cursor.setHours(0, 0, 0, 0);
     });
-    if (rows.length === 0) { log('No valid minigame rows to commit.', 'console-log-error'); return; }
+
+    generatedMinigameRows = rows;
+    renderMinigamePreview();
+    toast(`Generated ${rows.length} rows for the next set.`, 'success');
+  });
+
+  $('#minigame-execute-btn').addEventListener('click', async () => {
+    const rows = generatedMinigameRows;
+    if (rows.length === 0) { log('No generated minigame set to commit.', 'console-log-error'); return; }
 
     const root = activeBranchRoot();
     const designPath = await window.api.resolveDesignPath(root, cfg.activeWorkspace);
@@ -626,8 +670,10 @@
     if (res.success) {
       log(`Success: ${res.stdout}`, 'console-log-success');
       toast(`${rows.length} minigame run(s) appended to mini_mgr.xlsx.`, 'success');
-      $('#minigame-rows-container').innerHTML = '';
+      generatedMinigameRows = [];
+      renderMinigamePreview();
       cachedMinigames = null;
+      await loadMinigames(true);
     } else {
       log(`Commit failed: ${res.output}`, 'console-log-error');
       toast('Commit failed. Check that mini_mgr.xlsx is closed in Excel.<br>' + res.output, 'error');
@@ -775,6 +821,420 @@
     } else {
       log(`Holiday BP Commit Failed: ${res.output}`, 'console-log-error');
       toast('Commit failed: ' + res.output, 'error');
+    }
+  });
+
+  // ---------------- Decoration Shop tab ----------------
+  function updateDecoShopPreview() {
+    const eventId = ($('#event-id-input').value || '').trim();
+    $('#decoshop-event-id-display').value = eventId;
+    const id4 = eventId.slice(0, 4) || '[ID]';
+    const name = ($('#decoshop-event-name').value || '').trim() || '[EventName]';
+    const mode1 = $('#decoshop-mode-1').value;
+    const mode2 = $('#decoshop-mode-2').value;
+    $('#decoshop-preview-frame1').textContent = `${id4}${name}${mode1}`;
+    $('#decoshop-preview-frame2').textContent = `${id4}${name}${mode2}`;
+    $('#decoshop-preview-cardback').textContent = `${id4}${name}`;
+  }
+  ['#decoshop-event-name', '#decoshop-mode-1', '#decoshop-mode-2'].forEach(sel => {
+    $(sel).addEventListener('input', updateDecoShopPreview);
+    $(sel).addEventListener('change', updateDecoShopPreview);
+  });
+  $('#event-id-input').addEventListener('input', () => {
+    if (currentView === 'decoration-shop-view') updateDecoShopPreview();
+  });
+
+  $('#decoshop-execute-btn').addEventListener('click', async () => {
+    const eventId = ($('#event-id-input').value || '').trim();
+    const eventName = ($('#decoshop-event-name').value || '').trim();
+    const mode1 = $('#decoshop-mode-1').value;
+    const mode2 = $('#decoshop-mode-2').value;
+    const priceFrame = ($('#decoshop-price-frame').value || '').trim();
+    const priceCardback = ($('#decoshop-price-cardback').value || '').trim();
+
+    if (!eventId || eventId.length < 4) { toast('Please fill in a valid Event ID on the Main Events tab first.', 'error'); return; }
+    if (!eventName) { toast('Please fill in Event Name.', 'error'); return; }
+    if (mode1 === mode2) { toast('Game Mode 1 and Game Mode 2 must be different.', 'error'); return; }
+
+    const root = activeBranchRoot();
+    const designPath = await window.api.resolveDesignPath(root, cfg.activeWorkspace);
+    const btn = $('#decoshop-execute-btn');
+    btn.disabled = true;
+    const res = await window.api.decoShopCommit({
+      designPath,
+      payload: {
+        event_id: eventId,
+        event_name: eventName,
+        game_mode_1: mode1,
+        game_mode_2: mode2,
+        price_frame: priceFrame || '4',
+        price_cardback: priceCardback || '10'
+      }
+    });
+    btn.disabled = false;
+
+    if (res.success) {
+      log('Decoration Shop Commit Successful!', 'console-log-success');
+      toast('Decoration Shop configuration updated across all files.', 'success');
+    } else {
+      log(`Decoration Shop Commit Failed: ${res.output}`, 'console-log-error');
+      toast('Commit failed: ' + res.output, 'error');
+    }
+  });
+
+  // ---------------- Streak Challenge tab ----------------
+  // Start Date + Duration are reused directly from the Main Events tab (not re-entered here) —
+  // same rationale as Event ID: one source of truth for "this event's" dates.
+  function updateStreakPreview() {
+    const eventId = ($('#event-id-input').value || '').trim();
+    $('#streak-event-id-display').value = eventId;
+    const startDateStr = $('#start-date-input').value;
+    const duration = parseInt($('#duration-days-input').value, 10);
+    $('#streak-start-date-display').value = startDateStr || '';
+    $('#streak-duration-display').value = Number.isFinite(duration) ? duration : '';
+    const times = computeEventTimes(startDateStr, duration);
+    if (!times) {
+      $('#streak-preview-end-date').textContent = '...';
+      $('#streak-preview-rows').textContent = '...';
+      return;
+    }
+    $('#streak-preview-end-date').textContent = times.endTime;
+    $('#streak-preview-rows').textContent = Math.ceil(duration / 7);
+  }
+  ['#event-id-input', '#start-date-input', '#duration-days-input'].forEach(sel => {
+    $(sel).addEventListener('input', () => {
+      if (currentView === 'streak-challenge-view') updateStreakPreview();
+    });
+  });
+
+  $('#streak-execute-btn').addEventListener('click', async () => {
+    const eventId = ($('#event-id-input').value || '').trim();
+    const eventName = ($('#streak-event-name').value || '').trim();
+    const startDateStr = $('#start-date-input').value;
+    const duration = parseInt($('#duration-days-input').value, 10);
+    const times = computeEventTimes(startDateStr, duration);
+
+    if (!eventId || eventId.length < 4) { toast('Please fill in a valid Event ID on the Main Events tab first.', 'error'); return; }
+    if (!eventName) { toast('Please fill in Event Name.', 'error'); return; }
+    if (!times) { toast('Please fill in Start Date and Duration (days) on the Main Events tab first.', 'error'); return; }
+
+    const root = activeBranchRoot();
+    const designPath = await window.api.resolveDesignPath(root, cfg.activeWorkspace);
+    const btn = $('#streak-execute-btn');
+    btn.disabled = true;
+    const res = await window.api.residentTaskCommit({
+      designPath,
+      payload: {
+        event_id: eventId,
+        event_name: eventName,
+        start_time: times.startTime,
+        end_time: times.endTime
+      }
+    });
+    btn.disabled = false;
+
+    // Always show the Python script's own log output — "success" can also mean an
+    // idempotent no-op (activity ID already present, nothing written), which the
+    // script reports as success too; without this the console stayed silent either way.
+    if (res.output) log(res.output, res.success ? 'console-log-line' : 'console-log-error');
+
+    if (res.success) {
+      if (/already present/i.test(res.output || '')) {
+        log('Streak Challenge Commit: no changes made (activity ID already present).', 'console-log-line');
+        toast('No changes made — that Event ID already has a cycle in resident_task.xlsx.', 'error');
+      } else {
+        log('Streak Challenge Commit Successful!', 'console-log-success');
+        toast('resident_task.xlsx updated with the new cycle.', 'success');
+      }
+    } else {
+      log(`Streak Challenge Commit Failed: ${res.output}`, 'console-log-error');
+      toast('Commit failed: ' + res.output, 'error');
+    }
+  });
+
+  // ---------------- Weekly Gift tab ----------------
+  // Start Date + Duration are reused directly from the Main Events tab, same as Streak
+  // Challenge. weekly_gift is a fixed weekly grid the event "claims" rows from by date
+  // overlap (ceil(duration/7) rows) — it does not clone anything per event.
+  function updateWeeklyGiftPreview() {
+    const eventId = ($('#event-id-input').value || '').trim();
+    $('#weeklygift-event-id-display').value = eventId;
+    const startDateStr = $('#start-date-input').value;
+    const duration = parseInt($('#duration-days-input').value, 10);
+    $('#weeklygift-start-date-display').value = startDateStr || '';
+    $('#weeklygift-duration-display').value = Number.isFinite(duration) ? duration : '';
+    const times = computeEventTimes(startDateStr, duration);
+    if (!times) {
+      $('#weeklygift-preview-end-date').textContent = '...';
+      $('#weeklygift-preview-rows').textContent = '...';
+      return;
+    }
+    $('#weeklygift-preview-end-date').textContent = times.endTime;
+    $('#weeklygift-preview-rows').textContent = Math.ceil(duration / 7);
+  }
+  ['#event-id-input', '#start-date-input', '#duration-days-input'].forEach(sel => {
+    $(sel).addEventListener('input', () => {
+      if (currentView === 'weekly-gift-view') updateWeeklyGiftPreview();
+    });
+  });
+
+  $('#weeklygift-execute-btn').addEventListener('click', async () => {
+    const eventId = ($('#event-id-input').value || '').trim();
+    const startDateStr = $('#start-date-input').value;
+    const duration = parseInt($('#duration-days-input').value, 10);
+    const times = computeEventTimes(startDateStr, duration);
+
+    if (!eventId || eventId.length < 4) { toast('Please fill in a valid Event ID on the Main Events tab first.', 'error'); return; }
+    if (!times) { toast('Please fill in Start Date and Duration (days) on the Main Events tab first.', 'error'); return; }
+
+    const root = activeBranchRoot();
+    const designPath = await window.api.resolveDesignPath(root, cfg.activeWorkspace);
+    const btn = $('#weeklygift-execute-btn');
+    btn.disabled = true;
+    const res = await window.api.weeklyGiftCommit({
+      designPath,
+      payload: {
+        event_id: eventId,
+        start_time: times.startTime,
+        end_time: times.endTime
+      }
+    });
+    btn.disabled = false;
+
+    if (res.output) log(res.output, res.success ? 'console-log-line' : 'console-log-error');
+
+    if (res.success) {
+      if (/No changes needed/i.test(res.output || '')) {
+        log('Weekly Gift Commit: no changes made (rows already enabled).', 'console-log-line');
+        toast('No changes made — those weekly_gift rows are already enabled.', 'error');
+      } else {
+        log('Weekly Gift Commit Successful!', 'console-log-success');
+        toast('store.xlsx (weekly_gift) updated for this event.', 'success');
+      }
+    } else {
+      log(`Weekly Gift Commit Failed: ${res.output}`, 'console-log-error');
+      toast('Commit failed: ' + res.output, 'error');
+    }
+  });
+
+  // ---------------- Full Screen Gift tab ----------------
+  // recommend_gift (store.xlsx) slot-16 rows recur on a ~14-day cadence, each cloned
+  // verbatim (recharge list, formula, purchase count, etc.) from the most recent
+  // instance — verified identical across the whole existing series. Only
+  // ID/Alias/Start/End are regenerated per new instance, and switch is always forced
+  // to FALSE regardless of the template (the sheet's own default).
+  async function loadFullScreenGift(force) {
+    if (cachedFSG && !force) { updateFSGPreview(); return; }
+    cachedFSG = null;
+    const root = activeBranchRoot();
+    if (!root) { log('Cannot load Full Screen Gift info: branch path not set.', 'console-log-error'); return; }
+    const designPath = await window.api.resolveDesignPath(root, cfg.activeWorkspace);
+    log('Loading Full Screen Gift metadata from store.xlsx...');
+    const res = await window.api.fullScreenGiftGet({ designPath });
+    if (!res.success) { log(`Error loading Full Screen Gift info: ${res.output}`, 'console-log-error'); toast('Could not load store.xlsx for this branch/workspace.', 'error'); return; }
+    try {
+      cachedFSG = JSON.parse(res.stdout);
+      if (cachedFSG.error) { log(`Error: ${cachedFSG.error}`, 'console-log-error'); toast(cachedFSG.error, 'error'); cachedFSG = null; return; }
+      log(`Full Screen Gift metadata loaded. Next ID: ${cachedFSG.next_id}`);
+      if (!$('#fsg-start-date').value && cachedFSG.suggested_next_start) {
+        $('#fsg-start-date').value = cachedFSG.suggested_next_start;
+      }
+      updateFSGPreview();
+    } catch (e) {
+      log(`Error parsing Full Screen Gift JSON: ${e.message}`, 'console-log-error');
+    }
+  }
+
+  function updateFSGPreview() {
+    if (!cachedFSG) return;
+    $('#fsg-preview-id').textContent = cachedFSG.next_id;
+    const startDateStr = $('#fsg-start-date').value.trim();
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(startDateStr);
+    if (!m) {
+      $('#fsg-preview-alias').textContent = '...';
+      $('#fsg-preview-start').textContent = '...';
+      $('#fsg-preview-end').textContent = '...';
+      return;
+    }
+    const [, y, mo, d] = m;
+    const yy = y.slice(2);
+    $('#fsg-preview-alias').textContent = `全屏礼包${yy}${mo}${d}`;
+    const startMs = Date.UTC(Number(y), Number(mo) - 1, Number(d));
+    const endMs = startMs + (cachedFSG.window_days - 1) * 86400000;
+    $('#fsg-preview-start').textContent = `${startDateStr} 00:00:00`;
+    $('#fsg-preview-end').textContent = `${fmtDate(endMs)} 23:59:59`;
+  }
+  $('#fsg-start-date').addEventListener('input', updateFSGPreview);
+
+  $('#fsg-execute-btn').addEventListener('click', async () => {
+    if (!cachedFSG) { toast('Full Screen Gift metadata still loading...', 'error'); return; }
+    const startDateStr = $('#fsg-start-date').value.trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(startDateStr)) { toast('Please enter a valid Start Date (yyyy-mm-dd).', 'error'); return; }
+
+    const root = activeBranchRoot();
+    const designPath = await window.api.resolveDesignPath(root, cfg.activeWorkspace);
+    const btn = $('#fsg-execute-btn');
+    btn.disabled = true; btn.textContent = 'Committing...';
+    const res = await window.api.fullScreenGiftCommit({ designPath, payload: { start_date: startDateStr } });
+    btn.disabled = false; btn.textContent = 'Commit Full Screen Gift';
+
+    if (res.output) log(res.output, res.success ? 'console-log-line' : 'console-log-error');
+
+    if (res.success) {
+      if (/already exists/i.test(res.output || '')) {
+        log('Full Screen Gift Commit: no changes made (row already exists for that date).', 'console-log-line');
+        toast('No changes made — a Full Screen Gift row already exists for that date.', 'error');
+      } else {
+        log('Full Screen Gift Commit Successful!', 'console-log-success');
+        toast('store.xlsx (recommend_gift) updated with the new Full Screen Gift.', 'success');
+        cachedFSG = null;
+        await loadFullScreenGift(true);
+      }
+    } else {
+      log(`Full Screen Gift Commit Failed: ${res.output}`, 'console-log-error');
+      toast('Commit failed: ' + res.output, 'error');
+    }
+  });
+
+  // ---------------- Endless Treasure tab ----------------
+  // 折扣链数据 event-chain (类型=2) triplets alternate between two fixed
+  // stage-ID templates every ~window (verified against SVN history: the two
+  // templates' reward content has never diverged). New triplet clones the
+  // OTHER slot's most recent triplet verbatim; only ID + 说明 change. See the
+  // static analysis cards above this form for the full mechanism.
+  async function loadEndlessTreasure(force) {
+    if (cachedEndlessTreasure && !force) { updateEndlessTreasurePreview(); return; }
+    cachedEndlessTreasure = null;
+    const root = activeBranchRoot();
+    if (!root) { log('Cannot load Endless Treasure info: branch path not set.', 'console-log-error'); return; }
+    const designPath = await window.api.resolveDesignPath(root, cfg.activeWorkspace);
+    log('Loading Endless Treasure metadata from endless_treasure.xlsx...');
+    const res = await window.api.endlessTreasureGet({ designPath });
+    if (!res.success) { log(`Error loading Endless Treasure info: ${res.output}`, 'console-log-error'); toast('Could not load endless_treasure.xlsx for this branch/workspace.', 'error'); return; }
+    try {
+      cachedEndlessTreasure = JSON.parse(res.stdout);
+      if (cachedEndlessTreasure.error) { log(`Error: ${cachedEndlessTreasure.error}`, 'console-log-error'); toast(cachedEndlessTreasure.error, 'error'); cachedEndlessTreasure = null; return; }
+      log(`Endless Treasure metadata loaded. Next chain IDs: ${cachedEndlessTreasure.next_chain_ids}`);
+      if (!$('#et-start-date').value && cachedEndlessTreasure.suggested_next_start) {
+        $('#et-start-date').value = cachedEndlessTreasure.suggested_next_start;
+      }
+      updateEndlessTreasurePreview();
+    } catch (e) {
+      log(`Error parsing Endless Treasure JSON: ${e.message}`, 'console-log-error');
+    }
+  }
+
+  function updateEndlessTreasurePreview() {
+    if (!cachedEndlessTreasure) return;
+    $('#et-preview-rec-id').textContent = cachedEndlessTreasure.next_rec_id;
+    $('#et-preview-chain-ids').textContent = cachedEndlessTreasure.next_chain_ids.join(', ');
+    const startDateStr = $('#et-start-date').value.trim();
+    const eventName = $('#et-event-name').value.trim();
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(startDateStr);
+    if (!m || !eventName) {
+      $('#et-preview-start').textContent = '...';
+      $('#et-preview-end').textContent = '...';
+      $('#et-preview-theme').textContent = '...';
+      return;
+    }
+    const [, y, mo, d] = m;
+    const startMs = Date.UTC(Number(y), Number(mo) - 1, Number(d));
+    const endMs = startMs + (cachedEndlessTreasure.window_days - 1) * 86400000;
+    $('#et-preview-start').textContent = `${startDateStr} 00:00:00`;
+    $('#et-preview-end').textContent = `${fmtDate(endMs)} 23:59:59`;
+    $('#et-preview-theme').textContent = `${y}${mo}${eventName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}`;
+  }
+  $('#et-start-date').addEventListener('input', updateEndlessTreasurePreview);
+  $('#et-event-name').addEventListener('input', updateEndlessTreasurePreview);
+  $('#et-refresh-btn').addEventListener('click', () => loadEndlessTreasure(true));
+
+  $('#et-execute-btn').addEventListener('click', async () => {
+    if (!cachedEndlessTreasure) { toast('Endless Treasure metadata still loading...', 'error'); return; }
+    const startDateStr = $('#et-start-date').value.trim();
+    const eventName = $('#et-event-name').value.trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(startDateStr)) { toast('Please enter a valid Start Date (yyyy-mm-dd).', 'error'); return; }
+    if (!eventName) { toast('Please enter an Event Name.', 'error'); return; }
+
+    const root = activeBranchRoot();
+    const designPath = await window.api.resolveDesignPath(root, cfg.activeWorkspace);
+    const btn = $('#et-execute-btn');
+    btn.disabled = true; btn.textContent = 'Committing...';
+    const res = await window.api.endlessTreasureCommit({ designPath, payload: { start_date: startDateStr, event_name: eventName } });
+    btn.disabled = false; btn.textContent = 'Commit Endless Treasure';
+
+    if (res.output) log(res.output, res.success ? 'console-log-line' : 'console-log-error');
+
+    if (res.success) {
+      if (/already exists/i.test(res.output || '')) {
+        log('Endless Treasure Commit: no changes made (a window already exists for that date).', 'console-log-line');
+        toast('No changes made — a recommendation row already exists for that date.', 'error');
+      } else {
+        log('Endless Treasure Commit Successful!', 'console-log-success');
+        toast('endless_treasure.xlsx updated with the new chain window.', 'success');
+        cachedEndlessTreasure = null;
+        await loadEndlessTreasure(true);
+      }
+    } else {
+      log(`Endless Treasure Commit Failed: ${res.output}`, 'console-log-error');
+      toast('Commit failed: ' + res.output, 'error');
+    }
+  });
+
+  // ---------------- Trivia Challenge tab ----------------
+  async function loadTrivia(force) {
+    if (cachedTrivia && !force) { updateTriviaPreview(); return; }
+    cachedTrivia = null;
+    $('#trivia-preview-prefix').textContent = '...';
+    $('#trivia-preview-batch').textContent = '...';
+    $('#trivia-preview-count').textContent = '...';
+    $('#trivia-preview-tiers').textContent = '...';
+    $('#trivia-preview-status').textContent = '...';
+    const root = activeBranchRoot();
+    if (!root) { log('Cannot load Trivia Challenge info: branch path not set.', 'console-log-error'); return; }
+    log('Loading Trivia Challenge cycle info from mini_mgr.xlsx...');
+    const res = await window.api.triviaGet({ branchRoot: root, workspace: cfg.activeWorkspace });
+    if (!res.success) { log(`Error loading Trivia Challenge info: ${res.output}`, 'console-log-error'); toast('Could not compute the upcoming 答题挑战 cycle for this branch/workspace.', 'error'); return; }
+    try {
+      cachedTrivia = JSON.parse(res.stdout);
+      if (cachedTrivia.error) { log(`Error: ${cachedTrivia.error}`, 'console-log-error'); toast(cachedTrivia.error, 'error'); cachedTrivia = null; return; }
+      log(`Trivia Challenge cycle info loaded. Prefix: ${cachedTrivia.prefix}`);
+      updateTriviaPreview();
+    } catch (e) {
+      log(`Error parsing Trivia Challenge JSON: ${e.message}`, 'console-log-error');
+    }
+  }
+
+  function updateTriviaPreview() {
+    if (!cachedTrivia) return;
+    $('#trivia-preview-prefix').textContent = cachedTrivia.prefix;
+    $('#trivia-preview-batch').textContent = cachedTrivia.batch_number != null ? `#${cachedTrivia.batch_number}` : '...';
+    $('#trivia-preview-count').textContent = cachedTrivia.question_count;
+    const t = cachedTrivia.tier_counts || {};
+    $('#trivia-preview-tiers').textContent = `${t['1'] ?? 0} / ${t['2'] ?? 0} / ${t['3'] ?? 0}`;
+    $('#trivia-preview-status').textContent = cachedTrivia.already_current ? 'Already current' : 'Needs refresh';
+  }
+
+  $('#trivia-refresh-btn').addEventListener('click', () => loadTrivia(true));
+
+  $('#trivia-execute-btn').addEventListener('click', async () => {
+    if (!cachedTrivia) { toast('Trivia Challenge info still loading...', 'error'); return; }
+    if (cachedTrivia.already_current) {
+      toast('Nothing to do — the quiz already matches the upcoming cycle.');
+      return;
+    }
+    const root = activeBranchRoot();
+    const btn = $('#trivia-execute-btn');
+    btn.disabled = true; btn.textContent = 'Running...';
+    const res = await window.api.triviaRun({ branchRoot: root, workspace: cfg.activeWorkspace });
+    btn.disabled = false; btn.textContent = 'Run Trivia Challenge Cycle';
+
+    if (res.success) {
+      log('Trivia Challenge Cycle Successful!', 'console-log-success');
+      toast('localization_quiz.xlsx and answer_challenge.xlsx updated for the new cycle.', 'success');
+      await loadTrivia(true);
+    } else {
+      log(`Trivia Challenge Cycle Failed: ${res.output}`, 'console-log-error');
+      toast('Run failed: ' + res.output, 'error');
     }
   });
 

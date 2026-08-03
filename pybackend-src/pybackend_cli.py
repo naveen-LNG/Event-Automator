@@ -40,12 +40,42 @@ def main():
     elif script == "update_hbp":
         import update_hbp
         update_hbp.main()
+    elif script == "update_decoration_shop":
+        import update_decoration_shop
+        update_decoration_shop.main()
+    elif script == "update_resident_task":
+        import update_resident_task
+        update_resident_task.main()
     elif script == "get_events_by_type":
         import get_events_by_type
         get_events_by_type.main()
     elif script == "refresh_convert_layout_cache":
         import refresh_convert_layout_cache
         refresh_convert_layout_cache.main()
+    elif script == "refresh_all_caches":
+        import refresh_all_caches
+        refresh_all_caches.main()
+    elif script == "update_weekly_gift":
+        import update_weekly_gift
+        update_weekly_gift.main()
+    elif script == "get_full_screen_gift_info":
+        import get_full_screen_gift_info
+        get_full_screen_gift_info.main()
+    elif script == "update_full_screen_gift":
+        import update_full_screen_gift
+        update_full_screen_gift.main()
+    elif script == "trivia_challenge_cycle":
+        import trivia_challenge_cycle
+        trivia_challenge_cycle.main()
+    elif script == "get_trivia_challenge_info":
+        import get_trivia_challenge_info
+        get_trivia_challenge_info.main()
+    elif script == "get_endless_treasure_info":
+        import get_endless_treasure_info
+        get_endless_treasure_info.main()
+    elif script == "update_endless_treasure":
+        import update_endless_treasure
+        update_endless_treasure.main()
     else:
         print(f"Unknown script: {script}")
         sys.exit(1)
