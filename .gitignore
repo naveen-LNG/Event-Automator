@@ -5,3 +5,9 @@ pybackend-src/build/
 pybackend-src/__pycache__/
 *.log
 .DS_Store
+
+# Generated ideation output (per-event PDFs, feedback stores) - runtime
+# artifacts, not source. ideationData/Events/TEMPLATES/*.md is still tracked.
+ideationData/Events/*/
+!ideationData/Events/TEMPLATES/
+ideationData/Events/_*.json

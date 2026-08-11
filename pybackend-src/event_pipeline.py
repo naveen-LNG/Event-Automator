@@ -23,6 +23,59 @@ def copy_cell_format(src_cell, dst_cell):
         dst_cell.alignment = _copy.copy(src_cell.alignment)
         dst_cell.protection = _copy.copy(src_cell.protection)
 
+def cell_style_to_dict(cell):
+    """JSON-serializable snapshot of a cell's style, for row extractors that must
+    survive a round-trip through a cache file or an SVN-history byte blob (where
+    the original Cell object is gone by the time the destination row is written)."""
+    if not cell.has_style:
+        return None
+    f, fl, a, b, p = cell.font, cell.fill, cell.alignment, cell.border, cell.protection
+    def rgb_of(color):
+        # color.rgb can be a str-like RGB, an int (indexed color), or None — only the
+        # str case round-trips through JSON and back into a usable Color(rgb=...).
+        if color is None:
+            return None
+        v = color.rgb
+        return str(v) if isinstance(v, str) else None
+    def side(s):
+        return {"style": s.style, "color": rgb_of(s.color)} if s else None
+    return {
+        "number_format": cell.number_format,
+        "font": {"name": f.name, "size": f.size, "bold": f.bold, "italic": f.italic,
+                 "underline": f.underline, "color": rgb_of(f.color)},
+        "fill": {"patternType": fl.patternType, "fgColor": rgb_of(fl.fgColor), "bgColor": rgb_of(fl.bgColor)},
+        "alignment": {"horizontal": a.horizontal, "vertical": a.vertical, "wrap_text": a.wrap_text},
+        "border": {"left": side(b.left), "right": side(b.right), "top": side(b.top), "bottom": side(b.bottom)},
+        "protection": {"locked": p.locked, "hidden": p.hidden},
+    }
+
+def apply_cell_style_dict(cell, style):
+    """Inverse of cell_style_to_dict — writes a captured style snapshot onto a
+    freshly-written destination cell."""
+    if not style:
+        return
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side, Protection
+    from openpyxl.styles.colors import Color
+    def mk_color(rgb):
+        return Color(rgb=rgb) if rgb else Color()
+    cell.number_format = style.get("number_format") or "General"
+    f = style.get("font") or {}
+    cell.font = Font(name=f.get("name"), size=f.get("size"), bold=f.get("bold"),
+                      italic=f.get("italic"), underline=f.get("underline"), color=mk_color(f.get("color")))
+    fl = style.get("fill") or {}
+    if fl.get("patternType"):
+        cell.fill = PatternFill(patternType=fl.get("patternType"),
+                                 fgColor=mk_color(fl.get("fgColor")), bgColor=mk_color(fl.get("bgColor")))
+    a = style.get("alignment") or {}
+    cell.alignment = Alignment(horizontal=a.get("horizontal"), vertical=a.get("vertical"), wrap_text=a.get("wrap_text"))
+    b = style.get("border") or {}
+    def mk_side(d):
+        return Side(style=d.get("style"), color=mk_color(d.get("color"))) if d else Side()
+    cell.border = Border(left=mk_side(b.get("left")), right=mk_side(b.get("right")),
+                          top=mk_side(b.get("top")), bottom=mk_side(b.get("bottom")))
+    pr = style.get("protection") or {}
+    cell.protection = Protection(locked=pr.get("locked", True), hidden=pr.get("hidden", False))
+
 def log(msg):
     try:
         print(f"[PythonBackend] {msg}", flush=True)
@@ -1057,10 +1110,13 @@ def find_icon_item_group_bounds(ws, group_marker="活动物品"):
     return start, end
 
 
-def extract_icon_item_group_rows(wb, evt_lower, group_marker="活动物品", sheet_name="icon_item"):
+def extract_icon_item_group_rows(wb, evt_lower, group_marker="活动物品", sheet_name="icon_item", with_style=False):
     """Return raw row value-lists within a divider-bounded group whose col1 mentions
     evt_lower. Generalized beyond icon_item — also used for localize_event_fixed's
-    '活动名' group, which follows the identical divider-bounded-accumulation shape."""
+    '活动名' group, which follows the identical divider-bounded-accumulation shape.
+    with_style=True (used by localize_event_fixed, which has real per-row highlight
+    formatting) returns each row as a list of (value, style_dict) pairs instead of
+    plain values, so formatting survives a round-trip through the JSON cache."""
     if sheet_name not in wb.sheetnames:
         return None
     ws = wb[sheet_name]
@@ -1071,7 +1127,10 @@ def extract_icon_item_group_rows(wb, evt_lower, group_marker="活动物品", she
     for r in range(start, end):
         v = str(ws.cell(r, 1).value or "")
         if evt_lower in v.lower():
-            matched.append([ws.cell(r, c).value for c in range(1, ws.max_column + 1)])
+            if with_style:
+                matched.append([(ws.cell(r, c).value, cell_style_to_dict(ws.cell(r, c))) for c in range(1, ws.max_column + 1)])
+            else:
+                matched.append([ws.cell(r, c).value for c in range(1, ws.max_column + 1)])
     return matched if matched else None
 
 
@@ -1428,7 +1487,7 @@ def get_localize_event_fixed_rows_for_source(loc_path, src_lower, hint_date, log
     import io as _io
 
     wb_live = _oxl.load_workbook(loc_path, data_only=True)
-    live_rows = extract_icon_item_group_rows(wb_live, src_lower, group_marker="活动名", sheet_name="localize_event_fixed")
+    live_rows = extract_icon_item_group_rows(wb_live, src_lower, group_marker="活动名", sheet_name="localize_event_fixed", with_style=True)
     if live_rows:
         cache = load_named_cache(log_dir, "localize_event_fixed_cache")
         cache[src_lower] = {"rows": live_rows, "source": "live", "cached_at": _cache_timestamp()}
@@ -1458,7 +1517,7 @@ def get_localize_event_fixed_rows_for_source(loc_path, src_lower, hint_date, log
             wb_hist = _oxl.load_workbook(_io.BytesIO(content_bytes), data_only=True)
         except Exception:
             continue
-        rows = extract_icon_item_group_rows(wb_hist, src_lower, group_marker="活动名", sheet_name="localize_event_fixed")
+        rows = extract_icon_item_group_rows(wb_hist, src_lower, group_marker="活动名", sheet_name="localize_event_fixed", with_style=True)
         if rows:
             cache[src_lower] = {"rows": rows, "source": f"svn r{rev}", "cached_at": _cache_timestamp()}
             save_named_cache(log_dir, "localize_event_fixed_cache", cache)
@@ -1485,7 +1544,7 @@ def get_localize_event_rows_for_source(loc_path, src_lower, hint_date, log_dir):
         for r in range(2, ws.max_row + 1):
             c1 = str(ws.cell(r, 1).value or "").lower()
             if src_lower in c1:
-                rows.append([ws.cell(r, c).value for c in range(1, ws.max_column + 1)])
+                rows.append([(ws.cell(r, c).value, cell_style_to_dict(ws.cell(r, c))) for c in range(1, ws.max_column + 1)])
         return rows
 
     if backup_sheet_name in wb_live.sheetnames:
@@ -1552,7 +1611,7 @@ def get_localize_server_rows_for_source(loc_path, src_lower):
     for r in range(2, ws.max_row + 1):
         c1 = str(ws.cell(r, 1).value or "").lower()
         if src_lower in c1:
-            rows.append([ws.cell(r, c).value for c in range(1, ws.max_column + 1)])
+            rows.append([(ws.cell(r, c).value, cell_style_to_dict(ws.cell(r, c))) for c in range(1, ws.max_column + 1)])
     return (rows, f"current live file ({len(rows)} row(s))") if rows else (None, None)
 
 
@@ -3654,10 +3713,11 @@ def update_localization_main_excel(proj_root, src_evt, tgt_evt, log_dir, step_in
                     if lef_rows:
                         log(f"localize_event_fixed: Resolved {len(lef_rows)} row(s) for {src_evt} from {lef_label}.")
                         insert_at = end
-                        for row_vals in lef_rows:
+                        for row_pairs in lef_rows:
                             ws_lef.insert_rows(insert_at)
-                            for c_idx, v in enumerate(row_vals):
-                                ws_lef.cell(insert_at, c_idx + 1, swap_name(v))
+                            for c_idx, (v, style) in enumerate(row_pairs):
+                                dst_c = ws_lef.cell(insert_at, c_idx + 1, swap_name(v))
+                                apply_cell_style_dict(dst_c, style)
                             insert_at += 1
                         log(f"localize_event_fixed: Appended {len(lef_rows)} row(s) for {tgt_evt} to the 活动名 group.")
                         modified = True
@@ -3677,9 +3737,10 @@ def update_localization_main_excel(proj_root, src_evt, tgt_evt, log_dir, step_in
                 if le_rows:
                     log(f"localize_event: Resolved {len(le_rows)} row(s) for {src_evt} from {le_label}.")
                     insert_at = ws_le.max_row + 1
-                    for row_vals in le_rows:
-                        for c_idx, v in enumerate(row_vals):
-                            ws_le.cell(insert_at, c_idx + 1, swap_name(v))
+                    for row_pairs in le_rows:
+                        for c_idx, (v, style) in enumerate(row_pairs):
+                            dst_c = ws_le.cell(insert_at, c_idx + 1, swap_name(v))
+                            apply_cell_style_dict(dst_c, style)
                         insert_at += 1
                     log(f"localize_event: Appended {len(le_rows)} row(s) for {tgt_evt}.")
                     modified = True
@@ -3698,9 +3759,10 @@ def update_localization_main_excel(proj_root, src_evt, tgt_evt, log_dir, step_in
                 if ls_rows:
                     log(f"localize_server: Resolved {len(ls_rows)} row(s) for {src_evt} from {ls_label}.")
                     insert_at = ws_ls.max_row + 1
-                    for row_vals in ls_rows:
-                        for c_idx, v in enumerate(row_vals):
-                            ws_ls.cell(insert_at, c_idx + 1, swap_name(v))
+                    for row_pairs in ls_rows:
+                        for c_idx, (v, style) in enumerate(row_pairs):
+                            dst_c = ws_ls.cell(insert_at, c_idx + 1, swap_name(v))
+                            apply_cell_style_dict(dst_c, style)
                         insert_at += 1
                     log(f"localize_server: Appended {len(ls_rows)} row(s) for {tgt_evt}.")
                     modified = True
@@ -4186,6 +4248,27 @@ def update_asset_ref_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
         return False
 
 
+def find_generic_gift_style_row_indices(ws_s):
+    """
+    event_gift_style's 12-row content (stage 1/2/3 x with/without item, 2 rows
+    each) is identical across every event type — verified byte-for-byte against
+    real Merge, Sim, Blocks, Sort, and Dessert entries; only column 1 (the gift
+    ID) ever differs. Returns the row indices (ascending) of the most recent
+    complete 12-row block in the live sheet, to use as a backfill template —
+    no SVN needed, this template is always present in the live file already.
+    """
+    rows_with_id = []
+    for r in range(ws_s.max_row, 1, -1):
+        if ws_s.cell(r, 1).value is not None:
+            rows_with_id.append(r)
+        if len(rows_with_id) == 12:
+            break
+    if len(rows_with_id) < 12:
+        return None
+    rows_with_id.reverse()
+    return rows_with_id
+
+
 def update_store_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
     """Step 16: Update store.xlsx — clone event rows across 4 sheets with ID remapping."""
     import openpyxl
@@ -4439,8 +4522,21 @@ def update_store_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
             if src_gift_rows:
                 exists, row_idx = check_and_handle_existing(ws_g, "recommend_gift", tgt_evt)
                 if exists:
-                    # Collect existing IDs for gift_id_map if needed, 
-                    # but for reopen we usually don't need to remap unless IDs changed.
+                    # Reconstruct new_gift_ids from the target's OWN current rows (not
+                    # old_gift_ids, which holds src_evt's — wrong ids in a true clone,
+                    # only coincidentally right when src==tgt). Without this, Part 4
+                    # (event_gift_style) sees an empty gift_id_map and skips completely
+                    # — no log, no warning, forever, even if style rows are genuinely
+                    # missing. Confirmed live: merge2608 has all 18 recommend_gift rows
+                    # but zero event_gift_style rows, and every reopen silently re-skips.
+                    for r in range(2, ws_g.max_row + 1):
+                        row_text = ""
+                        for c in [2, 21, 29]:
+                            row_text += " " + str(ws_g.cell(r, c).value or "")
+                        if tgt_evt.upper() in row_text.upper() or tgt_evt in row_text:
+                            id_val = ws_g.cell(r, 1).value
+                            if id_val and not str(id_val).startswith("//"):
+                                new_gift_ids.append(str(int(id_val)))
                     src_gift_rows = [] # Skip cloning
                 else:
                     # Find max ID only in the event gift section (row 61+)
@@ -4538,53 +4634,154 @@ def update_store_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
         # Part 4: event_gift_style — clone 12 rows (first 12 gift IDs)
         # =====================================================
         ws_s = wb["event_gift_style"] if "event_gift_style" in wb.sheetnames else None
-        
-        if ws_s and gift_id_map:
-            # Only first 12 of 18 recommend_gift IDs have style entries
-            main_old_ids = old_gift_ids[:12] if len(old_gift_ids) >= 12 else old_gift_ids
-            
-            src_style_rows = []
-            for r in range(2, ws_s.max_row + 1):
-                id_val = str(ws_s.cell(r, 1).value or "")  # type: ignore
-                if id_val in main_old_ids:
-                    src_style_rows.append(r)
-            
-            if src_style_rows:
-                main_new_ids = new_gift_ids[:12] if len(new_gift_ids) >= 12 else new_gift_ids
-                exists, row_idx = check_and_handle_existing(ws_s, "event_gift_style", tgt_evt)
-                if exists:
-                    src_style_rows = [] # Skip cloning
+
+        # Gated on new_gift_ids (always populated when recommend_gift has target rows,
+        # whether freshly cloned or reconstructed from an existing target) rather than
+        # gift_id_map (only populated on a fresh clone) — see the exists-branch fix
+        # above for why: this used to skip silently and permanently whenever
+        # recommend_gift already existed for the target.
+        if ws_s and new_gift_ids:
+            main_new_ids = new_gift_ids[:12] if len(new_gift_ids) >= 12 else new_gift_ids
+
+            if gift_id_map:
+                # Fresh clone: copy the source's own style rows, remapping IDs.
+                main_old_ids = old_gift_ids[:12] if len(old_gift_ids) >= 12 else old_gift_ids
+                src_style_rows = []
+                for r in range(2, ws_s.max_row + 1):
+                    id_val = str(ws_s.cell(r, 1).value or "")  # type: ignore
+                    if id_val in main_old_ids:
+                        src_style_rows.append(r)
+
+                if src_style_rows:
+                    exists, row_idx = check_and_handle_existing(ws_s, "event_gift_style", tgt_evt)
+                    if exists:
+                        src_style_rows = [] # Skip cloning
+                    else:
+                        insert_row = ws_s.max_row + 1
+                        for r in range(ws_s.max_row, 1, -1):
+                            if ws_s.cell(r, 1).value is not None:  # type: ignore
+                                insert_row = r + 1
+                                break
+
+                        for i, src_r in enumerate(src_style_rows):
+                            for c in range(1, ws_s.max_column + 1):
+                                src_c = ws_s.cell(src_r, c)
+                                old_val = src_c.value  # type: ignore
+                                if c == 1:
+                                    old_id_str = str(old_val)
+                                    new_val = int(gift_id_map.get(old_id_str, old_val))
+                                else:
+                                    new_val = old_val  # Style values don't contain event names
+                                dst_c = ws_s.cell(insert_row + i, c)
+                                dst_c.value = new_val  # type: ignore
+                                copy_cell_format(src_c, dst_c)
+
+                        log(f"event_gift_style: Cloned {len(src_style_rows)} rows")
+                        modified = True
                 else:
-                    insert_row = ws_s.max_row + 1
-                    for r in range(ws_s.max_row, 1, -1):
-                        if ws_s.cell(r, 1).value is not None:  # type: ignore
-                            insert_row = r + 1
-                            break
-                    
-                    for i, src_r in enumerate(src_style_rows):
-                        for c in range(1, ws_s.max_column + 1):
-                            src_c = ws_s.cell(src_r, c)
-                            old_val = src_c.value  # type: ignore
-                            if c == 1:
-                                old_id_str = str(old_val)
-                                new_val = int(gift_id_map.get(old_id_str, old_val))
-                            else:
-                                new_val = old_val  # Style values don't contain event names
-                            dst_c = ws_s.cell(insert_row + i, c)
-                            dst_c.value = new_val  # type: ignore
-                            copy_cell_format(src_c, dst_c)
-                    
-                    log(f"event_gift_style: Cloned {len(src_style_rows)} rows")
-                    modified = True
+                    log(f"event_gift_style: No style rows found for source gift IDs")
             else:
-                log(f"event_gift_style: No style rows found for source gift IDs")
+                # recommend_gift already existed for the target (reopen / re-run) — no
+                # source style rows to clone from. Just verify the target's own gift
+                # IDs actually have style entries. Where they're missing, backfill using
+                # the universal stage template (see find_generic_gift_style_row_indices) —
+                # matched by POSITION (1st gift ID -> template row 0, etc.), not by any
+                # per-event source, since the template content itself never varies by event.
+                existing_style_ids = set()
+                for r in range(2, ws_s.max_row + 1):
+                    id_val = ws_s.cell(r, 1).value  # type: ignore
+                    if id_val is not None:
+                        existing_style_ids.add(str(id_val))
+                missing_positions = [i for i, gid in enumerate(main_new_ids) if gid not in existing_style_ids]
+
+                if not missing_positions:
+                    log(f"event_gift_style: All of {tgt_evt}'s gift IDs already have style entries.")
+                else:
+                    template_rows = find_generic_gift_style_row_indices(ws_s)
+                    if not template_rows:
+                        log(f"event_gift_style: WARNING — {tgt_evt}'s gift ID(s) "
+                            f"{[main_new_ids[i] for i in missing_positions]} have no style entry, and no complete "
+                            f"12-row template was found in the live sheet to backfill from. Needs manual entry.")
+                    else:
+                        insert_row = ws_s.max_row + 1
+                        filled_ids = []
+                        for i in missing_positions:
+                            if i >= len(template_rows):
+                                continue  # only positions 0-11 have a defined stage template
+                            src_r = template_rows[i]
+                            for c in range(1, ws_s.max_column + 1):
+                                src_c = ws_s.cell(src_r, c)
+                                new_val = int(main_new_ids[i]) if c == 1 else src_c.value  # type: ignore
+                                dst_c = ws_s.cell(insert_row, c)
+                                dst_c.value = new_val  # type: ignore
+                                copy_cell_format(src_c, dst_c)
+                            filled_ids.append(main_new_ids[i])
+                            insert_row += 1
+                        if filled_ids:
+                            log(f"event_gift_style: Backfilled {len(filled_ids)} row(s) for {tgt_evt} using the "
+                                f"universal stage template (gift IDs {filled_ids}).")
+                            modified = True
         
+        # =====================================================
+        # Part 5: featured combo-pack currency (fixed rows 19806-19808 in
+        # store_package). Verified via SVN history that this slot has held
+        # Sort2606, Merge2606, Dessert2608, and Sim2607's currency at various
+        # points — it's not tied to one event type, and per instruction this
+        # should be kept in sync with EVERY event created, not gated behind a
+        # manual flag. The replacement string is derived from the target's own
+        # item.xlsx data (already cloned by this point in the pipeline): the
+        # FIRST item row for any event is always its primary currency —
+        # confirmed empirically as "能量" for Merge, "代币" for every other
+        # type — so no hardcoded type-to-suffix mapping is needed.
+        # =====================================================
+        if ws_p is not None:
+            item_path = os.path.join(design_dir, "item.xlsx")
+            tgt_currency_alias = None
+            if os.path.exists(item_path):
+                wb_item = openpyxl.load_workbook(item_path, data_only=True)
+                if "item" in wb_item.sheetnames:
+                    ws_item = wb_item["item"]
+                    for r in range(2, ws_item.max_row + 1):
+                        alias = str(ws_item.cell(r, 2).value or "")
+                        if tgt_lower in alias.lower():
+                            tgt_currency_alias = alias.strip()
+                            break  # First match = primary currency (item.xlsx clones in source order)
+                wb_item.close()
+
+            if not tgt_currency_alias:
+                log(f"store_package (featured combo): could not find {tgt_evt}'s primary currency in item.xlsx — skipping.")
+            else:
+                currency_pattern = re.compile(r'([A-Za-z]+\d{4}(?:能量|代币)):(\d+)')
+                combo_updated = 0
+                for r in range(2, ws_p.max_row + 1):
+                    alias = str(ws_p.cell(r, 2).value or "")
+                    if "三方支付组合礼包" not in alias:
+                        continue  # only the shared featured-combo-pack slot, never per-event historical rows
+                    content = ws_p.cell(r, 3).value  # type: ignore
+                    if not content:
+                        continue
+                    content_str = str(content)
+                    m = currency_pattern.search(content_str)
+                    if m and m.group(1) != tgt_currency_alias:
+                        old_ref, qty = m.group(1), m.group(2)
+                        new_content = content_str.replace(f"{old_ref}:{qty}", f"{tgt_currency_alias}:{qty}")
+                        ws_p.cell(r, 3, new_content)  # type: ignore
+                        combo_updated += 1
+                        log(f"store_package: Featured combo pack R{r} (ID {ws_p.cell(r, 1).value}) "
+                            f"'{old_ref}' -> '{tgt_currency_alias}'")
+
+                if combo_updated:
+                    log(f"store_package: Updated {combo_updated} featured combo-pack row(s) to feature {tgt_evt}.")
+                    modified = True
+                else:
+                    log(f"store_package (featured combo): already features {tgt_evt} (or no matching rows found).")
+
         if modified:
             wb.save(file_path)
             log(f"store.xlsx successfully updated for {tgt_evt}.")
         else:
             log(f"store.xlsx: No changes needed.")
-        
+
         return True
         
     except Exception as e:
@@ -4594,6 +4791,47 @@ def update_store_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
         return False
 
 
+CARD_COLLECTION_KINDS = "二星卡包|三星卡包|四星卡包|五星卡包|自选卡包"
+CARD_COLLECTION_PATTERN_RE = None  # compiled lazily in get_latest_card_collection_yymm / swap_name
+
+
+def get_latest_card_collection_yymm(design_dir):
+    """
+    item.xlsx runs an independent 'card collection' release series — periodic
+    entries named '<YYMM>二星卡包' / '三星卡包' / '四星卡包' / '五星卡包' / '自选卡包'
+    (e.g. 2408, 2410, ..., 2605, 2607, ...), released roughly every couple of
+    months, NOT tied to individual event dates. pack.xlsx rewards reference
+    whichever collection was current when a pack row was first written, and
+    since it's a different number than the event's own digits, the ordinary
+    event-name swap never touches it — it rides along unchanged forever unless
+    something explicitly re-points it at the current latest collection.
+    Returns the max YYMM string found (e.g. "2607"), or None if none found.
+    """
+    import openpyxl
+    import re as _re
+
+    item_path = os.path.join(design_dir, "item.xlsx")
+    if not os.path.exists(item_path):
+        return None
+
+    try:
+        wb = openpyxl.load_workbook(item_path, data_only=True)
+    except Exception:
+        return None
+    if "item" not in wb.sheetnames:
+        return None
+
+    ws = wb["item"]
+    pattern = _re.compile(rf'^(\d{{4}})({CARD_COLLECTION_KINDS})$')
+    latest = None
+    for r in range(2, ws.max_row + 1):
+        alias = str(ws.cell(r, 2).value or "")
+        m = pattern.match(alias)
+        if m and (latest is None or m.group(1) > latest):
+            latest = m.group(1)
+    return latest
+
+
 def update_pack_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
     """Step 18: Update pack.xlsx — clone pack reward rows and auto-increment IDs."""
     import openpyxl
@@ -4601,28 +4839,35 @@ def update_pack_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
     import os
     import re
     import shutil
-    
+
     design_dir = os.path.join(proj_root, "design", "DesignData", WORKSPACE_NAME, "design")
     file_path = os.path.join(design_dir, "pack.xlsx")
-    
+
     if not os.path.exists(file_path):
         log(f"Error: pack.xlsx not found at {file_path}")
         return False
-        
+
     backup_path = file_path + ".bak"
     os.chmod(file_path, stat.S_IWRITE | stat.S_IREAD)
     shutil.copy2(file_path, backup_path)
     record_file_creation(log_dir, step_index, backup_path)
-    
+
     src_lower = src_evt.lower()
     src_upper = src_evt.upper()
     src_pascal = src_evt[0].upper() + src_evt[1:]
     tgt_lower = tgt_evt.lower()
     tgt_upper = tgt_evt.upper()
     tgt_pascal = tgt_evt[0].upper() + tgt_evt[1:]
-    
+
+    latest_card_collection = get_latest_card_collection_yymm(design_dir)
+    card_collection_re = re.compile(rf'(\d{{4}})({CARD_COLLECTION_KINDS})')
+    if latest_card_collection:
+        log(f"pack.xlsx: Latest card collection in item.xlsx is {latest_card_collection} — "
+            f"any stale 卡包 reference in cloned rows will be repointed to it.")
+
     def swap_name(val):
-        """Replace source event name references with target event name."""
+        """Replace source event name references with target event name, and repoint
+        any stale card-collection (卡包) reference to the current latest one."""
         if val is None:
             return val
         if isinstance(val, (int, float)):
@@ -4632,6 +4877,12 @@ def update_pack_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
         s = s.replace(src_lower, tgt_lower)
         s = s.replace(src_pascal, tgt_pascal)
         s = s.replace(src_evt, tgt_evt)
+        if latest_card_collection:
+            s = card_collection_re.sub(
+                lambda m: m.group(1) + m.group(2) if m.group(1) == latest_card_collection
+                else latest_card_collection + m.group(2),
+                s
+            )
         return s
 
     try:
@@ -4655,13 +4906,15 @@ def update_pack_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
             
         exists, _ = check_and_handle_existing(ws, "pack", tgt_evt)
         if exists:
-            if modified:
-                wb.save(file_path)
+            # check_and_handle_existing may have just uncommented the row in-memory —
+            # it doesn't report back whether it actually mutated anything, so we can't
+            # tell "already active" from "just reactivated" here. Always save: an
+            # unnecessary save of an unchanged file is free; skipping a real one
+            # silently discards the reactivation and leaves the row commented on disk
+            # forever, while the log claims it succeeded.
+            wb.save(file_path)
             return True
-            if modified:
-                wb.save(file_path)
-            return True
-            
+
         max_id = 0
         for r in range(2, ws.max_row + 1):
             id_val = ws.cell(r, 1).value  # type: ignore
@@ -4752,15 +5005,11 @@ def update_guide_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
             # find max ID among the event sections (IDs < 100000)
             max_evt_id = 0
             insert_sec_row = ws_sec.max_row + 1
-            start_commenting_idx = 2
-            
+
             for r in range(2, ws_sec.max_row + 1):
                 id_val_raw = str(ws_sec.cell(r, 1).value or "")
                 id_val = id_val_raw.replace("//", "")
-                
-                if id_val == "619":
-                    start_commenting_idx = r
-                    
+
                 if id_val.isdigit():
                     num = int(id_val)
                     if num < 100000:
@@ -4816,14 +5065,22 @@ def update_guide_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                         dst_c.value = new_val
                         copy_cell_format(src_c, dst_c)
                         
-                # Comment out previous events starting from 619 up to our new insertion
-                for r in range(start_commenting_idx, insert_sec_row):
-                    val = ws_sec.cell(r, 1).value
+                # Comment out ONLY the source event's own rows (being superseded by this
+                # clone) — never a blanket range. This used to comment everything from a
+                # hardcoded section ID ("619") through the new insertion point, which
+                # meant creating any one event silently disabled the guide sections of
+                # every OTHER currently-active event caught in that range. Confirmed via
+                # a real run: creating a new dessert event wiped out all 16 of sim2607's
+                # (an unrelated, still-open event) guide_section rows.
+                for src_r in src_rows:
+                    actual_src_r = src_r if src_r < insert_sec_row else src_r + len(src_rows)
+                    val = ws_sec.cell(actual_src_r, 1).value
                     if val and not str(val).startswith("//"):
-                        ws_sec.cell(r, 1, f"//{val}")
-                
+                        ws_sec.cell(actual_src_r, 1, f"//{val}")
+
                 modified = True
-                log(f"guide_section: Inserted at row {insert_sec_row}. Mapped {len(old_id_to_new_id)} IDs.")
+                log(f"guide_section: Inserted at row {insert_sec_row}. Mapped {len(old_id_to_new_id)} IDs. "
+                    f"Commented out {len(src_rows)} source row(s) only.")
         
         # 2. guide and guide_backup
         ws_guide = wb["guide"] if "guide" in wb.sheetnames else None
@@ -4953,15 +5210,19 @@ def update_guide_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                         dst_c.value = new_val
                         copy_cell_format(src_c, dst_c)
                         
-                start_commenting_row = 148
-                for r in range(start_commenting_row, insert_row):
-                    val = ws_trig.cell(r, 1).value
+                # Comment out ONLY the source event's own rows — a hardcoded row-148
+                # blanket range used to be here, which (like guide_section) meant creating
+                # any one event silently disabled every OTHER active event's triggers
+                # caught in that range. Confirmed via a real run alongside the same bug
+                # in guide_section: 31 unrelated sim2607 rows got wiped this way.
+                for src_r in src_rows:
+                    val = ws_trig.cell(src_r, 1).value
                     if val and not str(val).startswith("//"):
                         s_val = str(val).upper()
                         # DO NOT comment out shared MergeFix triggers or global triggers
                         if "MERGE_FIX" in s_val or "MERGEFIX" in s_val:
                             continue
-                        ws_trig.cell(r, 1, f"//{val}")
+                        ws_trig.cell(src_r, 1, f"//{val}")
                 modified = True
                         
         # 4. guide_refui
@@ -4999,15 +5260,18 @@ def update_guide_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                         dst_c.value = new_val
                         copy_cell_format(src_c, dst_c)
                         
-                start_commenting_row = 97
-                for r in range(start_commenting_row, insert_row):
-                    val = ws_ui.cell(r, 1).value
+                # Comment out ONLY the source event's own rows — same fix as guide_section
+                # and guide_trigger. The old hardcoded row-97 blanket range wiped out every
+                # other active event's UI refs caught in it (confirmed: 19 unrelated
+                # sim2607 rows here in the same real-run test).
+                for src_r in src_rows:
+                    val = ws_ui.cell(src_r, 1).value
                     if val and not str(val).startswith("//"):
                         s_val = str(val).upper()
                         # DO NOT comment out shared MergeFix UI or global UI refs
                         if "MERGE_FIX" in s_val or "MERGEFIX" in s_val:
                             continue
-                        ws_ui.cell(r, 1, f"//{val}")
+                        ws_ui.cell(src_r, 1, f"//{val}")
                 modified = True
 
         if modified:
@@ -5160,8 +5424,14 @@ def update_sys_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
         # Step 2b: Open for writing
         wb = openpyxl.load_workbook(sys_path)
         ws = wb["DeepLink"]
+        modified = False
 
         # 3. Update Sim2605.xlsx if we have Share IDs to map
+        if src_share_rows and not os.path.exists(tgt_evt_xlsx):
+            log(f"Warning: {tgt_evt}.xlsx not found — skipping in-file Share ID remap. "
+                f"That workbook will still reference the OLD (unshifted) DeepLink IDs until this step "
+                f"is re-run after {tgt_evt}.xlsx exists (normally created by step 6).")
+
         if src_share_rows and os.path.exists(tgt_evt_xlsx):
             # Get the exact numeric values from scan result
             wb_ref = openpyxl.load_workbook(sys_path, data_only=True)
@@ -5261,9 +5531,13 @@ def update_sys_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                         dst_c.value = new_val
                         copy_cell_format(src_c, dst_c)
                 log(f"Inserted {len(src_share_rows)} Share IDs starting at {new_first_id}")
+                modified = True
 
-        wb.save(sys_path)
-        log("sys.xlsx successfully updated with sections and remapped IDs.")
+        if modified:
+            wb.save(sys_path)
+            log("sys.xlsx successfully updated with sections and remapped IDs.")
+        else:
+            log("sys.xlsx: No changes were needed.")
         return True
     
     except Exception as e:
@@ -5654,6 +5928,489 @@ def run_trivia_challenge_cycle(proj_root, log_dir, step_index, questions_source=
     return True
 
 
+# ================================================================================
+# Step 22 (docx "Reopening" Step 11): register the event across the Lua config
+# files EventConfig.lua, BIDef.lua, UIManager.lua, and PanelConfig.lua. Each file
+# was inspected against a real event (merge2608) before writing this — every one
+# is a flat, single-block-per-event structure with no cross-references between
+# files, so each can be handled independently and idempotently.
+#
+# GlobalEvent.lua (docx also names it) is deliberately NOT automated here — the
+# docx itself says "For Production events, you need to add..."; checked both
+# merge2606 and merge2608 (real dev/test events) and neither has an entry there,
+# confirming it's conditional/production-only, not a per-event requirement.
+# ================================================================================
+
+def find_lua_comment_block_bounds(lines, marker_text):
+    """Find a '-- <marker_text>' comment line and the block of entries that follows
+    it, bounded by the next blank line or the next '--' comment line. Returns
+    (marker_line_idx, block_start_idx, block_end_idx_exclusive), or (None, None, None)
+    if no such marker line exists."""
+    marker_line_idx = None
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith('--') and stripped.lstrip('-').strip() == marker_text:
+            marker_line_idx = i
+            break
+    if marker_line_idx is None:
+        return None, None, None
+    block_start = marker_line_idx + 1
+    block_end = len(lines)
+    for i in range(block_start, len(lines)):
+        s = lines[i].strip()
+        if s == '' or s.startswith('--'):
+            block_end = i
+            break
+    return marker_line_idx, block_start, block_end
+
+
+def update_event_config_lua(proj_root, src_evt, tgt_evt, log_dir, step_index):
+    """EventConfig.lua: <Event> = { Name = "...", CtrlPath = "...", Enable = ... }"""
+    import re
+
+    file_path = os.path.join(proj_root, "develop", "client", "Skipbo", "Assets", "Lua", "Game", "Module", "Event", "EventConfig.lua")
+    if not os.path.exists(file_path):
+        log(f"Warning: EventConfig.lua not found at {file_path}. Skipping.")
+        return True
+
+    src_pascal = src_evt[0].upper() + src_evt[1:] if src_evt else src_evt
+    tgt_pascal = tgt_evt[0].upper() + tgt_evt[1:] if tgt_evt else tgt_evt
+    src_upper, tgt_upper = src_evt.upper(), tgt_evt.upper()
+    src_lower, tgt_lower = src_evt.lower(), tgt_evt.lower()
+
+    def swap_name(s):
+        if s is None:
+            return None
+        s = str(s)
+        s = s.replace(src_upper, tgt_upper)
+        s = s.replace(src_lower, tgt_lower)
+        s = s.replace(src_pascal, tgt_pascal)
+        s = s.replace(src_evt, tgt_evt)
+        return s
+
+    with open(file_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+
+    if re.search(rf'(?m)^\s*{re.escape(tgt_pascal)}\s*=\s*\{{', content):
+        log(f"EventConfig.lua: {tgt_pascal} already registered. Skipping.")
+        return True
+
+    match = re.search(rf'([ \t]*{re.escape(src_pascal)}\s*=\s*\{{[^}}]*\}},?)', content, re.DOTALL)
+    if not match:
+        log(f"Warning: EventConfig.lua has no '{src_pascal} = {{...}}' block for source event. Skipping.")
+        return True
+
+    new_block = swap_name(match.group(1))
+    # Docx is explicit: "make sure the Enable setting is set to true" — the source's
+    # own value is often false (a closed event), so this must be forced, not inherited.
+    new_block = re.sub(r'Enable\s*=\s*(true|false)', 'Enable = true', new_block)
+
+    backup_path = file_path + ".bak"
+    shutil.copy2(file_path, backup_path)
+    record_file_creation(log_dir, step_index, backup_path)
+
+    insert_pos = match.end()
+    new_content = content[:insert_pos] + "\n" + new_block + content[insert_pos:]
+    with open(file_path, 'w', encoding='utf-8') as f:
+        f.write(new_content)
+
+    log(f"EventConfig.lua: Registered {tgt_pascal} (cloned from {src_pascal}).")
+    return True
+
+
+def update_bidef_lua(proj_root, src_evt, tgt_evt, log_dir, step_index):
+    """BIDef.lua: Event_<Event> = "Event_<Event>","""
+    import re
+
+    file_path = os.path.join(proj_root, "develop", "client", "Skipbo", "Assets", "Lua", "Game", "Module", "BI", "BIDef.lua")
+    if not os.path.exists(file_path):
+        log(f"Warning: BIDef.lua not found at {file_path}. Skipping.")
+        return True
+
+    src_pascal = src_evt[0].upper() + src_evt[1:] if src_evt else src_evt
+    tgt_pascal = tgt_evt[0].upper() + tgt_evt[1:] if tgt_evt else tgt_evt
+
+    with open(file_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+
+    if re.search(rf'(?m)^\s*Event_{re.escape(tgt_pascal)}\s*=', content):
+        log(f"BIDef.lua: Event_{tgt_pascal} already registered. Skipping.")
+        return True
+
+    match = re.search(rf'([ \t]*)Event_{re.escape(src_pascal)}\s*=\s*"Event_{re.escape(src_pascal)}",', content)
+    if not match:
+        log(f"Warning: BIDef.lua has no 'Event_{src_pascal}' entry for source event. Skipping.")
+        return True
+
+    indent = match.group(1)
+    new_line = f'{indent}Event_{tgt_pascal} = "Event_{tgt_pascal}",'
+
+    backup_path = file_path + ".bak"
+    shutil.copy2(file_path, backup_path)
+    record_file_creation(log_dir, step_index, backup_path)
+
+    insert_pos = match.end()
+    new_content = content[:insert_pos] + "\n" + new_line + content[insert_pos:]
+    with open(file_path, 'w', encoding='utf-8') as f:
+        f.write(new_content)
+
+    log(f"BIDef.lua: Registered Event_{tgt_pascal} (cloned from Event_{src_pascal}).")
+    return True
+
+
+def update_ui_manager_special_panel_map(proj_root, src_evt, tgt_evt, log_dir, step_index):
+    """UIManager.lua's SpecialPanelMap: ["UI<Event>...Panel"] = true, — suffix
+    (LoadingPanel vs StageLoadingPanel etc.) varies per event, so clone whatever
+    line(s) the source actually has rather than assuming one fixed suffix."""
+    import re
+
+    file_path = os.path.join(proj_root, "develop", "client", "Skipbo", "Assets", "Lua", "Framework", "Base", "UIManager.lua")
+    if not os.path.exists(file_path):
+        log(f"Warning: UIManager.lua not found at {file_path}. Skipping.")
+        return True
+
+    src_pascal = src_evt[0].upper() + src_evt[1:] if src_evt else src_evt
+    tgt_pascal = tgt_evt[0].upper() + tgt_evt[1:] if tgt_evt else tgt_evt
+
+    with open(file_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+
+    table_match = re.search(r'(local\s+SpecialPanelMap\s*=\s*\{)(.*?)(\n[ \t]*\})', content, re.DOTALL)
+    if not table_match:
+        log("Warning: UIManager.lua has no 'SpecialPanelMap' table. Skipping.")
+        return True
+
+    table_body = table_match.group(2)
+
+    if re.search(rf'\["UI{re.escape(tgt_pascal)}\w*"\]', table_body):
+        log(f"UIManager.lua: UI{tgt_pascal}*Panel already registered in SpecialPanelMap. Skipping.")
+        return True
+
+    src_lines = re.findall(rf'[ \t]*\["UI{re.escape(src_pascal)}\w*"\]\s*=\s*true,', table_body)
+    if not src_lines:
+        log(f"Warning: UIManager.lua's SpecialPanelMap has no entry for UI{src_pascal}*. Skipping.")
+        return True
+
+    new_lines = [line.replace(src_pascal, tgt_pascal) for line in src_lines]
+
+    backup_path = file_path + ".bak"
+    shutil.copy2(file_path, backup_path)
+    record_file_creation(log_dir, step_index, backup_path)
+
+    insert_pos = table_match.start(3)  # right before the closing "\n\t}"
+    new_content = content[:insert_pos] + "\n" + "\n".join(new_lines) + content[insert_pos:]
+    with open(file_path, 'w', encoding='utf-8') as f:
+        f.write(new_content)
+
+    log(f"UIManager.lua: Registered {len(new_lines)} SpecialPanelMap entr{'y' if len(new_lines) == 1 else 'ies'} for {tgt_pascal}.")
+    return True
+
+
+def update_panel_config_lua(proj_root, src_evt, tgt_evt, log_dir, step_index):
+    """PanelConfig.lua: a '-- <Event>' comment header followed by a block of
+    ["UI<Event>XPanel"] = "UI<Event>XPanel", lines — one per panel the event uses.
+    Real events range from a handful of panels to 20+ (merge2608 has 18+), so the
+    block is found by its comment marker, not assumed to be a fixed length.
+
+    Note: the docx names PanelConfig_Design.lua for this, but that file is actually
+    an empty, unused override stub (AppendId/AppendInfo both {}) — verified against
+    the real file. The real per-event blocks live in the base PanelConfig.lua."""
+    file_path = os.path.join(proj_root, "develop", "client", "Skipbo", "Assets", "Lua", "Global", "PanelConfig.lua")
+    if not os.path.exists(file_path):
+        log(f"Warning: PanelConfig.lua not found at {file_path}. Skipping.")
+        return True
+
+    src_pascal = src_evt[0].upper() + src_evt[1:] if src_evt else src_evt
+    tgt_pascal = tgt_evt[0].upper() + tgt_evt[1:] if tgt_evt else tgt_evt
+    src_upper, tgt_upper = src_evt.upper(), tgt_evt.upper()
+    src_lower, tgt_lower = src_evt.lower(), tgt_evt.lower()
+
+    def swap_name(s):
+        if s is None:
+            return None
+        s = str(s)
+        s = s.replace(src_upper, tgt_upper)
+        s = s.replace(src_lower, tgt_lower)
+        s = s.replace(src_pascal, tgt_pascal)
+        s = s.replace(src_evt, tgt_evt)
+        return s
+
+    with open(file_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+    lines = content.split('\n')
+
+    if any(line.strip() == f"-- {tgt_pascal}" for line in lines):
+        log(f"PanelConfig.lua: {tgt_pascal} block already present. Skipping.")
+        return True
+
+    marker_idx, block_start, block_end = find_lua_comment_block_bounds(lines, src_pascal)
+    if marker_idx is None:
+        log(f"Warning: PanelConfig.lua has no '-- {src_pascal}' block for source event. Skipping.")
+        return True
+
+    src_block_lines = lines[block_start:block_end]
+    new_block_lines = [f"-- {tgt_pascal}"] + [swap_name(l) for l in src_block_lines]
+
+    backup_path = file_path + ".bak"
+    shutil.copy2(file_path, backup_path)
+    record_file_creation(log_dir, step_index, backup_path)
+
+    new_lines = lines[:block_end] + [''] + new_block_lines + lines[block_end:]
+    with open(file_path, 'w', encoding='utf-8') as f:
+        f.write('\n'.join(new_lines))
+
+    log(f"PanelConfig.lua: Cloned {len(src_block_lines)} panel entries for {tgt_pascal} (from {src_pascal}).")
+    return True
+
+
+def update_guide_refui_mgr(proj_root, src_evt, tgt_evt, log_dir, step_index):
+    """
+    Step 13 (docx): GuideRefuiMgr.lua's guide UI-hook functions.
+
+    Two different real mechanisms exist in this file (confirmed by inspecting it
+    directly — the docx doesn't describe this split):
+
+      - Merge: one shared "mergeFix" region with generically-named functions
+        (MERGE_FIX_*) whose bodies hardcode whichever merge event is CURRENTLY
+        active (e.g. PanelConfig.Id.UIMerge2608MergePanel). Registering a new
+        merge event means repointing this single slot, not adding a region —
+        the same single-slot-rotation risk already found and fixed in
+        convert_layout.lua's item_to_machine table.
+
+      - Every other family (Blocks/Sim/Dessert/Sort, ...): one region named
+        "--region <Family><Digits>" whose function names AND panel-ID
+        references both embed the event digits. Only the latest event's region
+        exists per family at any time (e.g. only Blocks2607 is present, not
+        also an older Blocks2601) — so registering a new event of that family
+        renames the existing region in place, mirroring how its guide_refui
+        Excel rows get cloned-and-the-old-commented rather than accumulated.
+
+      - A family with no existing region at all (never seen in this file
+        before) has no template to clone from — flagged, not guessed at.
+    """
+    import re as _re
+
+    path = os.path.join(proj_root, r"develop\client\Skipbo\Assets\Lua\Game\Panel\UIGuidePanel\GuideRefuiMgr.lua")
+    if not os.path.exists(path):
+        log(f"GuideRefuiMgr.lua not found at {path} — skipping.")
+        return True
+
+    with open(path, 'r', encoding='utf-8') as f:
+        content = f.read()
+
+    tgt_pascal = tgt_evt[0].upper() + tgt_evt[1:]
+    tgt_upper = tgt_evt.upper()
+    tgt_lower = tgt_evt.lower()
+
+    fam_match = _re.match(r'^([A-Za-z]+?)(\d+)$', tgt_evt)
+    if not fam_match:
+        log(f"GuideRefuiMgr.lua: couldn't parse family/digits from '{tgt_evt}' — skipping.")
+        return True
+    family = fam_match.group(1)
+
+    backup_path = path + ".bak"
+    def _ensure_backup():
+        if not os.path.exists(backup_path):
+            shutil.copy2(path, backup_path)
+            record_file_creation(log_dir, step_index, backup_path)
+
+    if family.lower() == "merge":
+        region_match = _re.search(r'(--region\s+mergeFix\b.*?\n)(.*?)(\n--endregion)', content, _re.DOTALL | _re.IGNORECASE)
+        if not region_match:
+            log("GuideRefuiMgr.lua: no 'mergeFix' region found — skipping.")
+            return True
+        block = region_match.group(2)
+        # Auto-detect whichever merge event is currently hardcoded rather than
+        # trusting src_evt — this slot gets repointed by whoever last touched
+        # it, which may not be src_evt if it's drifted out of sync.
+        tokens = set(_re.findall(r'PanelConfig\.Id\.UI(Merge\d+)\w*', block))
+        if not tokens:
+            log("GuideRefuiMgr.lua: mergeFix region has no PanelConfig.Id.UIMerge<digits> references to repoint — skipping.")
+            return True
+        if tokens == {tgt_pascal}:
+            log(f"GuideRefuiMgr.lua: mergeFix already points at {tgt_pascal}. Skipping.")
+            return True
+        if len(tokens) > 1:
+            log(f"GuideRefuiMgr.lua: mergeFix region references multiple merge events ({sorted(tokens)}) — expected exactly one active slot. Repointing all of them to {tgt_pascal}.")
+        _ensure_backup()
+        new_block = block
+        for tok in tokens:
+            new_block = new_block.replace(tok, tgt_pascal)
+        new_content = content[:region_match.start(2)] + new_block + content[region_match.end(2):]
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(new_content)
+        log(f"GuideRefuiMgr.lua: repointed mergeFix region from {sorted(tokens)} to {tgt_pascal}.")
+        return True
+
+    # Non-merge families: rename the existing "<Family><Digits>" region in place.
+    region_header_re = _re.compile(rf'--region\s+({family}\d+)\b', _re.IGNORECASE)
+    header_match = region_header_re.search(content)
+    if not header_match:
+        log(f"GuideRefuiMgr.lua: no existing '--region {family}<digits>' block found for family '{family}' — this looks like a brand-new family with no template to clone from. Guide UI-hook functions must be added manually.")
+        return True
+
+    old_token = header_match.group(1)  # e.g. "Blocks2607", cased as written in the file
+    if old_token.lower() == tgt_evt.lower():
+        log(f"GuideRefuiMgr.lua: region already registered for {tgt_evt}. Skipping.")
+        return True
+
+    region_re = _re.compile(rf'(--region\s+{_re.escape(old_token)}\b.*?\n)(.*?)(\n--endregion)', _re.DOTALL)
+    region_match = region_re.search(content)
+    if not region_match:
+        log(f"GuideRefuiMgr.lua: found region header for {old_token} but couldn't find its matching --endregion — skipping to avoid a bad edit.")
+        return True
+
+    old_upper = old_token.upper()
+    old_pascal = old_token[0].upper() + old_token[1:]
+    old_lower = old_token.lower()
+
+    full_block = region_match.group(0)
+    new_block = full_block.replace(old_upper, tgt_upper).replace(old_pascal, tgt_pascal).replace(old_lower, tgt_lower)
+
+    _ensure_backup()
+    new_content = content[:region_match.start()] + new_block + content[region_match.end():]
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(new_content)
+    log(f"GuideRefuiMgr.lua: renamed region {old_token} -> {tgt_pascal}.")
+    return True
+
+
+def _regenerate_meta_guid(meta_path):
+    """Unity .meta files carry a unique GUID identifying that specific asset.
+    Copying a .meta file verbatim to a new asset would give two different
+    files the same GUID, which corrupts Unity's asset reference resolution —
+    so every cloned .meta gets a freshly generated one instead."""
+    import re as _re
+    import uuid
+    with open(meta_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+    new_content, n = _re.subn(r'guid:\s*[0-9a-fA-F]{32}', f'guid: {uuid.uuid4().hex}', content, count=1)
+    if n == 0:
+        log(f"Warning: no 'guid:' line found in {meta_path} — GUID not regenerated.")
+        return
+    with open(meta_path, 'w', encoding='utf-8') as f:
+        f.write(new_content)
+
+
+def _clone_one_event_code_folder(base_dir, src_folder_name, tgt_folder_name, src_evt, tgt_evt, log_dir, step_index):
+    """Clones a single Core<Event> or UI<Event>Panel folder tree (Step 10a):
+    copy the folder + its sibling .meta, rename every nested file/dir whose
+    name embeds the source event token, rewrite Lua content via a multi-case
+    swap, and regenerate a fresh GUID for every cloned .meta file."""
+    src_dir = os.path.join(base_dir, src_folder_name)
+    tgt_dir = os.path.join(base_dir, tgt_folder_name)
+    src_meta = src_dir + ".meta"
+    tgt_meta = tgt_dir + ".meta"
+
+    if not os.path.isdir(src_dir):
+        log(f"{src_folder_name}: source folder not found at {src_dir} — skipping.")
+        return True
+    if os.path.exists(tgt_dir):
+        log(f"{tgt_folder_name}: target folder already exists — skipping (idempotent).")
+        return True
+
+    shutil.copytree(src_dir, tgt_dir)
+    record_file_creation(log_dir, step_index, tgt_dir)
+
+    if os.path.exists(src_meta):
+        shutil.copy2(src_meta, tgt_meta)
+        _regenerate_meta_guid(tgt_meta)
+        record_file_creation(log_dir, step_index, tgt_meta)
+    else:
+        log(f"Warning: {src_folder_name}.meta not found — cloned folder {tgt_folder_name} has no folder-level .meta.")
+
+    src_pascal = src_evt[0].upper() + src_evt[1:]
+    tgt_pascal = tgt_evt[0].upper() + tgt_evt[1:]
+    src_upper, tgt_upper = src_evt.upper(), tgt_evt.upper()
+    src_lower, tgt_lower = src_evt.lower(), tgt_evt.lower()
+
+    def swap(s):
+        return s.replace(src_upper, tgt_upper).replace(src_pascal, tgt_pascal).replace(src_lower, tgt_lower)
+
+    # Rename files/dirs deepest-first, using paths captured in one upfront pass.
+    # os.walk's own dirnames list goes stale mid-traversal if you rename directories
+    # while it's still walking (topdown=False computes each level's children before
+    # its descendants are renamed, then hands you a now-outdated name) -- snapshotting
+    # every path first, then acting deepest-to-shallowest on those fixed paths, avoids
+    # ever asking the filesystem for a name that's already been changed out from under it.
+    all_paths = []
+    for dirpath, dirnames, filenames in os.walk(tgt_dir):
+        for name in filenames:
+            all_paths.append(os.path.join(dirpath, name))
+        for name in dirnames:
+            all_paths.append(os.path.join(dirpath, name))
+    all_paths.sort(key=lambda p: p.count(os.sep), reverse=True)
+
+    for old_path in all_paths:
+        parent = os.path.dirname(old_path)
+        base = os.path.basename(old_path)
+        new_base = swap(base)
+        if new_base != base:
+            os.rename(old_path, os.path.join(parent, new_base))
+
+    # Now rewrite content: Lua files get the same multi-case swap, .meta files get a
+    # fresh GUID instead (their content otherwise carries no event-specific text).
+    file_count = 0
+    for dirpath, _dirnames, filenames in os.walk(tgt_dir):
+        for name in filenames:
+            fpath = os.path.join(dirpath, name)
+            if name.endswith(".meta"):
+                _regenerate_meta_guid(fpath)
+            else:
+                with open(fpath, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                new_content = swap(content)
+                if new_content != content:
+                    with open(fpath, 'w', encoding='utf-8') as f:
+                        f.write(new_content)
+                file_count += 1
+
+    log(f"Cloned {src_folder_name} -> {tgt_folder_name} ({file_count} code files, GUIDs regenerated).")
+    return True
+
+
+def clone_event_code_folders(proj_root, src_evt, tgt_evt, log_dir, step_index):
+    """
+    Step 10a (docx): copy the event's Lua code folders for a reopen/new event.
+
+    Confirmed real scope (merge2608): Core<Event> = 5 files, UI<Event>Panel = 63
+    files across nested subfolders. Unlike GuideRefuiMgr.lua's per-family regions,
+    these folders accumulate — every past event's folder is still present on disk
+    (CoreMerge2606, CoreMerge2608, ... all coexist) — so this is a pure clone, never
+    an overwrite-in-place.
+
+    Step 10b (binary ResourcesAb/icon atlas assets) and the "Generate UI Code"
+    Unity codegen for genuinely new events are deliberately NOT covered here — the
+    first needs art assets that don't exist yet for a new event, the second invokes
+    a Unity Editor prefab tool, both out of scope per the automation proposal.
+    """
+    base_dir = os.path.join(proj_root, r"develop\client\Skipbo\Assets\Lua\Game\Panel\UIEventHub")
+    src_pascal = src_evt[0].upper() + src_evt[1:]
+    tgt_pascal = tgt_evt[0].upper() + tgt_evt[1:]
+
+    pairs = [
+        (f"Core{src_pascal}", f"Core{tgt_pascal}"),
+        (f"UI{src_pascal}Panel", f"UI{tgt_pascal}Panel"),
+    ]
+    results = [_clone_one_event_code_folder(base_dir, s, t, src_evt, tgt_evt, log_dir, step_index) for s, t in pairs]
+    return all(results)
+
+
+def register_event_lua_configs(proj_root, src_evt, tgt_evt, log_dir, step_index):
+    """Step 22: registers the target event across EventConfig.lua, BIDef.lua,
+    UIManager.lua, PanelConfig.lua, and GuideRefuiMgr.lua. Each file is
+    independent — all five are attempted regardless of individual failures,
+    overall success requires all five."""
+    results = [
+        update_event_config_lua(proj_root, src_evt, tgt_evt, log_dir, step_index),
+        update_bidef_lua(proj_root, src_evt, tgt_evt, log_dir, step_index),
+        update_ui_manager_special_panel_map(proj_root, src_evt, tgt_evt, log_dir, step_index),
+        update_panel_config_lua(proj_root, src_evt, tgt_evt, log_dir, step_index),
+        update_guide_refui_mgr(proj_root, src_evt, tgt_evt, log_dir, step_index),
+    ]
+    return all(results)
+
+
 def main():
     # Log messages include Chinese sheet/column names; when stdout isn't attached to a
     # real UTF-8 console (e.g. piped from Electron's spawn on a non-UTF-8 Windows locale)
@@ -5772,6 +6529,14 @@ def main():
     elif step_index == 19:
         # Step 20: Update sys.xlsx
         success = update_sys_excel(proj_root, src_evt, tgt_evt, log_dir, step_index)
+        if not success: sys.exit(1)
+    elif step_index == 21:
+        # Step 22: Register event in EventConfig.lua, BIDef.lua, UIManager.lua, PanelConfig.lua, GuideRefuiMgr.lua
+        success = register_event_lua_configs(proj_root, src_evt, tgt_evt, log_dir, step_index)
+        if not success: sys.exit(1)
+    elif step_index == 22:
+        # Step 23: Copy & rename event code folders (Core<Event> + UI<Event>Panel)
+        success = clone_event_code_folders(proj_root, src_evt, tgt_evt, log_dir, step_index)
         if not success: sys.exit(1)
     else:
         log(f"Step {step_index} execution mock succeeded.")

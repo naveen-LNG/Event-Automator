@@ -22,6 +22,16 @@ const PYBACKEND_CWD = PYBACKEND_DIR;
 const BRANCH_KEYS = ['trunk', 'Misc', 'Feature'];
 const WORKSPACES = ['WorkSpcae_Design', 'WorkSpcae_NE', 'WorkSpcae_FC', 'WorkSpcae3'];
 
+// Ideation reference data lives alongside the app, not per-branch — it's
+// cross-branch design knowledge (past events' art requirements, feedback,
+// one-pagers), same as the existing PDFs already checked in here. Shipped
+// via extraResources (like pybackend) rather than the asar-packed `files`
+// list, since app.asar is a read-only virtual archive — the app writes
+// feedback/final-doc files here at runtime, which asar can't support.
+const IDEATION_EVENTS_ROOT = app.isPackaged
+  ? path.join(process.resourcesPath, 'ideationData', 'Events')
+  : path.join(__dirname, 'ideationData', 'Events');
+
 const PIPELINE_STEPS = [
   '1. Configure storagedata.proto',
   '2. Execute ProtoToLua in Unity',
@@ -43,7 +53,9 @@ const PIPELINE_STEPS = [
   '18. Update pack.xlsx (Pack config)',
   '19. Update guide.xlsx (Guide config)',
   '20. Update sys.xlsx (DeepLink registration)',
-  '21. Execute coder_convert script'
+  '21. Execute coder_convert script',
+  '22. Register event in EventConfig.lua, BIDef.lua, UIManager.lua, PanelConfig.lua & GuideRefuiMgr.lua',
+  '23. Copy & rename event code folders (Core<Event> + UI<Event>Panel)'
 ];
 
 // Guessed repo root: this app lives at <repoRoot>/tools/EventAutomationDesktop
@@ -64,12 +76,32 @@ function configPath() {
   return path.join(app.getPath('userData'), 'config.json');
 }
 
+// Ideation feedback/lessons live under ideationData/Events (not userData):
+// this is studio design knowledge, not per-user app state — it belongs
+// alongside the existing per-event Art Requirements/Feedback/One-Pager
+// folders so a designer can actually find and read it, not hidden in an
+// OS-specific app-data folder only this app's own UI can see.
+function ideationFeedbackStorePath() {
+  return path.join(IDEATION_EVENTS_ROOT, '_ideation_feedback_store.json');
+}
+
+// Separate from the Ideation lessons store — Art Requirement feedback
+// ("icons need a consistent outline width") is a different vocabulary from
+// Ideation-stage feedback ("make it more vibrant"), verified against the
+// studio's own real Art Feedback PDFs.
+function artReqFeedbackStorePath() {
+  return path.join(IDEATION_EVENTS_ROOT, '_art_requirement_feedback_store.json');
+}
+
 function loadConfig() {
   const p = configPath();
   let cfg = {
     branchPaths: {},
     activeBranch: 'trunk',
     activeWorkspace: 'WorkSpcae_Design',
+    anthropicApiKey: '',
+    ollamaBaseUrl: '',
+    ollamaModel: 'qwen3:32b',
     unityExePath: ''
   };
   if (fs.existsSync(p)) {
@@ -271,18 +303,85 @@ ipcMain.handle('pipeline:runStep', async (evt, params) => {
       return { success: false, output: `Error: coder_convert_not_pause.bat not found at ${batPath}` };
     }
     return new Promise((resolve) => {
-      let output = '';
-      const proc = spawn(batPath, [], { cwd: path.dirname(batPath), shell: true });
-      proc.stdout.on('data', (d) => {
-        output += d.toString();
-        evt.sender.send('pipeline:log-line', `[CoderConvert] ${d.toString()}`);
+      let settled = false;
+
+      // Run in a real, visible console window instead of a detached/piped child.
+      // Two direct benefits: (1) full native output — colors, formatting, everything —
+      // exactly as coder_convert normally produces it, easiest possible diagnosis when
+      // something fails. (2) convert_to_lua.bat's own `@pause` on failure (see the step-19
+      // review) stops being a silent hang and becomes a real interactive prompt: the window
+      // stays open showing the error, the user reads it and presses a key, done. The same
+      // @pause we flagged as a liability when hidden is exactly the right behavior once visible.
+      const title = `Coder Convert - ${workspace} (${srcEvt} -> ${tgtEvt})`;
+
+      // convert_to_lua.bat shells out to bare `python` for a suffix-handling script — not
+      // our bundled interpreter. Prepend our bundled Python's directory to PATH for this
+      // window so that resolves too, keeping "no system Python required" true here as well.
+      const childEnv = Object.assign({}, process.env, {
+        PATH: `${PYBACKEND_DIR}${path.delimiter}${process.env.PATH || ''}`
       });
-      proc.stderr.on('data', (d) => {
-        output += d.toString();
-        evt.sender.send('pipeline:log-line', `[CoderConvert Err] ${d.toString()}`);
+
+      // `start /wait`'s OWN exit code does not reliably reflect the launched command's exit
+      // code (verified empirically — it came back 0 even when the inner script exited 1).
+      // Route the real exit code through a temp file instead, written from inside the same
+      // window. Two more gotchas found the same way: the .bat must be invoked with `call`
+      // (without it, control never returns to the rest of the command line), and the file
+      // write needs delayed expansion (`/v:on` + `!errorlevel!`) — `%errorlevel%` gets
+      // substituted at parse time for the whole line, before the batch file has even run,
+      // so it always reads as whatever errorlevel was before this command started.
+      const exitCodeFile = path.join(app.getPath('temp'), `coder_convert_exitcode_${Date.now()}.txt`);
+      const command = `start "${title}" /wait cmd.exe /v:on /c "call "${batPath}" & echo !errorlevel! > "${exitCodeFile}""`;
+
+      evt.sender.send('pipeline:log-line',
+        `[CoderConvert] Opened in a separate terminal window ("${title}") — watch that window for live output. ` +
+        `This step completes automatically once it finishes (or once you dismiss a failure prompt there).`);
+
+      const proc = spawn(command, { cwd: path.dirname(batPath), shell: true, windowsHide: false, env: childEnv });
+
+      // Safety net only — the visible window is the primary mechanism now, not a substitute
+      // for one. Generous duration since a real @pause is now a legitimate state a person
+      // might be reading, not an invisible freeze; this just guards against walking away.
+      const COOKED_TIMEOUT_MS = 45 * 60 * 1000;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        const msg = `[CoderConvert] No response after ${COOKED_TIMEOUT_MS / 60000} minutes — closing the terminal window.`;
+        evt.sender.send('pipeline:log-line', msg);
+        if (proc.pid) {
+          spawn('taskkill', ['/PID', String(proc.pid), '/T', '/F']); // kill the whole tree, not just the outer cmd
+        }
+        resolve({ success: false, code: 1, output: msg });
+      }, COOKED_TIMEOUT_MS);
+
+      proc.on('close', () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+
+        let realCode = null;
+        try {
+          if (fs.existsSync(exitCodeFile)) {
+            realCode = parseInt(fs.readFileSync(exitCodeFile, 'utf-8').trim(), 10);
+            fs.unlinkSync(exitCodeFile);
+          }
+        } catch (e) { /* fall through to the "couldn't determine" branch below */ }
+
+        if (realCode === null || Number.isNaN(realCode)) {
+          const msg = `[CoderConvert] Terminal window closed, but couldn't read the real exit code — treating as failed so this doesn't silently pass.`;
+          evt.sender.send('pipeline:log-line', msg);
+          resolve({ success: false, code: 1, output: msg });
+          return;
+        }
+
+        const msg = `[CoderConvert] Terminal window closed (exit code ${realCode}).`;
+        evt.sender.send('pipeline:log-line', msg);
+        resolve({ success: realCode === 0, code: realCode, output: msg });
       });
-      proc.on('close', (code) => {
-        resolve({ success: code === 0, code, output });
+      proc.on('error', (err) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve({ success: false, code: 1, output: `Failed to open coder_convert terminal: ${err.message}` });
       });
     });
   }
@@ -448,6 +547,254 @@ ipcMain.handle('convertLayoutCache:refresh', async (evt, { branchRoot, workspace
     proc.on('close', (code) => resolve({ success: code === 0, code, output }));
     proc.on('error', (err) => resolve({ success: false, code: 1, output: `Failed to launch Python: ${err.message}` }));
   });
+});
+
+// ---- IPC: Ideation tab — 5-theme generation + feedback-driven regeneration ----
+// Calls the real Anthropic API (metered Console key from Settings, not a
+// claude.ai subscription — third-party OAuth passthrough of a Claude
+// subscription is against Anthropic's terms and wouldn't work here anyway).
+
+// Unlike the game-data payload temp files above (never cleaned up — harmless
+// if left behind), these two carry a live Anthropic API key. Delete them as
+// soon as the Python process has read them rather than leaving a plaintext
+// credential sitting in the OS temp dir indefinitely.
+async function runPythonAndScrub(scriptId, tmpPath) {
+  try {
+    return await runPython(scriptId, [tmpPath]);
+  } finally {
+    fs.unlink(tmpPath, () => {});
+  }
+}
+
+// Claude always wins when a key is present; the Ollama fallback only kicks
+// in when no Anthropic key is configured at all — never a per-run choice,
+// so there's no ambiguity about which one produced a given draft.
+function resolveIdeationProvider(cfg) {
+  if (cfg.anthropicApiKey) return { provider: 'anthropic' };
+  if (cfg.ollamaBaseUrl) return { provider: 'ollama' };
+  return { provider: null };
+}
+
+ipcMain.handle('ideation:generate', async (evt, { eventType, durationDays, themeCount, designPath }) => {
+  const cfg = loadConfig();
+  const { provider } = resolveIdeationProvider(cfg);
+  if (!provider) {
+    return { success: false, output: 'Add an Anthropic API key or an Ollama Base URL in Settings first.' };
+  }
+  const count = Math.max(1, Math.min(10, parseInt(themeCount, 10) || 5));
+  const tmp = tempJsonFile('ideation_generate');
+  fs.writeFileSync(tmp, JSON.stringify({
+    event_type: eventType,
+    duration_days: durationDays,
+    theme_count: count,
+    design_path: designPath,
+    provider,
+    api_key: cfg.anthropicApiKey,
+    ollama_base_url: cfg.ollamaBaseUrl,
+    ollama_model: cfg.ollamaModel || 'qwen3:32b',
+    feedback_store_path: ideationFeedbackStorePath(),
+    events_root: IDEATION_EVENTS_ROOT
+  }), 'utf-8');
+  return runPythonAndScrub('ideation_generate', tmp);
+});
+
+ipcMain.handle('ideation:regenerate', async (evt, { eventType, durationDays, theme, feedback }) => {
+  const cfg = loadConfig();
+  const { provider } = resolveIdeationProvider(cfg);
+  if (!provider) {
+    return { success: false, output: 'Add an Anthropic API key or an Ollama Base URL in Settings first.' };
+  }
+  const tmp = tempJsonFile('ideation_regenerate');
+  fs.writeFileSync(tmp, JSON.stringify({
+    event_type: eventType,
+    duration_days: durationDays,
+    provider,
+    api_key: cfg.anthropicApiKey,
+    ollama_base_url: cfg.ollamaBaseUrl,
+    ollama_model: cfg.ollamaModel || 'qwen3:32b',
+    feedback_store_path: ideationFeedbackStorePath(),
+    events_root: IDEATION_EVENTS_ROOT,
+    theme,
+    feedback
+  }), 'utf-8');
+  return runPythonAndScrub('ideation_regenerate', tmp);
+});
+
+// Settings "Test Connection" — confirms the configured Ollama server is
+// reachable and has the configured model pulled, before the user ever
+// starts an ideation run against it.
+ipcMain.handle('ideation:testOllama', async (evt, { baseUrl, model }) => {
+  if (!baseUrl) return { success: false, output: 'Enter an Ollama Base URL first.' };
+  try {
+    const res = await fetch(`${baseUrl.replace(/\/+$/, '')}/api/tags`, { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) return { success: false, output: `HTTP ${res.status} from ${baseUrl}` };
+    const data = await res.json();
+    const names = (data.models || []).map((m) => m.name);
+    const hasModel = names.includes(model);
+    if (!names.length) return { success: false, output: 'Reachable, but no models are pulled on that server.' };
+    return {
+      success: true,
+      output: hasModel
+        ? `Connected. "${model}" is available.`
+        : `Connected, but "${model}" isn't pulled there yet. Available: ${names.join(', ')}`
+    };
+  } catch (e) {
+    return { success: false, output: `Could not reach ${baseUrl}: ${e.message}` };
+  }
+});
+
+// "Select as Final" — writes the theme as a Markdown 1-Pager into the same
+// per-type "One-Pager Ideation" folder the real PDFs already live in (e.g.
+// ideationData/Events/Merge/One-Pager Ideation/Merge2608 One-Pager Ideation.pdf).
+// Pure main-process file write — no Python/Excel involved, the theme JSON
+// already has everything needed.
+ipcMain.handle('ideation:saveFinal', async (evt, { eventType, durationDays, theme }) => {
+  try {
+    const dir = path.join(IDEATION_EVENTS_ROOT, eventType, 'One-Pager Ideation');
+    fs.mkdirSync(dir, { recursive: true });
+    const refName = (theme.internal_reference_name || 'UnnamedEvent').replace(/[\\/:*?"<>|]/g, '_');
+    const filePath = path.join(dir, `${refName} One-Pager Ideation.md`);
+
+    const af = theme.audience_fit || {};
+    const vd = theme.visual_direction || {};
+    const imp = theme.expected_impact || {};
+    const eff = theme.effort_estimate || {};
+    const scenes = (theme.scenes || []).map((s, i) => `${i + 1}. **${s.name}** — ${s.description}`).join('\n');
+    const keyFeatures = (vd.key_features || []).map(f => `- ${f}`).join('\n');
+    const uiDirection = (vd.ui_direction || []).map(f => `- ${f}`).join('\n');
+
+    const md = `# Event Ideation 1-Pager — ${theme.theme_name}
+
+**Internal Reference Name:** ${theme.internal_reference_name}
+**Event Type:** ${eventType}
+**Sprint Duration:** ${durationDays} days
+**Generated:** ${new Date().toISOString().slice(0, 10)}
+**Status:** Selected as Final (draft — pending PO review, per the studio's Event Ideation Checklist)
+
+## Theme & Reasoning
+
+${theme.reasoning}
+
+## Audience Fit
+
+- Progression Completionist: ${af.progression_completionist}
+- Casual Escape: ${af.casual_escape}
+- Social/Collector: ${af.social_collector}
+
+${af.notes || ''}
+
+## Visual Direction
+
+**Art Style:** ${vd.art_style}
+
+**Color Palette:** ${vd.color_palette}
+
+**Key Features:**
+${keyFeatures}
+
+**UI Direction:**
+${uiDirection}
+
+## Scene Progression
+
+${scenes}
+
+## New Features & Additions
+
+${theme.new_features}
+
+## Expected Impact (draft estimate — needs PO/Economy Designer review)
+
+- Engagement: ${imp.engagement_note}
+- Monetization: ${imp.monetization_note}
+
+## Effort Estimation
+
+| Area | Effort |
+|---|---|
+| Art | ${eff.art} |
+| Engineering | ${eff.engineering} |
+| Design | ${eff.design} |
+| Overall | ${eff.overall} |
+
+---
+Generated by the Event Automator Ideation tab (Claude API). Treat as a first draft for PO review, not an approved spec.
+`;
+    fs.writeFileSync(filePath, md, 'utf-8');
+    return { success: true, output: filePath };
+  } catch (e) {
+    return { success: false, output: e.message };
+  }
+});
+
+// ---- IPC: Art Requirement tab — generated only from a finalized Ideation
+// theme (payload includes the full theme JSON, not just its name, so the
+// Art doc is grounded in the actual approved reasoning/visual direction).
+// Rendering itself lives in Python (art_requirement_generator.py) so the
+// same real-template-verified structure backs drafts, regenerations, and
+// the final save — no second markdown template to keep in sync in JS. ----
+
+ipcMain.handle('artreq:generate', async (evt, { eventType, ideationTheme, variationCount }) => {
+  const cfg = loadConfig();
+  const { provider } = resolveIdeationProvider(cfg);
+  if (!provider) {
+    return { success: false, output: 'Add an Anthropic API key or an Ollama Base URL in Settings first.' };
+  }
+  const count = Math.max(1, Math.min(10, parseInt(variationCount, 10) || 3));
+  const tmp = tempJsonFile('artreq_generate');
+  fs.writeFileSync(tmp, JSON.stringify({
+    event_type: eventType,
+    ideation_theme: ideationTheme,
+    variation_count: count,
+    provider,
+    api_key: cfg.anthropicApiKey,
+    ollama_base_url: cfg.ollamaBaseUrl,
+    ollama_model: cfg.ollamaModel || 'qwen3:32b',
+    feedback_store_path: artReqFeedbackStorePath(),
+    events_root: IDEATION_EVENTS_ROOT
+  }), 'utf-8');
+  return runPythonAndScrub('artreq_generate', tmp);
+});
+
+ipcMain.handle('artreq:regenerate', async (evt, { eventType, variation, variationIndex, feedback }) => {
+  const cfg = loadConfig();
+  const { provider } = resolveIdeationProvider(cfg);
+  if (!provider) {
+    return { success: false, output: 'Add an Anthropic API key or an Ollama Base URL in Settings first.' };
+  }
+  const tmp = tempJsonFile('artreq_regenerate');
+  fs.writeFileSync(tmp, JSON.stringify({
+    event_type: eventType,
+    variation,
+    variation_index: variationIndex,
+    feedback,
+    provider,
+    api_key: cfg.anthropicApiKey,
+    ollama_base_url: cfg.ollamaBaseUrl,
+    ollama_model: cfg.ollamaModel || 'qwen3:32b',
+    feedback_store_path: artReqFeedbackStorePath(),
+    events_root: IDEATION_EVENTS_ROOT
+  }), 'utf-8');
+  return runPythonAndScrub('artreq_regenerate', tmp);
+});
+
+ipcMain.handle('artreq:saveFinal', async (evt, { eventType, refName, variation }) => {
+  const tmp = tempJsonFile('artreq_save_final');
+  fs.writeFileSync(tmp, JSON.stringify({
+    event_type: eventType,
+    ref_name: refName,
+    variation,
+    events_root: IDEATION_EVENTS_ROOT
+  }), 'utf-8');
+  const res = await runPythonAndScrub('artreq_save_final', tmp);
+  if (!res.success) return { success: false, output: res.output };
+  try {
+    const parsed = JSON.parse(res.stdout);
+    if (parsed.error) return { success: false, output: parsed.error };
+    return { success: true, output: parsed.path };
+  } catch (e) {
+    return { success: false, output: `Could not parse save result: ${e.message}` };
+  }
 });
 
 // ---- IPC: manual "Update all local caches from SVN" — convert_layout.lua,

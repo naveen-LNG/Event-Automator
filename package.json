@@ -29,6 +29,10 @@
       {
         "from": "pybackend_dist/python",
         "to": "pybackend"
+      },
+      {
+        "from": "ideationData",
+        "to": "ideationData"
       }
     ],
     "win": {

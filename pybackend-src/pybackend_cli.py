@@ -76,6 +76,21 @@ def main():
     elif script == "update_endless_treasure":
         import update_endless_treasure
         update_endless_treasure.main()
+    elif script == "ideation_generate":
+        import ideation_generator
+        ideation_generator.generate_main()
+    elif script == "ideation_regenerate":
+        import ideation_generator
+        ideation_generator.regenerate_main()
+    elif script == "artreq_generate":
+        import art_requirement_generator
+        art_requirement_generator.generate_main()
+    elif script == "artreq_regenerate":
+        import art_requirement_generator
+        art_requirement_generator.regenerate_main()
+    elif script == "artreq_save_final":
+        import art_requirement_generator
+        art_requirement_generator.save_final_main()
     else:
         print(f"Unknown script: {script}")
         sys.exit(1)

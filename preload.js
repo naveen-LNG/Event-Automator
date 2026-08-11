@@ -32,5 +32,14 @@ contextBridge.exposeInMainWorld('api', {
   triviaRun: (params) => ipcRenderer.invoke('trivia:run', params),
 
   endlessTreasureGet: (params) => ipcRenderer.invoke('endlesstreasure:get', params),
-  endlessTreasureCommit: (params) => ipcRenderer.invoke('endlesstreasure:commit', params)
+  endlessTreasureCommit: (params) => ipcRenderer.invoke('endlesstreasure:commit', params),
+
+  ideationGenerate: (params) => ipcRenderer.invoke('ideation:generate', params),
+  ideationRegenerate: (params) => ipcRenderer.invoke('ideation:regenerate', params),
+  ideationSaveFinal: (params) => ipcRenderer.invoke('ideation:saveFinal', params),
+  ideationTestOllama: (params) => ipcRenderer.invoke('ideation:testOllama', params),
+
+  artReqGenerate: (params) => ipcRenderer.invoke('artreq:generate', params),
+  artReqRegenerate: (params) => ipcRenderer.invoke('artreq:regenerate', params),
+  artReqSaveFinal: (params) => ipcRenderer.invoke('artreq:saveFinal', params)
 });

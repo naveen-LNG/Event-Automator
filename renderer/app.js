@@ -12,6 +12,14 @@
   let cachedFSG = null;
   let cachedTrivia = null;
   let cachedEndlessTreasure = null;
+  let ideationThemes = null;
+  let ideationDraftPaths = [];
+  let ideationSelectedIndex = -1;
+  let ideationSavedPath = '';
+  let artReqVariations = null;
+  let artReqDraftPaths = [];
+  let artReqSelectedIndex = -1;
+  let artReqSavedPath = '';
   let isExecuting = false;
 
   const $ = (sel) => document.querySelector(sel);
@@ -221,6 +229,42 @@
     }
   });
 
+  $('#anthropic-key-input').addEventListener('change', async (e) => {
+    cfg.anthropicApiKey = e.target.value.trim();
+    await window.api.saveConfig({ anthropicApiKey: cfg.anthropicApiKey });
+  });
+  $('#toggle-anthropic-key-btn').addEventListener('click', () => {
+    const input = $('#anthropic-key-input');
+    const btn = $('#toggle-anthropic-key-btn');
+    const showing = input.type === 'text';
+    input.type = showing ? 'password' : 'text';
+    btn.textContent = showing ? 'Show' : 'Hide';
+  });
+
+  $('#ollama-base-url-input').addEventListener('change', async (e) => {
+    cfg.ollamaBaseUrl = e.target.value.trim();
+    await window.api.saveConfig({ ollamaBaseUrl: cfg.ollamaBaseUrl });
+  });
+  $('#ollama-model-input').addEventListener('change', async (e) => {
+    cfg.ollamaModel = e.target.value.trim() || 'qwen3:32b';
+    await window.api.saveConfig({ ollamaModel: cfg.ollamaModel });
+  });
+  $('#ollama-test-btn').addEventListener('click', async () => {
+    const baseUrl = $('#ollama-base-url-input').value.trim();
+    const model = $('#ollama-model-input').value.trim() || 'qwen3:32b';
+    const resultEl = $('#ollama-test-result');
+    const btn = $('#ollama-test-btn');
+    btn.disabled = true; btn.textContent = 'Testing...';
+    resultEl.textContent = '';
+    resultEl.classList.remove('ok', 'error');
+
+    const res = await window.api.ideationTestOllama({ baseUrl, model });
+    btn.disabled = false; btn.textContent = 'Test Connection';
+    resultEl.textContent = res.output;
+    resultEl.classList.add(res.success ? 'ok' : 'error');
+    log(`Ollama connection test: ${res.output}`, res.success ? 'console-log-line' : 'console-log-error');
+  });
+
   function getLatestEventNamesPerType() {
     if (!cachedEventTypes) return [];
     return Object.values(cachedEventTypes.events_by_type || {})
@@ -383,10 +427,16 @@
   // renumber the rest so the checklist never has a confusing gap or wrong step count.
   const WORKSPACE3_ONLY_STEP_INDEX = 4;
 
+  // card.xlsx step is a backend no-op (no event info present) — hidden permanently
+  // rather than deleted from PIPELINE_STEPS, since that array's positions are the
+  // stepIndex values sent straight to the Python backend and to the Unity tool's
+  // own mirrored step list; removing the entry would silently shift every step after it.
+  const ALWAYS_HIDDEN_STEP_INDICES = [16];
+
   function visibleStepIndices() {
-    const indices = pipelineSteps.map((_, i) => i);
+    let indices = pipelineSteps.map((_, i) => i).filter(i => !ALWAYS_HIDDEN_STEP_INDICES.includes(i));
     if (cfg.activeWorkspace === 'WorkSpcae3') {
-      return indices.filter(i => i !== WORKSPACE3_ONLY_STEP_INDEX);
+      indices = indices.filter(i => i !== WORKSPACE3_ONLY_STEP_INDEX);
     }
     return indices;
   }
@@ -828,15 +878,22 @@
   function updateDecoShopPreview() {
     const eventId = ($('#event-id-input').value || '').trim();
     $('#decoshop-event-id-display').value = eventId;
-    const id4 = eventId.slice(0, 4) || '[ID]';
+    // Event ID is 8-digit yyyymmNN (e.g. 20260501) — alias uses YYMM, i.e. chars 2-6, not the leading century.
+    const id4 = eventId.slice(2, 6) || '[ID]';
     const name = ($('#decoshop-event-name').value || '').trim() || '[EventName]';
     const mode1 = $('#decoshop-mode-1').value;
     const mode2 = $('#decoshop-mode-2').value;
+
+    const eventId2 = ($('#decoshop-event-id-2').value || '').trim();
+    const id4_2 = eventId2.slice(2, 6) || '[ID2]';
+    const name2 = ($('#decoshop-event-name-2').value || '').trim() || '[EventName2]';
+
     $('#decoshop-preview-frame1').textContent = `${id4}${name}${mode1}`;
-    $('#decoshop-preview-frame2').textContent = `${id4}${name}${mode2}`;
+    $('#decoshop-preview-frame2').textContent = `${id4_2}${name2}${mode2}`;
+    // Card Back is always keyed off Game Mode 1's event.
     $('#decoshop-preview-cardback').textContent = `${id4}${name}`;
   }
-  ['#decoshop-event-name', '#decoshop-mode-1', '#decoshop-mode-2'].forEach(sel => {
+  ['#decoshop-event-name', '#decoshop-mode-1', '#decoshop-mode-2', '#decoshop-event-id-2', '#decoshop-event-name-2'].forEach(sel => {
     $(sel).addEventListener('input', updateDecoShopPreview);
     $(sel).addEventListener('change', updateDecoShopPreview);
   });
@@ -849,11 +906,15 @@
     const eventName = ($('#decoshop-event-name').value || '').trim();
     const mode1 = $('#decoshop-mode-1').value;
     const mode2 = $('#decoshop-mode-2').value;
+    const eventId2 = ($('#decoshop-event-id-2').value || '').trim();
+    const eventName2 = ($('#decoshop-event-name-2').value || '').trim();
     const priceFrame = ($('#decoshop-price-frame').value || '').trim();
     const priceCardback = ($('#decoshop-price-cardback').value || '').trim();
 
     if (!eventId || eventId.length < 4) { toast('Please fill in a valid Event ID on the Main Events tab first.', 'error'); return; }
-    if (!eventName) { toast('Please fill in Event Name.', 'error'); return; }
+    if (!eventName) { toast('Please fill in Event Name (Game Mode 1).', 'error'); return; }
+    if (!eventId2 || eventId2.length < 4) { toast('Please fill in a valid Event ID (Game Mode 2).', 'error'); return; }
+    if (!eventName2) { toast('Please fill in Event Name (Game Mode 2).', 'error'); return; }
     if (mode1 === mode2) { toast('Game Mode 1 and Game Mode 2 must be different.', 'error'); return; }
 
     const root = activeBranchRoot();
@@ -867,6 +928,8 @@
         event_name: eventName,
         game_mode_1: mode1,
         game_mode_2: mode2,
+        event_id_2: eventId2,
+        event_name_2: eventName2,
         price_frame: priceFrame || '4',
         price_cardback: priceCardback || '10'
       }
@@ -1238,6 +1301,426 @@
     }
   });
 
+  // ---------------- Ideation tab ----------------
+  // Pure generate-on-demand: no "get" call on tab switch, no cache to
+  // invalidate on branch change — each run calls the Claude API fresh with
+  // the currently-selected event type/duration plus this branch's recent
+  // event history for context.
+  function escapeHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function fitPillClass(rating) {
+    if (rating === 'Green') return 'fit-pill fit-green';
+    if (rating === 'Yellow') return 'fit-pill fit-yellow';
+    if (rating === 'Red') return 'fit-pill fit-red';
+    return 'fit-pill';
+  }
+
+  function renderIdeationCard(theme, idx) {
+    const t = theme;
+    const selected = idx === ideationSelectedIndex;
+    const scenes = (t.scenes || []).map(s =>
+      `<div class="preview-cell"><span class="preview-label">${escapeHtml(s.name)}</span><span class="preview-value">${escapeHtml(s.description)}</span></div>`
+    ).join('');
+    const keyFeatures = (t.visual_direction && t.visual_direction.key_features || []).map(f => `<li>${escapeHtml(f)}</li>`).join('');
+    const uiDirection = (t.visual_direction && t.visual_direction.ui_direction || []).map(f => `<li>${escapeHtml(f)}</li>`).join('');
+    const af = t.audience_fit || {};
+    const eff = t.effort_estimate || {};
+    const imp = t.expected_impact || {};
+
+    return `
+      <div class="stacked-card ideation-card${selected ? ' ideation-selected' : ''}" data-idx="${idx}">
+        <div class="ideation-card-header">
+          <div>
+            <h2 class="card-title">${escapeHtml(t.theme_name)}</h2>
+            <span class="preview-label mono">${escapeHtml(t.internal_reference_name)}</span>
+          </div>
+          <button class="secondary-btn small ideation-select-btn" data-idx="${idx}">${selected ? 'Selected ✓' : 'Select as Final'}</button>
+        </div>
+        <p class="settings-hint">${escapeHtml(t.reasoning)}</p>
+        ${ideationDraftPaths[idx] ? `<p class="settings-hint ideation-saved-path"><strong>Draft document:</strong> <span class="mono">${escapeHtml(ideationDraftPaths[idx])}</span> — open this to review or mark up directly.</p>` : ''}
+        ${selected && ideationSavedPath ? `<p class="settings-hint ideation-saved-path"><strong>Saved as final:</strong> <span class="mono">${escapeHtml(ideationSavedPath)}</span></p>` : ''}
+
+        <div class="preview-grid three">
+          <div class="preview-cell"><span class="preview-label">Progression Completionist</span><span class="${fitPillClass(af.progression_completionist)}">${escapeHtml(af.progression_completionist)}</span></div>
+          <div class="preview-cell"><span class="preview-label">Casual Escape</span><span class="${fitPillClass(af.casual_escape)}">${escapeHtml(af.casual_escape)}</span></div>
+          <div class="preview-cell"><span class="preview-label">Social/Collector</span><span class="${fitPillClass(af.social_collector)}">${escapeHtml(af.social_collector)}</span></div>
+        </div>
+        ${af.notes ? `<p class="settings-hint">${escapeHtml(af.notes)}</p>` : ''}
+
+        <details class="info-disclosure">
+          <summary>
+            <span class="info-disclosure-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>
+            <span>Visual direction &amp; 3-scene progression</span>
+            <svg class="info-disclosure-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+          </summary>
+          <div class="info-disclosure-body">
+            <p class="settings-hint"><strong>Art style:</strong> ${escapeHtml(t.visual_direction && t.visual_direction.art_style)}</p>
+            <p class="settings-hint"><strong>Palette:</strong> ${escapeHtml(t.visual_direction && t.visual_direction.color_palette)}</p>
+            <p class="settings-hint"><strong>Key features:</strong></p><ul class="ideation-list">${keyFeatures}</ul>
+            <p class="settings-hint"><strong>UI direction:</strong></p><ul class="ideation-list">${uiDirection}</ul>
+            <div class="preview-grid three">${scenes}</div>
+          </div>
+        </details>
+
+        <details class="info-disclosure">
+          <summary>
+            <span class="info-disclosure-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>
+            <span>New features, impact &amp; effort</span>
+            <svg class="info-disclosure-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+          </summary>
+          <div class="info-disclosure-body">
+            <p class="settings-hint"><strong>New features:</strong> ${escapeHtml(t.new_features)}</p>
+            <p class="settings-hint"><strong>Engagement (draft estimate):</strong> ${escapeHtml(imp.engagement_note)}</p>
+            <p class="settings-hint"><strong>Monetization (draft estimate):</strong> ${escapeHtml(imp.monetization_note)}</p>
+            <div class="preview-grid four">
+              <div class="preview-cell"><span class="preview-label">Art</span><span class="preview-value">${escapeHtml(eff.art)}</span></div>
+              <div class="preview-cell"><span class="preview-label">Engineering</span><span class="preview-value">${escapeHtml(eff.engineering)}</span></div>
+              <div class="preview-cell"><span class="preview-label">Design</span><span class="preview-value">${escapeHtml(eff.design)}</span></div>
+              <div class="preview-cell"><span class="preview-label">Overall</span><span class="preview-value">${escapeHtml(eff.overall)}</span></div>
+            </div>
+          </div>
+        </details>
+
+        <div class="board-divider"></div>
+        <div class="form-row">
+          <label class="form-label" for="ideation-feedback-${idx}">Feedback</label>
+          <textarea id="ideation-feedback-${idx}" class="text-input ideation-feedback" rows="2" placeholder="e.g. Make the colors more vibrant; reference our anniversary event in the props"></textarea>
+        </div>
+        <div class="execution-footer" style="justify-content:flex-end;">
+          <button class="primary-btn small ideation-regen-btn" data-idx="${idx}">Submit Feedback &amp; Regenerate</button>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderIdeationResults() {
+    const container = $('#ideation-results');
+    if (!ideationThemes || !ideationThemes.length) { container.innerHTML = ''; return; }
+    container.innerHTML = ideationThemes.map((t, i) => renderIdeationCard(t, i)).join('');
+
+    $$('.ideation-select-btn').forEach(btn => {
+      btn.addEventListener('click', () => selectIdeationTheme(Number(btn.dataset.idx)));
+    });
+    $$('.ideation-regen-btn').forEach(btn => {
+      btn.addEventListener('click', () => regenerateIdeationTheme(Number(btn.dataset.idx)));
+    });
+  }
+
+  async function selectIdeationTheme(idx) {
+    const eventType = $('#ideation-event-type').value;
+    const durationDays = parseInt($('#ideation-duration').value, 10) || 14;
+    const theme = ideationThemes[idx];
+
+    const btn = document.querySelector(`.ideation-select-btn[data-idx="${idx}"]`);
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
+    log(`Saving "${theme.theme_name}" as the final 1-Pager...`);
+
+    const res = await window.api.ideationSaveFinal({ eventType, durationDays, theme });
+
+    if (res.success) {
+      ideationSelectedIndex = idx;
+      ideationSavedPath = res.output;
+      log(`Saved to ${res.output}`, 'console-log-success');
+      toast('Saved as the final 1-Pager for this event.', 'success');
+      renderIdeationResults();
+      $('#artreq-trigger-card').style.display = 'block';
+      artReqVariations = null;
+      artReqDraftPaths = [];
+      artReqSelectedIndex = -1;
+      artReqSavedPath = '';
+      $('#artreq-results').innerHTML = '';
+    } else {
+      log(`Could not save the final 1-Pager: ${res.output}`, 'console-log-error');
+      toast('Save failed: ' + res.output, 'error');
+      if (btn) { btn.disabled = false; btn.textContent = 'Select as Final'; }
+    }
+  }
+
+  function clampThemeCount() {
+    const input = $('#ideation-theme-count');
+    let n = parseInt(input.value, 10);
+    if (!Number.isFinite(n)) n = 5;
+    n = Math.max(1, Math.min(10, n));
+    input.value = n;
+    return n;
+  }
+  $('#ideation-theme-count').addEventListener('change', clampThemeCount);
+
+  $('#ideation-generate-btn').addEventListener('click', async () => {
+    const eventType = $('#ideation-event-type').value;
+    const durationDays = parseInt($('#ideation-duration').value, 10) || 14;
+    const themeCount = clampThemeCount();
+    const root = activeBranchRoot();
+    if (!root) { toast('Set a branch path in Settings first.', 'error'); return; }
+    if (!cfg.anthropicApiKey && !cfg.ollamaBaseUrl) { toast('Add an Anthropic API key or an Ollama Base URL in Settings first.', 'error'); return; }
+
+    const designPath = await window.api.resolveDesignPath(root, cfg.activeWorkspace);
+    const btn = $('#ideation-generate-btn');
+    const providerLabel = cfg.anthropicApiKey ? 'Claude' : `local Ollama (${cfg.ollamaModel || 'qwen3:32b'})`;
+    btn.disabled = true; btn.textContent = `Generating ${themeCount} theme${themeCount === 1 ? '' : 's'}...`;
+    log(`Generating ${themeCount} ${eventType} ideation theme${themeCount === 1 ? '' : 's'} (${durationDays}-day sprint) via ${providerLabel}...`);
+
+    const res = await window.api.ideationGenerate({ eventType, durationDays, themeCount, designPath });
+    btn.disabled = false; btn.textContent = 'Generate Themes';
+
+    if (!res.success) { log(`Ideation generation failed: ${res.output}`, 'console-log-error'); toast('Generation failed: ' + res.output, 'error'); return; }
+    try {
+      const parsed = JSON.parse(res.stdout);
+      if (parsed.error) { log(`Error: ${parsed.error}`, 'console-log-error'); toast(parsed.error, 'error'); return; }
+      ideationThemes = parsed.themes;
+      ideationDraftPaths = parsed.draft_paths || [];
+      ideationSelectedIndex = -1;
+      ideationSavedPath = '';
+      $('#artreq-trigger-card').style.display = 'none';
+      $('#artreq-results').innerHTML = '';
+      artReqVariations = null;
+      artReqDraftPaths = [];
+      artReqSelectedIndex = -1;
+      artReqSavedPath = '';
+      renderIdeationResults();
+      log(`Generated ${ideationThemes.length} theme draft(s) via ${parsed.provider === 'ollama' ? 'local Ollama' : 'Claude'}. Draft documents written under ideationData/Events/${eventType}/One-Pager Ideation/Drafts/.`, 'console-log-success');
+      toast(`${ideationThemes.length} theme(s) generated — draft documents saved to disk.`, 'success');
+    } catch (e) {
+      log(`Error parsing ideation response: ${e.message}`, 'console-log-error');
+      toast('Could not parse the generated themes.', 'error');
+    }
+  });
+
+  async function regenerateIdeationTheme(idx) {
+    const feedback = $(`#ideation-feedback-${idx}`).value.trim();
+    if (!feedback) { toast('Enter feedback before regenerating.', 'error'); return; }
+    const eventType = $('#ideation-event-type').value;
+    const durationDays = parseInt($('#ideation-duration').value, 10) || 14;
+    const theme = ideationThemes[idx];
+
+    const btn = document.querySelector(`.ideation-regen-btn[data-idx="${idx}"]`);
+    if (btn) { btn.disabled = true; btn.textContent = 'Regenerating...'; }
+    log(`Regenerating theme "${theme.theme_name}" with feedback...`);
+
+    const res = await window.api.ideationRegenerate({ eventType, durationDays, theme, feedback });
+
+    if (!res.success) {
+      log(`Regeneration failed: ${res.output}`, 'console-log-error');
+      toast('Regeneration failed: ' + res.output, 'error');
+      if (btn) { btn.disabled = false; btn.textContent = 'Submit Feedback & Regenerate'; }
+      return;
+    }
+    try {
+      const parsed = JSON.parse(res.stdout);
+      if (parsed.error) { log(`Error: ${parsed.error}`, 'console-log-error'); toast(parsed.error, 'error'); return; }
+      ideationThemes[idx] = parsed.theme;
+      if (parsed.draft_path) ideationDraftPaths[idx] = parsed.draft_path;
+      renderIdeationResults();
+      log(`Theme "${parsed.theme.theme_name}" regenerated. Draft document updated on disk. Feedback saved for future runs.`, 'console-log-success');
+      toast('Theme regenerated — draft document + feedback updated.', 'success');
+    } catch (e) {
+      log(`Error parsing regeneration response: ${e.message}`, 'console-log-error');
+      toast('Could not parse the regenerated theme.', 'error');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = 'Submit Feedback & Regenerate'; }
+    }
+  }
+
+  // ---------------- Art Requirement tab ----------------
+  // Only reachable once an Ideation theme has been saved as Final (see
+  // selectIdeationTheme above, which reveals #artreq-trigger-card). Same
+  // generate/regenerate/select-final shape as Ideation, one step later in
+  // the studio's real pipeline.
+  function renderArtReqCard(v, idx) {
+    const selected = idx === artReqSelectedIndex;
+    const go = v.gameplay_overview || {};
+    const zonesHtml = (v.zones || []).map(z => {
+      const steps = (z.construction_steps || []).map(s => `<li>${escapeHtml(s)}</li>`).join('');
+      return `
+        <details class="info-disclosure">
+          <summary>
+            <span class="info-disclosure-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>
+            <span>Zone ${escapeHtml(z.zone_number)} — ${escapeHtml(z.zone_theme)}</span>
+            <svg class="info-disclosure-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+          </summary>
+          <div class="info-disclosure-body">
+            <p class="settings-hint"><strong>Palette/Mood:</strong> ${escapeHtml(z.palette_or_mood)}</p>
+            <p class="settings-hint"><strong>Construction/Reveal Steps:</strong></p>
+            <ol class="ideation-list">${steps}</ol>
+            <p class="settings-hint"><strong>Reference Notes:</strong> ${escapeHtml(z.reference_notes)}</p>
+          </div>
+        </details>`;
+    }).join('');
+    const charsRows = (v.characters || []).map(c =>
+      `<tr><td>${escapeHtml(c.name)}</td><td>${escapeHtml(c.role)}</td><td>${escapeHtml(c.design_notes)}</td><td>${escapeHtml((c.scene_actions || []).join(', '))}</td></tr>`
+    ).join('');
+
+    return `
+      <div class="stacked-card ideation-card${selected ? ' ideation-selected' : ''}" data-idx="${idx}">
+        <div class="ideation-card-header">
+          <div><h2 class="card-title">${escapeHtml(v.title)}</h2></div>
+          <button class="secondary-btn small artreq-select-btn" data-idx="${idx}">${selected ? 'Selected ✓' : 'Select as Final'}</button>
+        </div>
+        ${artReqDraftPaths[idx] ? `<p class="settings-hint ideation-saved-path"><strong>Draft document:</strong> <span class="mono">${escapeHtml(artReqDraftPaths[idx])}</span></p>` : ''}
+        ${selected && artReqSavedPath ? `<p class="settings-hint ideation-saved-path"><strong>Saved as final:</strong> <span class="mono">${escapeHtml(artReqSavedPath)}</span></p>` : ''}
+
+        <div class="preview-grid three">
+          <div class="preview-cell"><span class="preview-label">Duration</span><span class="preview-value">${escapeHtml(go.duration_summary)}</span></div>
+          <div class="preview-cell"><span class="preview-label">Core Loop</span><span class="preview-value">${escapeHtml(go.loop_summary)}</span></div>
+          <div class="preview-cell"><span class="preview-label">Resource Planning</span><span class="preview-value">${escapeHtml(go.resource_planning)}</span></div>
+        </div>
+        <p class="settings-hint">${escapeHtml(go.narrative_packaging)}</p>
+
+        ${zonesHtml}
+
+        <details class="info-disclosure">
+          <summary>
+            <span class="info-disclosure-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>
+            <span>Gameplay-specific art requirement</span>
+            <svg class="info-disclosure-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+          </summary>
+          <div class="info-disclosure-body"><p class="settings-hint">${escapeHtml(v.gameplay_specific_content)}</p></div>
+        </details>
+
+        <details class="info-disclosure">
+          <summary>
+            <span class="info-disclosure-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>
+            <span>Character requirements</span>
+            <svg class="info-disclosure-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+          </summary>
+          <div class="info-disclosure-body">
+            <table class="mg-preview-table">
+              <thead><tr><th>Name</th><th>Role</th><th>Design Notes</th><th>Scene Actions</th></tr></thead>
+              <tbody>${charsRows}</tbody>
+            </table>
+          </div>
+        </details>
+
+        <details class="info-disclosure">
+          <summary>
+            <span class="info-disclosure-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>
+            <span>Art direction &amp; UI icon refresh</span>
+            <svg class="info-disclosure-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+          </summary>
+          <div class="info-disclosure-body">
+            <p class="settings-hint"><strong>Lean into:</strong></p>
+            <ul class="ideation-list">${((v.art_direction_guidance || {}).lean_into || []).map(x => `<li>${escapeHtml(x)}</li>`).join('')}</ul>
+            <p class="settings-hint"><strong>Avoid:</strong></p>
+            <ul class="ideation-list">${((v.art_direction_guidance || {}).avoid || []).map(x => `<li>${escapeHtml(x)}</li>`).join('')}</ul>
+            <p class="settings-hint"><strong>UI icon refresh:</strong> ${escapeHtml(v.ui_icon_refresh_notes)}</p>
+          </div>
+        </details>
+
+        <div class="board-divider"></div>
+        <div class="form-row">
+          <label class="form-label" for="artreq-feedback-${idx}">Feedback</label>
+          <textarea id="artreq-feedback-${idx}" class="text-input ideation-feedback" rows="2" placeholder="e.g. Icons need a consistent outline width; the gift NPC doesn't match the theme"></textarea>
+        </div>
+        <div class="execution-footer" style="justify-content:flex-end;">
+          <button class="primary-btn small artreq-regen-btn" data-idx="${idx}">Submit Feedback &amp; Regenerate</button>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderArtReqResults() {
+    const container = $('#artreq-results');
+    if (!artReqVariations || !artReqVariations.length) { container.innerHTML = ''; return; }
+    container.innerHTML = artReqVariations.map((v, i) => renderArtReqCard(v, i)).join('');
+    $$('.artreq-select-btn').forEach(btn => btn.addEventListener('click', () => selectArtReqVariation(Number(btn.dataset.idx))));
+    $$('.artreq-regen-btn').forEach(btn => btn.addEventListener('click', () => regenerateArtReqVariation(Number(btn.dataset.idx))));
+  }
+
+  $('#artreq-generate-btn').addEventListener('click', async () => {
+    if (ideationSelectedIndex === -1) { toast('Select an Ideation theme as Final first.', 'error'); return; }
+    const eventType = $('#ideation-event-type').value;
+    const ideationTheme = ideationThemes[ideationSelectedIndex];
+    let variationCount = parseInt($('#artreq-variation-count').value, 10);
+    if (!Number.isFinite(variationCount)) variationCount = 3;
+    variationCount = Math.max(1, Math.min(10, variationCount));
+    $('#artreq-variation-count').value = variationCount;
+
+    const btn = $('#artreq-generate-btn');
+    btn.disabled = true; btn.textContent = `Generating ${variationCount} variation${variationCount === 1 ? '' : 's'}...`;
+    log(`Generating ${variationCount} Art Requirement variation(s) for "${ideationTheme.theme_name}"...`);
+
+    const res = await window.api.artReqGenerate({ eventType, ideationTheme, variationCount });
+    btn.disabled = false; btn.textContent = 'Generate Art Requirement Variations';
+
+    if (!res.success) { log(`Art Requirement generation failed: ${res.output}`, 'console-log-error'); toast('Generation failed: ' + res.output, 'error'); return; }
+    try {
+      const parsed = JSON.parse(res.stdout);
+      if (parsed.error) { log(`Error: ${parsed.error}`, 'console-log-error'); toast(parsed.error, 'error'); return; }
+      artReqVariations = parsed.variations;
+      artReqDraftPaths = parsed.draft_paths || [];
+      artReqSelectedIndex = -1;
+      artReqSavedPath = '';
+      renderArtReqResults();
+      log(`Generated ${artReqVariations.length} Art Requirement variation(s) via ${parsed.provider === 'ollama' ? 'local Ollama' : 'Claude'}.`, 'console-log-success');
+      toast(`${artReqVariations.length} variation(s) generated.`, 'success');
+    } catch (e) {
+      log(`Error parsing Art Requirement response: ${e.message}`, 'console-log-error');
+      toast('Could not parse the generated variations.', 'error');
+    }
+  });
+
+  async function regenerateArtReqVariation(idx) {
+    const feedback = $(`#artreq-feedback-${idx}`).value.trim();
+    if (!feedback) { toast('Enter feedback before regenerating.', 'error'); return; }
+    const eventType = $('#ideation-event-type').value;
+    const variation = artReqVariations[idx];
+
+    const btn = document.querySelector(`.artreq-regen-btn[data-idx="${idx}"]`);
+    if (btn) { btn.disabled = true; btn.textContent = 'Regenerating...'; }
+    log(`Regenerating Art Requirement variation "${variation.title}" with feedback...`);
+
+    const res = await window.api.artReqRegenerate({ eventType, variation, variationIndex: idx, feedback });
+
+    if (!res.success) {
+      log(`Regeneration failed: ${res.output}`, 'console-log-error');
+      toast('Regeneration failed: ' + res.output, 'error');
+      if (btn) { btn.disabled = false; btn.textContent = 'Submit Feedback & Regenerate'; }
+      return;
+    }
+    try {
+      const parsed = JSON.parse(res.stdout);
+      if (parsed.error) { log(`Error: ${parsed.error}`, 'console-log-error'); toast(parsed.error, 'error'); return; }
+      artReqVariations[idx] = parsed.variation;
+      if (parsed.draft_path) artReqDraftPaths[idx] = parsed.draft_path;
+      renderArtReqResults();
+      log(`Variation "${parsed.variation.title}" regenerated. Feedback saved for future runs.`, 'console-log-success');
+      toast('Variation regenerated — feedback stored for next time.', 'success');
+    } catch (e) {
+      log(`Error parsing regeneration response: ${e.message}`, 'console-log-error');
+      toast('Could not parse the regenerated variation.', 'error');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = 'Submit Feedback & Regenerate'; }
+    }
+  }
+
+  async function selectArtReqVariation(idx) {
+    const eventType = $('#ideation-event-type').value;
+    const variation = artReqVariations[idx];
+    const refName = ideationThemes[ideationSelectedIndex].internal_reference_name;
+
+    const btn = document.querySelector(`.artreq-select-btn[data-idx="${idx}"]`);
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
+    log(`Saving Art Requirement variation "${variation.title}" as final...`);
+
+    const res = await window.api.artReqSaveFinal({ eventType, refName, variation });
+
+    if (res.success) {
+      artReqSelectedIndex = idx;
+      artReqSavedPath = res.output;
+      log(`Saved to ${res.output}`, 'console-log-success');
+      toast('Saved as the final Art Requirement for this event.', 'success');
+      renderArtReqResults();
+    } else {
+      log(`Could not save the final Art Requirement: ${res.output}`, 'console-log-error');
+      toast('Save failed: ' + res.output, 'error');
+      if (btn) { btn.disabled = false; btn.textContent = 'Select as Final'; }
+    }
+  }
+
   // ---------------- Init ----------------
   async function init() {
     const data = await window.api.getConfig();
@@ -1248,6 +1731,9 @@
     pipelineSteps = data.pipelineSteps;
 
     $('#unity-exe-input').value = cfg.unityExePath || '';
+    $('#anthropic-key-input').value = cfg.anthropicApiKey || '';
+    $('#ollama-base-url-input').value = cfg.ollamaBaseUrl || '';
+    $('#ollama-model-input').value = cfg.ollamaModel || 'qwen3:32b';
 
     populateBranchWorkspaceSelects();
     renderBranchPathRows();

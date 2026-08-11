@@ -102,16 +102,21 @@ def main():
         payload = json.load(f)
 
     event_id = str(payload["event_id"])
-    event_name = payload["event_name"]  # e.g. "AliceInWonderland"
+    event_name = payload["event_name"]  # e.g. "AliceInWonderland" — Game Mode 1's event
     game_mode_1 = payload["game_mode_1"]  # e.g. "Merge"
     game_mode_2 = payload["game_mode_2"]  # e.g. "Blocks"
+    event_id_2 = str(payload["event_id_2"])  # Game Mode 2's own event, may differ from event_id
+    event_name_2 = payload["event_name_2"]
     price_frame = payload.get("price_frame", "4")
     price_cardback = payload.get("price_cardback", "10")
 
-    id4 = event_id[:4]
+    # Event ID is 8-digit yyyymmNN (e.g. 20260501) — alias uses YYMM, i.e. chars 2-6, not the leading century.
+    id4 = event_id[2:6]
+    id4_2 = event_id_2[2:6]
     alias_base = f"{id4}{event_name}"
     frame1_alias = f"{alias_base}{game_mode_1}"
-    frame2_alias = f"{alias_base}{game_mode_2}"
+    frame2_alias = f"{id4_2}{event_name_2}{game_mode_2}"
+    # Card Back is always keyed off Game Mode 1's event.
     cardback_alias = alias_base
 
     icon_path = os.path.join(design_path, "icon.xlsx")
@@ -229,7 +234,9 @@ def main():
         insert_at = if_last_row + 1
         for i, (item_id, alias) in enumerate(zip(new_5xxx_ids, [frame1_alias, frame2_alias])):
             r = insert_at + i
-            row_vals = {1: item_id, 2: alias, 3: "DECO_PANEL_TIP_DECO_SHOP", 6: "Deco_Shop", 7: True}
+            # col 7 (获取参数) stays blank for Deco_Shop rows (only Star_Pass etc. use it);
+            # col 8 (不支持预览) is "=TRUE()", matching every existing Deco_Shop row.
+            row_vals = {1: item_id, 2: alias, 3: "DECO_PANEL_TIP_DECO_SHOP", 6: "Deco_Shop", 8: "=TRUE()"}
             for c in range(1, ws_if.max_column + 1):
                 dst_c = ws_if.cell(r, c)
                 dst_c.value = row_vals.get(c)
@@ -240,7 +247,12 @@ def main():
         icb_last_row = get_real_last_row(ws_icb)
         icb_template = [ws_icb.cell(icb_last_row, c) for c in range(1, ws_icb.max_column + 1)]
         r = icb_last_row + 1
-        row_vals = {1: new_6xxx_id, 2: cardback_alias, 3: cardback_alias, 4: "DECO_PANEL_TIP_DECO_SHOP"}
+        # col 6 (获取方式)/col 8 (不支持预览) match every existing Deco_Shop row;
+        # col 7 (获取参数) stays blank, same as item_frame.
+        row_vals = {
+            1: new_6xxx_id, 2: cardback_alias, 3: cardback_alias, 4: "DECO_PANEL_TIP_DECO_SHOP",
+            6: "Deco_Shop", 8: "=TRUE()",
+        }
         for c in range(1, ws_icb.max_column + 1):
             dst_c = ws_icb.cell(r, c)
             dst_c.value = row_vals.get(c)
@@ -287,21 +299,38 @@ def main():
             dst_c.value = row_vals.get(c)
             copy_cell_format(atlas_template[c - 1], dst_c)
 
-        # === 7. card.xlsx -> card_style: clone the most recent skin's 18-row
-        # block (offsets 0,1-13,28-31 — no legacy 18th "随机SkipBo卡背" row,
-        # that mechanic was discontinued after base 440000, confirmed against
-        # every skin added since). ===
+        # === 7. card.xlsx -> card_style: clone a skin's 18-row block (offsets
+        # 0,1-13,28-31 — no legacy 18th "随机SkipBo卡背" row, that mechanic was
+        # discontinued after base 440000, confirmed against every skin since). ===
         ws_style = wb_card["card_style"]
         template_offsets = [0] + list(range(1, 14)) + [28, 29, 30, 31]
-        template_rows = []
-        for r in range(2, ws_style.max_row + 1):
-            idv = ws_style.cell(r, 1).value
-            if isinstance(idv, (int, float)) and (idv // 10000) * 10000 == last_base:
-                template_rows.append(r)
+
+        def rows_for_base(base):
+            rows = []
+            for r in range(2, ws_style.max_row + 1):
+                idv = ws_style.cell(r, 1).value
+                if isinstance(idv, (int, float)) and (idv // 10000) * 10000 == base:
+                    rows.append(r)
+            return rows
+
+        # The immediately-previous skin can be a one-off special-art event with its
+        # own dedicated per-skin card-back images (e.g. alice2608's "alice2608皮肤局内
+        # 卡背N", registered only for that skin) instead of the shared generic asset
+        # ("皮肤配置卡面通用..."). Cloning that verbatim and renaming the token would
+        # reference an image nobody registered for the new skin. Every skin back to
+        # base 10000 uses the generic asset except that kind of one-off — so walk
+        # backward to the nearest base whose col7 is generic before using it as the
+        # content template. ID numbering (new_base) still continues from last_base.
+        template_base = last_base
+        template_rows = rows_for_base(template_base)
+        while template_rows and not str(ws_style.cell(template_rows[0], 7).value or "").startswith("皮肤配置"):
+            template_base -= 10000
+            template_rows = rows_for_base(template_base)
+
         if len(template_rows) != len(template_offsets):
             raise ValueError(
                 f"card_style: expected {len(template_offsets)} rows for template base "
-                f"{last_base}, found {len(template_rows)} — refusing to guess, check the sheet."
+                f"{template_base}, found {len(template_rows)} — refusing to guess, check the sheet."
             )
         old_alias_prefix = str(ws_style.cell(template_rows[0], 2).value)
         # Strip the trailing "卡面1..." descriptor to find the bare skin-name token to swap.
@@ -348,7 +377,9 @@ def main():
             )
         new_10xxx_id = last_10xxx_id + 1
         shift_rows_down(ws_shopitem, frame_series_divider, 1)
-        row_vals = {1: new_10xxx_id, 3: "卡牌", 4: str(new_6xxx_id), 6: price_cardback}
+        # col 1 (皮肤商品ID) must be a string, matching every existing row —
+        # a raw int here breaks the client's ID lookup against the 皮肤商店 shelf list.
+        row_vals = {1: str(new_10xxx_id), 3: "卡牌", 4: str(new_6xxx_id), 6: price_cardback}
         for c in range(1, ws_shopitem.max_column + 1):
             dst_c = ws_shopitem.cell(frame_series_divider, c)
             dst_c.value = row_vals.get(c)
@@ -367,7 +398,7 @@ def main():
         new_20xxx_ids = [last_20xxx_id + 1, last_20xxx_id + 2]
         for i, (sku_id, item_id) in enumerate(zip(new_20xxx_ids, new_5xxx_ids)):
             r = insert_at + i
-            row_vals = {1: sku_id, 3: "头像框", 4: str(item_id), 6: price_frame}
+            row_vals = {1: str(sku_id), 3: "头像框", 4: str(item_id), 6: price_frame}
             for c in range(1, ws_shopitem.max_column + 1):
                 dst_c = ws_shopitem.cell(r, c)
                 dst_c.value = row_vals.get(c)
@@ -395,6 +426,11 @@ def main():
                 print(f"WARNING: source asset not found, skipping copy: {src}")
                 return
             dst = os.path.join(folder, new_name)
+            if os.path.exists(dst):
+                # An artist may have already pre-positioned real art at this filename
+                # ahead of the data entry catching up — never clobber it with a placeholder.
+                print(f"WARNING: destination asset already exists, skipping copy (not overwriting real art): {dst}")
+                return
             shutil.copy2(src, dst)
             meta_src = src + ".meta"
             if os.path.exists(meta_src):

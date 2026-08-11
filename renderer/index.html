@@ -62,6 +62,10 @@
         <span class="icon-chip chip-emerald"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="10" width="18" height="10" rx="1"/><path d="M3 10 5 4h14l2 6M9 14a3 3 0 0 0 6 0"/></svg></span>
         <span class="btn-text">Endless Treasure</span>
       </button>
+      <button class="menu-btn chip-yellow" data-view="ideation-view" title="Ideation">
+        <span class="icon-chip chip-yellow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a6 6 0 0 0-4 10.5c.6.6 1 1.4 1 2.3V16h6v-1.2c0-.9.4-1.7 1-2.3A6 6 0 0 0 12 2z"/></svg></span>
+        <span class="btn-text">Ideation</span>
+      </button>
 
       <div class="sidebar-spacer"></div>
 
@@ -244,10 +248,10 @@
       <div class="stacked-card">
         <h2 class="card-title">Event Configuration</h2>
         <div class="form-row">
-          <label class="form-label">Event ID</label>
+          <label class="form-label">Event ID (Game Mode 1)</label>
           <input type="text" id="decoshop-event-id-display" class="text-input mono" disabled title="Reused from the Event ID field on the Main Events tab" />
         </div>
-        <div class="form-row"><label class="form-label" for="decoshop-event-name">Event Name</label><input type="text" id="decoshop-event-name" class="text-input mono" placeholder="e.g. AliceInWonderland" title="No spaces; used verbatim in every alias" /></div>
+        <div class="form-row"><label class="form-label" for="decoshop-event-name">Event Name (Game Mode 1)</label><input type="text" id="decoshop-event-name" class="text-input mono" placeholder="e.g. AliceInWonderland" title="No spaces; used verbatim in every alias. Also used for the Card Back alias." /></div>
         <div class="form-row">
           <label class="form-label" for="decoshop-mode-1">Game Mode 1</label>
           <select id="decoshop-mode-1" class="text-input">
@@ -255,8 +259,12 @@
             <option value="Blocks">Blocks</option>
             <option value="Sim">Sim</option>
             <option value="Sort">Sort</option>
+            <option value="Dessert">Dessert</option>
           </select>
         </div>
+        <div class="board-divider"></div>
+        <div class="form-row"><label class="form-label" for="decoshop-event-id-2">Event ID (Game Mode 2)</label><input type="text" id="decoshop-event-id-2" class="text-input mono" placeholder="e.g. 20260802" title="8-digit ID: yyyymmNN — this game mode's own event, may differ from Game Mode 1's" /></div>
+        <div class="form-row"><label class="form-label" for="decoshop-event-name-2">Event Name (Game Mode 2)</label><input type="text" id="decoshop-event-name-2" class="text-input mono" placeholder="e.g. AliceInWonderland" title="No spaces; may differ from Game Mode 1's event name" /></div>
         <div class="form-row">
           <label class="form-label" for="decoshop-mode-2">Game Mode 2</label>
           <select id="decoshop-mode-2" class="text-input">
@@ -264,8 +272,10 @@
             <option value="Merge">Merge</option>
             <option value="Sim">Sim</option>
             <option value="Sort">Sort</option>
+            <option value="Dessert">Dessert</option>
           </select>
         </div>
+        <div class="board-divider"></div>
         <div class="form-row"><label class="form-label" for="decoshop-price-frame">Frame Price</label><input type="text" id="decoshop-price-frame" class="text-input mono" value="4" /></div>
         <div class="form-row"><label class="form-label" for="decoshop-price-cardback">Card Back Price</label><input type="text" id="decoshop-price-cardback" class="text-input mono" value="10" /></div>
       </div>
@@ -516,6 +526,57 @@
       </div>
     </section>
 
+    <!-- IDEATION VIEW -->
+    <section id="ideation-view" class="main-container view" aria-labelledby="ideation-heading">
+      <div class="header-section">
+        <h1 id="ideation-heading" class="header-title">Event Ideation</h1>
+        <p class="header-subtitle">Generates distinct 1-Pager theme drafts for the 35+ US women player base, following the studio's real Event_Ideation_1Pager.md template. Every draft is written to disk under ideationData so feedback happens against the actual document. Uses the Claude API when a key is set in Settings, otherwise falls back to a local Ollama server if one is configured there.</p>
+      </div>
+
+      <div class="stacked-card">
+        <h2 class="card-title">New Ideation Run</h2>
+        <div class="form-row">
+          <label class="form-label" for="ideation-event-type">Event Type</label>
+          <select id="ideation-event-type" class="text-input">
+            <option value="Blocks">Blocks</option>
+            <option value="Sim">Sim</option>
+            <option value="Sort">Sort</option>
+            <option value="Merge" selected>Merge</option>
+            <option value="Dessert">Dessert</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label class="form-label" for="ideation-duration">Sprint Duration (days)</label>
+          <input type="number" id="ideation-duration" class="text-input" min="1" value="14" />
+        </div>
+        <div class="form-row">
+          <label class="form-label" for="ideation-theme-count">Number of Themes</label>
+          <input type="number" id="ideation-theme-count" class="text-input" min="1" max="10" value="5" />
+        </div>
+        <div class="board-divider"></div>
+        <div class="execution-footer" style="justify-content:flex-end;">
+          <button id="ideation-generate-btn" class="primary-btn">Generate Themes</button>
+        </div>
+      </div>
+
+      <div id="ideation-results"></div>
+
+      <div id="artreq-trigger-card" class="stacked-card" style="display:none;">
+        <h2 class="card-title">Art Requirement</h2>
+        <p class="settings-hint">Once an Ideation theme is finalized above, generate Art Requirement variations from it — the real per-scene/character handoff spec the Art team builds from, following the studio's actual document structure (verified against real Merge/Dessert/Blocks/Sim examples). Sort has a real example in ideationData too, but it's still unread (exceeds this tool's 20MB PDF limit) — Sort variations carry an explicit inferred-content warning until that's resolved.</p>
+        <div class="form-row">
+          <label class="form-label" for="artreq-variation-count">Number of Variations</label>
+          <input type="number" id="artreq-variation-count" class="text-input" min="1" max="10" value="3" />
+        </div>
+        <div class="board-divider"></div>
+        <div class="execution-footer" style="justify-content:flex-end;">
+          <button id="artreq-generate-btn" class="primary-btn">Generate Art Requirement Variations</button>
+        </div>
+      </div>
+
+      <div id="artreq-results"></div>
+    </section>
+
     <!-- SETTINGS VIEW -->
     <section id="settings-view" class="main-container view" aria-labelledby="settings-heading">
       <div class="header-section">
@@ -554,6 +615,33 @@
           <button class="secondary-btn" id="browse-unity-exe-btn">Browse</button>
         </div>
         <p class="settings-hint">Needed only for step 2 (ProtoToLua), run headlessly via <code>Unity.exe -batchmode -executeMethod ProtoTool.ProtoToLua</code> against the active branch's Unity project.</p>
+      </div>
+
+      <div class="stacked-card">
+        <h2 class="card-title">Ideation (Claude API)</h2>
+        <div class="form-row">
+          <label class="form-label" for="anthropic-key-input">Anthropic API Key</label>
+          <input type="password" id="anthropic-key-input" class="text-input mono" placeholder="sk-ant-api03-..." autocomplete="off" />
+          <button class="secondary-btn small" id="toggle-anthropic-key-btn" type="button">Show</button>
+        </div>
+        <p class="settings-hint">A metered Anthropic Console API key — separate from any claude.ai subscription, billed per call (a 5-theme generation run costs roughly a few cents). Stored locally in this app's config; never sent anywhere except api.anthropic.com. When this is set, it's always used over the local fallback below.</p>
+      </div>
+
+      <div class="stacked-card">
+        <h2 class="card-title">Ideation — Local Fallback (Ollama)</h2>
+        <div class="form-row">
+          <label class="form-label" for="ollama-base-url-input">Ollama Base URL</label>
+          <input type="text" id="ollama-base-url-input" class="text-input mono" placeholder="http://192.168.1.50:11434" autocomplete="off" />
+        </div>
+        <div class="form-row">
+          <label class="form-label" for="ollama-model-input">Model</label>
+          <input type="text" id="ollama-model-input" class="text-input mono" placeholder="qwen3:32b" />
+        </div>
+        <div class="execution-footer" style="justify-content:space-between;">
+          <span id="ollama-test-result" class="settings-hint"></span>
+          <button class="secondary-btn small" id="ollama-test-btn" type="button">Test Connection</button>
+        </div>
+        <p class="settings-hint">Used automatically for the Ideation tab only when no Anthropic API key is set above — e.g. a shared Ollama server on the office LAN running <code>qwen3:32b</code>. No API key, no per-call cost, but noticeably less polished output than Claude. Add an Anthropic key any time to switch back.</p>
       </div>
 
       <div class="stacked-card">

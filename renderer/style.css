@@ -80,6 +80,7 @@
 #full-screen-gift-view  { --accent-1: #6366f1; --accent-2: #7c5cfc; --accent-glow: rgba(99,102,241,0.4); }
 #trivia-challenge-view  { --accent-1: #38bdf8; --accent-2: var(--hue-blue); --accent-glow: rgba(56,189,248,0.4); }
 #endless-treasure-view  { --accent-1: #34d399; --accent-2: #2dd4bf; --accent-glow: rgba(52,211,153,0.4); }
+#ideation-view          { --accent-1: #fbbf24; --accent-2: #f59e0b; --accent-glow: rgba(251,191,36,0.4); }
 
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; height: 100%; }
@@ -666,3 +667,32 @@ select.text-input:hover { background-color: rgba(255,255,255,0.1); }
   .stacked-card { padding: 16px; }
   .preview-grid .preview-cell, .preview-grid.four .preview-cell { width: 100%; }
 }
+
+/* ---------------- Ideation tab ---------------- */
+.chip-yellow { --hue-a: #fbbf24; --hue-b: #fde68a; --hue-glow: rgba(251,191,36,0.5); }
+
+.secondary-btn.small { padding: 8px 15px; font-size: 12.5px; }
+
+#ideation-results { display: flex; flex-direction: column; gap: 16px; margin-top: 16px; }
+
+.ideation-card { border-width: 1px; transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease); }
+.ideation-card.ideation-selected { border-color: var(--accent-1); box-shadow: 0 0 0 1px var(--accent-1), 0 8px 24px var(--accent-glow); }
+
+.ideation-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
+
+.ideation-list { margin: 2px 0 10px; padding-left: 18px; font-size: 12.5px; color: var(--fg-muted); }
+.ideation-list li { margin: 2px 0; }
+
+.ideation-feedback { min-height: 44px; resize: vertical; font-family: var(--font-sans); }
+
+.fit-pill {
+  display: inline-block; padding: 2px 10px; border-radius: 999px;
+  font-size: 12px; font-weight: 700; width: fit-content;
+}
+.fit-green  { background: rgba(52,211,153,0.16); color: #34d399; }
+.fit-yellow { background: rgba(251,191,36,0.16); color: #fbbf24; }
+.fit-red    { background: rgba(251,113,133,0.16); color: #fb7185; }
+
+#ollama-test-result { font-weight: 600; }
+#ollama-test-result.ok { color: var(--success); }
+#ollama-test-result.error { color: var(--danger); }

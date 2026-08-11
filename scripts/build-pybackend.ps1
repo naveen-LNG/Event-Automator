@@ -36,8 +36,13 @@ $pkgDir = Join-Path $env:TEMP "pyembed_pkgs_$pyVersion"
 if (Test-Path $pkgDir) { Remove-Item $pkgDir -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $pkgDir | Out-Null
 
-Write-Host "Fetching openpyxl + et_xmlfile (pure-Python wheels, no compiler needed)..."
-python -m pip download --no-deps --only-binary=:all: --python-version 314 --platform win_amd64 -d $pkgDir openpyxl et_xmlfile
+# Full dependency resolution (not --no-deps) so pip pulls httpx/pydantic/etc.
+# alongside anthropic itself. pydantic-core is the one compiled (non-pure-Python)
+# wheel in this tree; verified cp314-win_amd64 wheels exist on PyPI as of this
+# writing (pydantic-core 2.46.4). If a future transitive dep drops win_amd64/py314
+# wheels, this download step fails loudly here rather than at runtime.
+Write-Host "Fetching backend dependencies (openpyxl, et_xmlfile, anthropic + its dependency tree)..."
+python -m pip download --only-binary=:all: --python-version 314 --platform win_amd64 -d $pkgDir openpyxl et_xmlfile anthropic
 
 Get-ChildItem $pkgDir -Filter "*.whl" | ForEach-Object {
     $asZip = [System.IO.Path]::ChangeExtension($_.FullName, ".zip")
