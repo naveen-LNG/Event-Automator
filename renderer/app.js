@@ -20,6 +20,10 @@
   let artReqDraftPaths = [];
   let artReqSelectedIndex = -1;
   let artReqSavedPath = '';
+  // Shared across designers via the ideationData folder — refreshed after
+  // every generate/regenerate/retract so a colleague's note shows up here.
+  let ideationEntries = [];
+  let ideationLessons = [];
   let isExecuting = false;
 
   const $ = (sel) => document.querySelector(sel);
@@ -50,10 +54,48 @@
   }
 
   // ---------------- Navigation ----------------
-  let currentView = 'main-events-view';
+  let currentView = 'sprint-view';
+
+  // "Regular Updates" collapsible group. The count is read from the DOM
+  // rather than hardcoded, so adding a destination to the group in the
+  // markup can't leave a stale number behind.
+  const navGroup = $('#nav-group-regular');
+  const navGroupItems = $('#nav-group-regular-items');
+  const navGroupHeader = navGroup && navGroup.querySelector('.nav-group-header');
+
+  if (navGroup && navGroupHeader) {
+    $('#nav-group-regular-count').textContent =
+      navGroupItems.querySelectorAll('.menu-btn').length;
+
+    navGroupHeader.addEventListener('click', () => {
+      const collapsed = navGroup.classList.toggle('collapsed');
+      navGroupHeader.setAttribute('aria-expanded', String(!collapsed));
+    });
+  }
+
+  // switchView only swaps the panes; it deliberately clears every active-btn
+  // and leaves re-marking to the click handler. Anything navigating
+  // programmatically (startup, the sprint board's Open buttons) needs this
+  // wrapper, or the sidebar ends up with nothing highlighted.
+  function navigateTo(viewId) {
+    switchView(viewId);
+    const btn = document.querySelector(`.menu-btn[data-view="${viewId}"]`);
+    if (btn) btn.classList.add('active-btn');
+  }
+
+  // Never let the active destination hide inside a collapsed group.
+  function revealGroupFor(viewId) {
+    if (!navGroup || !navGroupItems) return;
+    const inGroup = !!navGroupItems.querySelector(`.menu-btn[data-view="${viewId}"]`);
+    if (inGroup && navGroup.classList.contains('collapsed')) {
+      navGroup.classList.remove('collapsed');
+      navGroupHeader.setAttribute('aria-expanded', 'true');
+    }
+  }
 
   function switchView(viewId, title) {
     currentView = viewId;
+    revealGroupFor(viewId);
     $$('.view').forEach(v => v.style.display = 'none');
     $(`#${viewId}`).style.display = 'flex';
     $$('.menu-btn').forEach(b => b.classList.remove('active-btn'));
@@ -70,6 +112,8 @@
     if (viewId === 'full-screen-gift-view') loadFullScreenGift();
     if (viewId === 'trivia-challenge-view') loadTrivia();
     if (viewId === 'endless-treasure-view') loadEndlessTreasure();
+    if (viewId === 'profile-view') refreshProfiles();
+    if (viewId === 'sprint-view' && !sprintData) loadSprintBoard();
   }
 
   // Re-fetch whichever tab is currently open — called after branch/workspace
@@ -86,9 +130,11 @@
 
   $$('.menu-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      $$('.menu-btn').forEach(b => b.classList.remove('active-btn'));
-      btn.classList.add('active-btn');
+      // switchView() clears every active-btn itself, so the highlight has to
+      // be applied AFTER it — marking first meant switchView immediately
+      // stripped it and every click left the sidebar with nothing lit.
       switchView(btn.dataset.view, btn.dataset.title);
+      btn.classList.add('active-btn');
     });
   });
 
@@ -227,6 +273,194 @@
       cfg.unityExePath = picked;
       await window.api.saveConfig({ unityExePath: picked });
     }
+  });
+
+  // ---------------- Profile & avatars ----------------
+  const AVATAR_COLORS = ['#7c5cfc', '#34d399', '#fbbf24', '#fb7185', '#38bdf8', '#f472b6', '#2dd4bf', '#fb923c'];
+  let teamProfiles = {};       // author_id -> profile, from the shared folder
+  let draftAvatarColor = '';
+  let draftAvatarImage = '';
+
+  function initialsOf(name) {
+    const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+    if (!parts.length) return '?';
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  }
+
+  // Deterministic fallback so a colleague who never set a colour still gets a
+  // stable one rather than changing hue between renders.
+  function autoColor(seed) {
+    let h = 0;
+    for (const ch of String(seed || '')) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    return AVATAR_COLORS[h % AVATAR_COLORS.length];
+  }
+
+  function avatarHtml(authorId, displayName, size) {
+    const p = teamProfiles[authorId] || {};
+    const name = p.display_name || displayName || authorId || '?';
+    const img = p.avatar_image || (authorId === cfg.authorId ? draftAvatarImage : '');
+    const color = p.avatar_color || (authorId === cfg.authorId ? draftAvatarColor : '') || autoColor(authorId || name);
+    const px = size || 26;
+    const style = `width:${px}px;height:${px}px;font-size:${Math.round(px * 0.4)}px;`;
+    if (img) {
+      return `<span class="avatar" style="${style}background-image:url('${escapeHtml(img)}');background-size:cover;background-position:center;" title="${escapeHtml(name)}"></span>`;
+    }
+    return `<span class="avatar" style="${style}background:${escapeHtml(color)};" title="${escapeHtml(name)}">${escapeHtml(initialsOf(name))}</span>`;
+  }
+
+  function renderProfileEditor() {
+    const name = $('#author-name-input').value || cfg.authorName || '';
+    const color = draftAvatarColor || autoColor(cfg.authorId);
+    const preview = $('#profile-avatar-preview');
+    if (draftAvatarImage) {
+      preview.style.backgroundImage = `url('${draftAvatarImage}')`;
+      preview.style.backgroundSize = 'cover';
+      preview.style.backgroundPosition = 'center';
+      preview.style.background = `url('${draftAvatarImage}') center/cover`;
+      preview.textContent = '';
+    } else {
+      preview.style.backgroundImage = '';
+      preview.style.background = color;
+      preview.textContent = initialsOf(name);
+    }
+    $('#sidebar-avatar').innerHTML = avatarHtml(cfg.authorId, cfg.authorName, 22);
+    $('#sidebar-profile-name').textContent = cfg.authorName || 'Profile';
+
+    $('#avatar-swatches').innerHTML = AVATAR_COLORS.map(c =>
+      `<button type="button" class="avatar-swatch${c === color ? ' selected' : ''}" data-color="${c}" style="background:${c};" title="${c}"></button>`
+    ).join('');
+    $$('.avatar-swatch').forEach(b => b.addEventListener('click', () => {
+      draftAvatarColor = b.dataset.color;
+      draftAvatarImage = '';   // a picked colour means "use initials"
+      renderProfileEditor();
+    }));
+  }
+
+  function renderTeamRoster() {
+    const ids = Object.keys(teamProfiles);
+    const el = $('#team-roster');
+    if (!el) return;
+    if (!ids.length) {
+      el.innerHTML = '<p class="settings-hint">No profiles found yet — yours will appear here once you save it.</p>';
+      return;
+    }
+    el.innerHTML = ids.map(id => {
+      const p = teamProfiles[id];
+      return `<div class="team-row">${avatarHtml(id, p.display_name, 30)}
+        <div><div class="lesson-text">${escapeHtml(p.display_name)}${id === cfg.authorId ? ' <em>(you)</em>' : ''}</div>
+        <div class="feedback-when mono">${escapeHtml(id)}</div></div></div>`;
+    }).join('');
+  }
+
+  async function refreshProfiles() {
+    const res = await window.api.profileList();
+    if (res.success) {
+      teamProfiles = res.data.profiles || {};
+      renderTeamRoster();
+      renderProfileEditor();
+    }
+  }
+
+  $('#author-name-input').addEventListener('input', renderProfileEditor);
+
+  // Downscale before storing: the image is inlined into the profile JSON that
+  // syncs to everyone, so a 4MB camera photo would be 4MB in every teammate's
+  // folder. 96px is plenty for a 30px avatar on a HiDPI screen.
+  $('#avatar-upload-btn').addEventListener('click', () => $('#avatar-file-input').click());
+  $('#avatar-file-input').addEventListener('change', (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const S = 96;
+        const canvas = document.createElement('canvas');
+        canvas.width = S; canvas.height = S;
+        const ctx = canvas.getContext('2d');
+        // Cover-crop so non-square images aren't squashed.
+        const scale = Math.max(S / img.width, S / img.height);
+        const w = img.width * scale, h = img.height * scale;
+        ctx.drawImage(img, (S - w) / 2, (S - h) / 2, w, h);
+        draftAvatarImage = canvas.toDataURL('image/png');
+        renderProfileEditor();
+        log(`Avatar image loaded (${Math.round(draftAvatarImage.length / 1024)} KB after resize). Save Profile to share it.`);
+      };
+      img.onerror = () => toast('That file could not be read as an image.', 'error');
+      img.src = reader.result;
+    };
+    reader.onerror = () => toast('Could not read that file.', 'error');
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  });
+
+  $('#avatar-clear-btn').addEventListener('click', () => {
+    draftAvatarImage = '';
+    renderProfileEditor();
+  });
+
+  $('#profile-save-btn').addEventListener('click', async () => {
+    const name = $('#author-name-input').value.trim();
+    if (!name) { toast('Enter a display name.', 'error'); return; }
+    const btn = $('#profile-save-btn');
+    btn.disabled = true; btn.textContent = 'Saving...';
+    const res = await window.api.profileSave({
+      displayName: name,
+      avatarColor: draftAvatarColor || autoColor(cfg.authorId),
+      avatarImage: draftAvatarImage
+    });
+    btn.disabled = false; btn.textContent = 'Save Profile';
+
+    cfg.authorName = name;
+    cfg.avatarColor = draftAvatarColor;
+    cfg.avatarImage = draftAvatarImage;
+
+    if (res.success) {
+      $('#profile-save-status').textContent = 'Saved and shared with the team.';
+      log(`Profile saved as "${name}".`, 'console-log-success');
+      toast('Profile saved.', 'success');
+      await refreshProfiles();
+    } else {
+      $('#profile-save-status').textContent = 'Saved locally, but not shared — check the ideation data folder in Settings.';
+      log(`Profile saved locally but not to the shared folder: ${res.output}`, 'console-log-error');
+      toast('Saved locally only — shared folder unreachable.', 'error');
+      renderProfileEditor();
+    }
+  });
+
+  async function refreshIdeationDataStatus() {
+    const info = await window.api.ideationDataFolderInfo();
+    $('#ideation-data-path-input').value = info.isDefault ? '' : info.root;
+    $('#ideation-data-path-input').placeholder = info.isDefault
+      ? `(default — local only, not shared) ${info.root}`
+      : '';
+    const el = $('#ideation-data-status');
+    if (!info.exists) {
+      el.textContent = `⚠ No Events folder found at ${info.root} — generation will create it, but check the path is right.`;
+    } else if (!info.templatesFound) {
+      el.textContent = `⚠ Found the folder, but no TEMPLATES/Event_Ideation_1Pager.md — documents will be generated without the studio template to follow.`;
+    } else {
+      el.textContent = info.isDefault
+        ? 'Using the local folder bundled with this app. Nothing is shared with other designers yet.'
+        : `Shared folder in use. Templates found — this is the right shape of folder.`;
+    }
+  }
+
+  $('#browse-ideation-data-btn').addEventListener('click', async () => {
+    const picked = await window.api.ideationBrowseDataFolder();
+    if (!picked) return;
+    cfg.ideationDataPath = picked;
+    await window.api.saveConfig({ ideationDataPath: picked });
+    await refreshIdeationDataStatus();
+    log(`Ideation data folder set to ${picked}`);
+  });
+
+  $('#reset-ideation-data-btn').addEventListener('click', async () => {
+    cfg.ideationDataPath = '';
+    await window.api.saveConfig({ ideationDataPath: '' });
+    await refreshIdeationDataStatus();
+    log('Ideation data folder reset to the local default.');
   });
 
   $('#anthropic-key-input').addEventListener('change', async (e) => {
@@ -875,23 +1109,33 @@
   });
 
   // ---------------- Decoration Shop tab ----------------
+  // Shared by the Alias Preview card and the PVP Bots Card Back Update section below it —
+  // both need the exact same frame1/frame2/cardback aliases this cycle is about to create.
+  function computeDecoShopAliases() {
+    const eventId = ($('#event-id-input').value || '').trim();
+    // Event ID is 8-digit yyyymmNN (e.g. 20260501) — alias uses YYMM, i.e. chars 2-6, not the leading century.
+    const id4 = eventId.slice(2, 6) || '';
+    const name = ($('#decoshop-event-name').value || '').trim();
+    const mode1 = $('#decoshop-mode-1').value;
+    const mode2 = $('#decoshop-mode-2').value;
+    const eventId2 = ($('#decoshop-event-id-2').value || '').trim();
+    const id4_2 = eventId2.slice(2, 6) || '';
+    const name2 = ($('#decoshop-event-name-2').value || '').trim();
+    return {
+      frame1Alias: `${id4 || '[ID]'}${name || '[EventName]'}${mode1}`,
+      frame2Alias: `${id4_2 || '[ID2]'}${name2 || '[EventName2]'}${mode2}`,
+      cardbackAlias: `${id4 || '[ID]'}${name || '[EventName]'}`,
+      valid: !!(id4 && name && id4_2 && name2)
+    };
+  }
+
   function updateDecoShopPreview() {
     const eventId = ($('#event-id-input').value || '').trim();
     $('#decoshop-event-id-display').value = eventId;
-    // Event ID is 8-digit yyyymmNN (e.g. 20260501) — alias uses YYMM, i.e. chars 2-6, not the leading century.
-    const id4 = eventId.slice(2, 6) || '[ID]';
-    const name = ($('#decoshop-event-name').value || '').trim() || '[EventName]';
-    const mode1 = $('#decoshop-mode-1').value;
-    const mode2 = $('#decoshop-mode-2').value;
-
-    const eventId2 = ($('#decoshop-event-id-2').value || '').trim();
-    const id4_2 = eventId2.slice(2, 6) || '[ID2]';
-    const name2 = ($('#decoshop-event-name-2').value || '').trim() || '[EventName2]';
-
-    $('#decoshop-preview-frame1').textContent = `${id4}${name}${mode1}`;
-    $('#decoshop-preview-frame2').textContent = `${id4_2}${name2}${mode2}`;
-    // Card Back is always keyed off Game Mode 1's event.
-    $('#decoshop-preview-cardback').textContent = `${id4}${name}`;
+    const { frame1Alias, frame2Alias, cardbackAlias } = computeDecoShopAliases();
+    $('#decoshop-preview-frame1').textContent = frame1Alias;
+    $('#decoshop-preview-frame2').textContent = frame2Alias;
+    $('#decoshop-preview-cardback').textContent = cardbackAlias;
   }
   ['#decoshop-event-name', '#decoshop-mode-1', '#decoshop-mode-2', '#decoshop-event-id-2', '#decoshop-event-name-2'].forEach(sel => {
     $(sel).addEventListener('input', updateDecoShopPreview);
@@ -941,6 +1185,58 @@
       toast('Decoration Shop configuration updated across all files.', 'success');
     } else {
       log(`Decoration Shop Commit Failed: ${res.output}`, 'console-log-error');
+      toast('Commit failed: ' + res.output, 'error');
+    }
+  });
+
+  // ---------------- PVP Bots Card Back Update (part of the Decoration Shop tab) ----------------
+  function updateRobotPvpPathDisplay() {
+    $('#robotpvp-calc-path').value = cfg.robotCalcPath || '';
+  }
+
+  $('#robotpvp-browse-btn').addEventListener('click', async () => {
+    const picked = await window.api.browseFile({
+      startPath: cfg.robotCalcPath,
+      filters: [{ name: 'Excel Workbook', extensions: ['xlsx'] }]
+    });
+    if (picked) {
+      cfg.robotCalcPath = picked;
+      updateRobotPvpPathDisplay();
+      await window.api.saveConfig({ robotCalcPath: picked });
+    }
+  });
+
+  $('#robotpvp-execute-btn').addEventListener('click', async () => {
+    if (!cfg.robotCalcPath) { toast('Please browse for Robot_Calc.xlsx first.', 'error'); return; }
+    const { frame1Alias, frame2Alias, cardbackAlias, valid } = computeDecoShopAliases();
+    if (!valid) { toast('Fill in the Decoration Shop event fields above first — the same aliases are reused here.', 'error'); return; }
+
+    const frameWeight = ($('#robotpvp-frame-weight').value || '').trim() || '30';
+    const cardbackWeight = ($('#robotpvp-cardback-weight').value || '').trim() || '30';
+
+    const root = activeBranchRoot();
+    const designPath = await window.api.resolveDesignPath(root, cfg.activeWorkspace);
+    const btn = $('#robotpvp-execute-btn');
+    btn.disabled = true;
+    const res = await window.api.robotPvpCommit({
+      designPath,
+      payload: {
+        robot_calc_path: cfg.robotCalcPath,
+        frame_aliases: [frame1Alias, frame2Alias],
+        cardback_alias: cardbackAlias,
+        frame_weight: frameWeight,
+        cardback_weight: cardbackWeight
+      }
+    });
+    btn.disabled = false;
+
+    if (res.output) log(res.output, res.success ? 'console-log-line' : 'console-log-error');
+
+    if (res.success) {
+      log('PVP Bots Card Back Update Successful!', 'console-log-success');
+      toast('robot.xlsx re-rolled and Robot_Calc.xlsx weight tables extended.', 'success');
+    } else {
+      log(`PVP Bots Card Back Update Failed: ${res.output}`, 'console-log-error');
       toast('Commit failed: ' + res.output, 'error');
     }
   });
@@ -1385,6 +1681,8 @@
           </div>
         </details>
 
+        ${threadHtml('ideation', t.internal_reference_name)}
+
         <div class="board-divider"></div>
         <div class="form-row">
           <label class="form-label" for="ideation-feedback-${idx}">Feedback</label>
@@ -1395,6 +1693,101 @@
         </div>
       </div>
     `;
+  }
+
+  // Art Requirement docs are keyed to the finalized ideation theme's ref
+  // code (e.g. Merge2609), so their feedback thread hangs off the same event.
+  function artReqRefName() {
+    if (ideationSelectedIndex === -1 || !ideationThemes) return '';
+    return ideationThemes[ideationSelectedIndex].internal_reference_name || '';
+  }
+
+  // ---- Shared feedback thread + lessons (both pipelines) ----
+  function fmtWhen(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    return isNaN(d) ? iso : d.toLocaleString();
+  }
+
+  async function refreshIdeationEntries(eventType) {
+    const res = await window.api.ideationEntries({ eventType });
+    if (!res.success) {
+      log(`Could not read shared feedback: ${res.output}`, 'console-log-error');
+      ideationEntries = []; ideationLessons = [];
+      return;
+    }
+    ideationEntries = res.data.entries || [];
+    ideationLessons = res.data.lessons || [];
+    if (res.data.profiles) teamProfiles = res.data.profiles;
+  }
+
+  // The feedback thread for one specific document, so a reviewer sees what
+  // colleagues already said before adding their own note.
+  function threadHtml(docKind, refName) {
+    const items = ideationEntries.filter(e => e.doc_kind === docKind && e.ref_name === refName);
+    if (!items.length) return '';
+    const rows = items.map(e => `
+      <div class="feedback-entry${e.retracted ? ' feedback-retracted' : ''}">
+        <div class="feedback-entry-head">
+          ${avatarHtml(e.author_id, e.author_name, 22)}
+          <strong>${escapeHtml(e.author_name)}</strong>
+          <span class="feedback-when">${escapeHtml(fmtWhen(e.created_at))}</span>
+        </div>
+        <div class="feedback-body">${escapeHtml(e.feedback)}</div>
+        ${e.extracted_lesson ? `<div class="feedback-lesson">Lesson: ${escapeHtml(e.extracted_lesson)}${e.retracted ? ` <em>(retracted by ${escapeHtml(e.retracted_by || 'someone')})</em>` : ''}</div>` : ''}
+      </div>`).join('');
+    return `
+      <details class="info-disclosure" open>
+        <summary>
+          <span class="info-disclosure-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
+          <span>Feedback from the team (${items.length})</span>
+          <svg class="info-disclosure-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+        </summary>
+        <div class="info-disclosure-body">${rows}</div>
+      </details>`;
+  }
+
+  function renderLessonsPanel() {
+    const panel = $('#ideation-lessons-panel');
+    if (!panel) return;
+    if (!ideationLessons.length) {
+      panel.innerHTML = '';
+      return;
+    }
+    const rows = ideationLessons.map(l => `
+      <div class="lesson-row">
+        ${avatarHtml(l.author_id, l.author_name, 26)}
+        <div>
+          <div class="lesson-text">${escapeHtml(l.lesson)}</div>
+          <div class="feedback-when">from ${escapeHtml(l.author_name)} · ${escapeHtml(fmtWhen(l.created_at))} · ${escapeHtml(l.doc_kind === 'artreq' ? 'Art Requirement' : 'Ideation')}</div>
+        </div>
+        <button class="secondary-btn small lesson-retract-btn" data-entry="${escapeHtml(l.entry_id)}">Retract</button>
+      </div>`).join('');
+    panel.innerHTML = `
+      <div class="stacked-card">
+        <h2 class="card-title">Active Lessons (${ideationLessons.length})</h2>
+        <p class="settings-hint">Folded into every future generation for this event type — from everyone sharing this folder, not just you. Retract one that's steering results the wrong way; the feedback stays in the thread, only its influence on generation stops.</p>
+        ${rows}
+      </div>`;
+    $$('.lesson-retract-btn').forEach(btn => {
+      btn.addEventListener('click', () => retractLesson(btn.dataset.entry));
+    });
+  }
+
+  async function retractLesson(entryId) {
+    const eventType = $('#ideation-event-type').value;
+    const res = await window.api.ideationRetract({ eventType, entryId });
+    if (!res.success) {
+      log(`Retract failed: ${res.output}`, 'console-log-error');
+      toast('Could not retract that lesson: ' + res.output, 'error');
+      return;
+    }
+    log('Lesson retracted — it will no longer steer future generations.', 'console-log-success');
+    toast('Lesson retracted.', 'success');
+    await refreshIdeationEntries(eventType);
+    renderLessonsPanel();
+    renderIdeationResults();
+    renderArtReqResults();
   }
 
   function renderIdeationResults() {
@@ -1450,6 +1843,15 @@
   }
   $('#ideation-theme-count').addEventListener('change', clampThemeCount);
 
+  // Lessons and feedback are per event type — reload when the picker changes
+  // so you're never looking at another type's history.
+  $('#ideation-event-type').addEventListener('change', async (e) => {
+    await refreshIdeationEntries(e.target.value);
+    renderLessonsPanel();
+    renderIdeationResults();
+    renderArtReqResults();
+  });
+
   $('#ideation-generate-btn').addEventListener('click', async () => {
     const eventType = $('#ideation-event-type').value;
     const durationDays = parseInt($('#ideation-duration').value, 10) || 14;
@@ -1471,6 +1873,8 @@
     try {
       const parsed = JSON.parse(res.stdout);
       if (parsed.error) { log(`Error: ${parsed.error}`, 'console-log-error'); toast(parsed.error, 'error'); return; }
+      await refreshIdeationEntries(eventType);
+      renderLessonsPanel();
       ideationThemes = parsed.themes;
       ideationDraftPaths = parsed.draft_paths || [];
       ideationSelectedIndex = -1;
@@ -1514,6 +1918,8 @@
       if (parsed.error) { log(`Error: ${parsed.error}`, 'console-log-error'); toast(parsed.error, 'error'); return; }
       ideationThemes[idx] = parsed.theme;
       if (parsed.draft_path) ideationDraftPaths[idx] = parsed.draft_path;
+      await refreshIdeationEntries(eventType);
+      renderLessonsPanel();
       renderIdeationResults();
       log(`Theme "${parsed.theme.theme_name}" regenerated. Draft document updated on disk. Feedback saved for future runs.`, 'console-log-success');
       toast('Theme regenerated — draft document + feedback updated.', 'success');
@@ -1610,6 +2016,8 @@
           </div>
         </details>
 
+        ${threadHtml('artreq', artReqRefName())}
+
         <div class="board-divider"></div>
         <div class="form-row">
           <label class="form-label" for="artreq-feedback-${idx}">Feedback</label>
@@ -1686,6 +2094,8 @@
       if (parsed.error) { log(`Error: ${parsed.error}`, 'console-log-error'); toast(parsed.error, 'error'); return; }
       artReqVariations[idx] = parsed.variation;
       if (parsed.draft_path) artReqDraftPaths[idx] = parsed.draft_path;
+      await refreshIdeationEntries(eventType);
+      renderLessonsPanel();
       renderArtReqResults();
       log(`Variation "${parsed.variation.title}" regenerated. Feedback saved for future runs.`, 'console-log-success');
       toast('Variation regenerated — feedback stored for next time.', 'success');
@@ -1721,6 +2131,123 @@
     }
   }
 
+  // ---------------- Sprint Board (landing page) ----------------
+  // The roadmap is the plan; the design workbooks are the truth. This view
+  // only ever reads — every fix is a jump into the tab that owns it.
+  let sprintData = null;
+
+  const SPRINT_TAB_VIEW = {
+    minigames: 'minigames-view', trivia: 'trivia-challenge-view',
+    battlepass: 'battlepass-view', holiday_bp: 'holiday-bp-view',
+    decoration_shop: 'decoration-shop-view', streak_challenge: 'streak-challenge-view',
+    weekly_gift: 'weekly-gift-view', full_screen_gift: 'full-screen-gift-view',
+    endless_treasure: 'endless-treasure-view'
+  };
+  const STATUS_META = {
+    done:   { cls: 'sp-done',   label: 'Configured' },
+    todo:   { cls: 'sp-todo',   label: 'Needs configuring' },
+    extra:  { cls: 'sp-extra',  label: 'Configured (not in roadmap)' },
+    manual: { cls: 'sp-manual', label: 'Manual check' },
+    'n/a':  { cls: 'sp-na',     label: 'Not this sprint' }
+  };
+
+  function fmtRange(a, b) {
+    if (!a) return '—';
+    const d = (s) => s.slice(5).replace('-', '/');
+    return b && b !== a ? `${d(a)} – ${d(b)}` : d(a);
+  }
+
+  async function loadSprintBoard(selectedSprint) {
+    const root = activeBranchRoot();
+    const designPath = root ? await window.api.resolveDesignPath(root, cfg.activeWorkspace) : '';
+    const res = await window.api.sprintBoard({ designPath, selectedSprint });
+    if (!res.success) {
+      $('#sprint-summary').textContent = res.output;
+      $('#sprint-detail').innerHTML = '';
+      log(`Sprint board: ${res.output}`, 'console-log-error');
+      return;
+    }
+    sprintData = res.data;
+    renderSprintPicker();
+    renderSprintDetail();
+  }
+
+  function renderSprintPicker() {
+    const sel = $('#sprint-select');
+    sel.innerHTML = sprintData.sprints.map(s => {
+      const tag = s.is_milestone ? ' — store submission' : '';
+      const cur = s.name === sprintData.current_sprint ? '  ← current' : '';
+      return `<option value="${escapeHtml(s.name)}"${s.name === sprintData.selected ? ' selected' : ''}>${escapeHtml(s.name)} · ${escapeHtml(fmtRange(s.start, s.end))}${tag}${cur}</option>`;
+    }).join('');
+    $('#sprint-summary').textContent = sprintData.current_sprint
+      ? `Roadmap has ${sprintData.sprints.length} columns. Today falls in "${sprintData.current_sprint}".`
+      : `Roadmap has ${sprintData.sprints.length} columns. No sprint covers today's date.`;
+  }
+
+  function renderSprintDetail() {
+    const d = sprintData.detail, sp = d.sprint, el = $('#sprint-detail');
+    if (sp.is_milestone) {
+      el.innerHTML = `<div class="stacked-card">
+        <h2 class="card-title">${escapeHtml(sp.name)}</h2>
+        <p class="settings-hint">Store submission milestone — no LiveOps configuration here.</p>
+        ${(sp.events || []).map(e => `<p class="settings-hint">• ${escapeHtml(e.title || e.text)}</p>`).join('')}
+      </div>`;
+      return;
+    }
+
+    const ev = d.event_config;
+    let evHtml;
+    if (!ev) {
+      evHtml = `<p class="sp-drift">No event configured for this window in the active branch — the whole sprint is unstarted here.</p>`;
+    } else if (!ev.exact) {
+      evHtml = `<p class="sp-drift">Configured as <strong>${escapeHtml(ev.alias)}</strong> ${escapeHtml(fmtRange(ev.start, ev.end))} — the roadmap plans ${escapeHtml(fmtRange(sp.start, sp.end))}. Dates disagree; worth checking which is right.</p>`;
+    } else {
+      evHtml = `<p class="settings-hint">Configured as <strong>${escapeHtml(ev.alias)}</strong>, dates match the roadmap exactly.</p>`;
+    }
+
+    const todo = (d.tabs || []).filter(t => t.status === 'todo').length;
+    const cards = (d.tabs || []).map(t => {
+      const m = STATUS_META[t.status] || STATUS_META['n/a'];
+      const rows = (t.rows || []).slice(0, 3)
+        .map(r => `<div class="sp-row">${escapeHtml(r.name || '(unnamed)')} <span class="feedback-when">${escapeHtml(fmtRange(r.start, r.end))}${r.switch ? ' · ' + escapeHtml(r.switch) : ''}</span></div>`).join('');
+      return `<div class="sp-card ${m.cls}">
+        <div class="sp-card-head">
+          <span class="sp-dot" aria-hidden="true"></span>
+          <strong>${escapeHtml(t.label)}</strong>
+          <button class="secondary-btn small sp-go" data-view="${SPRINT_TAB_VIEW[t.tab]}">Open</button>
+        </div>
+        <div class="sp-status">${escapeHtml(m.label)}${t.count ? ` · ${t.count} row${t.count === 1 ? '' : 's'}` : ''}</div>
+        ${rows}
+      </div>`;
+    }).join('');
+
+    el.innerHTML = `
+      <div class="stacked-card">
+        <div class="ideation-card-header">
+          <div>
+            <h2 class="card-title">${escapeHtml(sp.events && sp.events[0] ? sp.events[0].title : sp.name)}</h2>
+            <span class="preview-label mono">${escapeHtml(sp.name)} · ${escapeHtml(fmtRange(sp.start, sp.end))} · ${escapeHtml(sp.method)}</span>
+          </div>
+          <span class="sp-count-pill${todo ? ' sp-count-warn' : ''}">${todo ? `${todo} to configure` : 'All configured'}</span>
+        </div>
+        ${evHtml}
+        ${(sp.overlays || []).length ? `<p class="settings-hint">Also running across this sprint: ${sp.overlays.map(o => escapeHtml(o.title) + ' (' + escapeHtml(fmtRange(o.start, o.end)) + ')').join(', ')}</p>` : ''}
+      </div>
+      <div class="sp-grid">${cards}</div>
+      ${(d.other_updates || []).length ? `<div class="stacked-card">
+        <h2 class="card-title">Also in this sprint</h2>
+        <p class="settings-hint">Roadmap items this tool doesn't configure — tracked here so the sprint's full scope is visible.</p>
+        ${d.other_updates.map(o => `<div class="sp-row">• ${escapeHtml(o)}</div>`).join('')}
+      </div>` : ''}`;
+
+    $$('.sp-go').forEach(b => b.addEventListener('click', () => {
+      if (b.dataset.view) navigateTo(b.dataset.view);
+    }));
+  }
+
+  $('#sprint-select').addEventListener('change', (e) => loadSprintBoard(e.target.value));
+  $('#sprint-refresh-btn').addEventListener('click', () => loadSprintBoard($('#sprint-select').value));
+
   // ---------------- Init ----------------
   async function init() {
     const data = await window.api.getConfig();
@@ -1731,9 +2258,16 @@
     pipelineSteps = data.pipelineSteps;
 
     $('#unity-exe-input').value = cfg.unityExePath || '';
+    updateRobotPvpPathDisplay();
     $('#anthropic-key-input').value = cfg.anthropicApiKey || '';
     $('#ollama-base-url-input').value = cfg.ollamaBaseUrl || '';
     $('#ollama-model-input').value = cfg.ollamaModel || 'qwen3:32b';
+    $('#author-name-input').value = cfg.authorName || '';
+    $('#author-id-display').textContent = cfg.authorId || '';
+    draftAvatarColor = cfg.avatarColor || '';
+    draftAvatarImage = cfg.avatarImage || '';
+    renderProfileEditor();
+    await refreshIdeationDataStatus();
 
     populateBranchWorkspaceSelects();
     renderBranchPathRows();
@@ -1743,6 +2277,7 @@
     await loadEventTypes();
     updateTimesPreview();
 
+    navigateTo('sprint-view');
     log('Tool initialized. Waiting for input...');
   }
 

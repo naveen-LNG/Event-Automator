@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const { spawn, execFile } = require('child_process');
 
 // ---- Static config ----
@@ -28,9 +29,43 @@ const WORKSPACES = ['WorkSpcae_Design', 'WorkSpcae_NE', 'WorkSpcae_FC', 'WorkSpc
 // via extraResources (like pybackend) rather than the asar-packed `files`
 // list, since app.asar is a read-only virtual archive — the app writes
 // feedback/final-doc files here at runtime, which asar can't support.
-const IDEATION_EVENTS_ROOT = app.isPackaged
-  ? path.join(process.resourcesPath, 'ideationData', 'Events')
-  : path.join(__dirname, 'ideationData', 'Events');
+const DEFAULT_IDEATION_DATA_ROOT = app.isPackaged
+  ? path.join(process.resourcesPath, 'ideationData')
+  : path.join(__dirname, 'ideationData');
+
+// Point this at a synced folder (OneDrive for Business / a network share) to
+// share ideation work across the team — every designer's app writes into the
+// same tree, and the file-per-entry storage in ideation_store.py is what
+// keeps concurrent writes from colliding there. Empty = the local default
+// above, which is also the correct setting for working solo.
+function ideationDataRoot() {
+  const configured = (loadConfig().ideationDataPath || '').trim();
+  return configured || DEFAULT_IDEATION_DATA_ROOT;
+}
+
+function ideationEventsRoot() {
+  return path.join(ideationDataRoot(), 'Events');
+}
+
+// Identity is attribution, not authentication: it answers "who chose this
+// variation / who left this note", and it cannot be enforced by a local app
+// with no server. Rather than a login screen nobody can verify anyway, take
+// the account Windows already authenticated — these are AzureAD-joined
+// machines, so USERDOMAIN\USERNAME is a real corporate identity. The display
+// name stays editable in Settings; the id is what's stamped on records.
+function detectIdentity() {
+  let username = '';
+  try {
+    username = os.userInfo().username || '';
+  } catch (e) {
+    username = process.env.USERNAME || '';
+  }
+  const domain = process.env.USERDOMAIN || '';
+  return {
+    authorId: domain ? `${domain}\\${username}` : (username || 'unknown'),
+    authorName: username || 'Unknown User'
+  };
+}
 
 const PIPELINE_STEPS = [
   '1. Configure storagedata.proto',
@@ -76,23 +111,6 @@ function configPath() {
   return path.join(app.getPath('userData'), 'config.json');
 }
 
-// Ideation feedback/lessons live under ideationData/Events (not userData):
-// this is studio design knowledge, not per-user app state — it belongs
-// alongside the existing per-event Art Requirements/Feedback/One-Pager
-// folders so a designer can actually find and read it, not hidden in an
-// OS-specific app-data folder only this app's own UI can see.
-function ideationFeedbackStorePath() {
-  return path.join(IDEATION_EVENTS_ROOT, '_ideation_feedback_store.json');
-}
-
-// Separate from the Ideation lessons store — Art Requirement feedback
-// ("icons need a consistent outline width") is a different vocabulary from
-// Ideation-stage feedback ("make it more vibrant"), verified against the
-// studio's own real Art Feedback PDFs.
-function artReqFeedbackStorePath() {
-  return path.join(IDEATION_EVENTS_ROOT, '_art_requirement_feedback_store.json');
-}
-
 function loadConfig() {
   const p = configPath();
   let cfg = {
@@ -102,7 +120,18 @@ function loadConfig() {
     anthropicApiKey: '',
     ollamaBaseUrl: '',
     ollamaModel: 'qwen3:32b',
-    unityExePath: ''
+    unityExePath: '',
+    robotCalcPath: '',
+    // Blank = the local default folder next to the app. Point at a synced
+    // folder to share ideation work with the team.
+    ideationDataPath: '',
+    // Auto-filled from the OS on first launch (see detectIdentity).
+    authorId: '',
+    authorName: '',
+    // Avatar is mirrored into the shared folder by profile:save; the local
+    // copy is what renders instantly at startup before that read completes.
+    avatarColor: '',
+    avatarImage: ''
   };
   if (fs.existsSync(p)) {
     try {
@@ -124,6 +153,15 @@ function loadConfig() {
         cfg.branchPaths[key] = guess;
       }
     }
+  }
+
+  // First launch: adopt the Windows-authenticated account rather than
+  // prompting for a login the app couldn't verify anyway. Only fills blanks,
+  // so an edited display name is never overwritten.
+  if (!cfg.authorId || !cfg.authorName) {
+    const detected = detectIdentity();
+    cfg.authorId = cfg.authorId || detected.authorId;
+    cfg.authorName = cfg.authorName || detected.authorName;
   }
   return cfg;
 }
@@ -163,7 +201,10 @@ function createWindow() {
     minWidth: 480,
     minHeight: 600,
     title: 'Event Automator (Standalone)',
-    backgroundColor: '#0e2673',
+    icon: path.join(__dirname, 'build', 'icon.png'),
+    // Painted before the renderer's first frame — must match --void in
+    // style.css or launch flashes the old blue theme for a beat.
+    backgroundColor: '#04050c',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -455,6 +496,12 @@ ipcMain.handle('decoshop:commit', async (evt, { designPath, payload }) => {
   return runPython('update_decoration_shop', [designPath, tmp]);
 });
 
+ipcMain.handle('robotpvp:commit', async (evt, { designPath, payload }) => {
+  const tmp = tempJsonFile('robotpvp_payload');
+  fs.writeFileSync(tmp, JSON.stringify(payload), 'utf-8');
+  return runPython('update_robot_pvp', [designPath, tmp]);
+});
+
 ipcMain.handle('residenttask:commit', async (evt, { designPath, payload }) => {
   const tmp = tempJsonFile('residenttask_payload');
   fs.writeFileSync(tmp, JSON.stringify(payload), 'utf-8');
@@ -589,11 +636,12 @@ ipcMain.handle('ideation:generate', async (evt, { eventType, durationDays, theme
     theme_count: count,
     design_path: designPath,
     provider,
+    author_id: cfg.authorId,
+    author_name: cfg.authorName,
     api_key: cfg.anthropicApiKey,
     ollama_base_url: cfg.ollamaBaseUrl,
     ollama_model: cfg.ollamaModel || 'qwen3:32b',
-    feedback_store_path: ideationFeedbackStorePath(),
-    events_root: IDEATION_EVENTS_ROOT
+    events_root: ideationEventsRoot()
   }), 'utf-8');
   return runPythonAndScrub('ideation_generate', tmp);
 });
@@ -609,11 +657,12 @@ ipcMain.handle('ideation:regenerate', async (evt, { eventType, durationDays, the
     event_type: eventType,
     duration_days: durationDays,
     provider,
+    author_id: cfg.authorId,
+    author_name: cfg.authorName,
     api_key: cfg.anthropicApiKey,
     ollama_base_url: cfg.ollamaBaseUrl,
     ollama_model: cfg.ollamaModel || 'qwen3:32b',
-    feedback_store_path: ideationFeedbackStorePath(),
-    events_root: IDEATION_EVENTS_ROOT,
+    events_root: ideationEventsRoot(),
     theme,
     feedback
   }), 'utf-8');
@@ -650,7 +699,8 @@ ipcMain.handle('ideation:testOllama', async (evt, { baseUrl, model }) => {
 // already has everything needed.
 ipcMain.handle('ideation:saveFinal', async (evt, { eventType, durationDays, theme }) => {
   try {
-    const dir = path.join(IDEATION_EVENTS_ROOT, eventType, 'One-Pager Ideation');
+    const cfg = loadConfig();
+    const dir = path.join(ideationEventsRoot(), eventType, 'One-Pager Ideation');
     fs.mkdirSync(dir, { recursive: true });
     const refName = (theme.internal_reference_name || 'UnnamedEvent').replace(/[\\/:*?"<>|]/g, '_');
     const filePath = path.join(dir, `${refName} One-Pager Ideation.md`);
@@ -669,6 +719,7 @@ ipcMain.handle('ideation:saveFinal', async (evt, { eventType, durationDays, them
 **Event Type:** ${eventType}
 **Sprint Duration:** ${durationDays} days
 **Generated:** ${new Date().toISOString().slice(0, 10)}
+**Selected as Final by:** ${cfg.authorName || 'Unknown'}
 **Status:** Selected as Final (draft — pending PO review, per the studio's Event Ideation Checklist)
 
 ## Theme & Reasoning
@@ -747,11 +798,12 @@ ipcMain.handle('artreq:generate', async (evt, { eventType, ideationTheme, variat
     ideation_theme: ideationTheme,
     variation_count: count,
     provider,
+    author_id: cfg.authorId,
+    author_name: cfg.authorName,
     api_key: cfg.anthropicApiKey,
     ollama_base_url: cfg.ollamaBaseUrl,
     ollama_model: cfg.ollamaModel || 'qwen3:32b',
-    feedback_store_path: artReqFeedbackStorePath(),
-    events_root: IDEATION_EVENTS_ROOT
+    events_root: ideationEventsRoot()
   }), 'utf-8');
   return runPythonAndScrub('artreq_generate', tmp);
 });
@@ -769,22 +821,25 @@ ipcMain.handle('artreq:regenerate', async (evt, { eventType, variation, variatio
     variation_index: variationIndex,
     feedback,
     provider,
+    author_id: cfg.authorId,
+    author_name: cfg.authorName,
     api_key: cfg.anthropicApiKey,
     ollama_base_url: cfg.ollamaBaseUrl,
     ollama_model: cfg.ollamaModel || 'qwen3:32b',
-    feedback_store_path: artReqFeedbackStorePath(),
-    events_root: IDEATION_EVENTS_ROOT
+    events_root: ideationEventsRoot()
   }), 'utf-8');
   return runPythonAndScrub('artreq_regenerate', tmp);
 });
 
 ipcMain.handle('artreq:saveFinal', async (evt, { eventType, refName, variation }) => {
+  const cfg = loadConfig();
   const tmp = tempJsonFile('artreq_save_final');
   fs.writeFileSync(tmp, JSON.stringify({
     event_type: eventType,
     ref_name: refName,
     variation,
-    events_root: IDEATION_EVENTS_ROOT
+    author_name: cfg.authorName,
+    events_root: ideationEventsRoot()
   }), 'utf-8');
   const res = await runPythonAndScrub('artreq_save_final', tmp);
   if (!res.success) return { success: false, output: res.output };
@@ -795,6 +850,127 @@ ipcMain.handle('artreq:saveFinal', async (evt, { eventType, refName, variation }
   } catch (e) {
     return { success: false, output: `Could not parse save result: ${e.message}` };
   }
+});
+
+// ---- IPC: shared feedback thread + lesson management ----
+// Read-only listing of who said what (and the lessons currently steering
+// generation), plus retraction so a bad lesson stops poisoning every future
+// run. Both are plain reads/writes of the shared entry files — no LLM call,
+// so they're cheap enough to refresh whenever a card is rendered.
+
+function parseJsonResult(res, label) {
+  if (!res.success) return { success: false, output: res.output };
+  try {
+    const parsed = JSON.parse(res.stdout);
+    if (parsed.error) return { success: false, output: parsed.error };
+    return { success: true, data: parsed };
+  } catch (e) {
+    return { success: false, output: `Could not parse ${label}: ${e.message}` };
+  }
+}
+
+ipcMain.handle('ideation:entries', async (evt, { eventType, docKind, refName }) => {
+  const tmp = tempJsonFile('ideation_entries');
+  fs.writeFileSync(tmp, JSON.stringify({
+    event_type: eventType,
+    doc_kind: docKind || null,
+    ref_name: refName || null,
+    events_root: ideationEventsRoot()
+  }), 'utf-8');
+  return parseJsonResult(await runPythonAndScrub('ideation_entries', tmp), 'feedback entries');
+});
+
+ipcMain.handle('ideation:retract', async (evt, { eventType, entryId, reason }) => {
+  const cfg = loadConfig();
+  const tmp = tempJsonFile('ideation_retract');
+  fs.writeFileSync(tmp, JSON.stringify({
+    event_type: eventType,
+    entry_id: entryId,
+    reason: reason || '',
+    author_id: cfg.authorId,
+    author_name: cfg.authorName,
+    events_root: ideationEventsRoot()
+  }), 'utf-8');
+  return parseJsonResult(await runPythonAndScrub('ideation_retract', tmp), 'retraction result');
+});
+
+// ---- IPC: sprint board (landing page) ----
+// Joins the Feishu roadmap export (the plan) against the design workbooks of
+// the active branch (what's actually configured). Read-only — it never writes
+// anything, so it's safe to refresh on every visit.
+
+function roadmapPath() {
+  return path.join(ideationDataRoot(), 'Roadmap', 'Roadmap.xlsx');
+}
+
+ipcMain.handle('sprint:board', async (evt, { designPath, selectedSprint }) => {
+  const rp = roadmapPath();
+  if (!fs.existsSync(rp)) {
+    return { success: false, output: 'No roadmap found. Export the Feishu roadmap to ' + rp };
+  }
+  const tmp = tempJsonFile('sprint_board');
+  fs.writeFileSync(tmp, JSON.stringify({
+    roadmap_path: rp,
+    design_path: designPath || '',
+    year_hint: new Date().getFullYear(),
+    selected_sprint: selectedSprint || null
+  }), 'utf-8');
+  return parseJsonResult(await runPythonAndScrub('sprint_board', tmp), 'sprint board');
+});
+
+// ---- IPC: profile (name + avatar) ----
+// Saved into the shared folder, not just local config, so colleagues see
+// your avatar next to your feedback. authorId always comes from the OS —
+// only the display name and avatar are user-editable.
+
+ipcMain.handle('profile:save', async (evt, { displayName, avatarColor, avatarImage }) => {
+  const cfg = loadConfig();
+  const name = (displayName || '').trim() || cfg.authorName;
+  saveConfig({ authorName: name, avatarColor: avatarColor || '', avatarImage: avatarImage || '' });
+
+  const tmp = tempJsonFile('profile_save');
+  fs.writeFileSync(tmp, JSON.stringify({
+    events_root: ideationEventsRoot(),
+    author_id: cfg.authorId,
+    display_name: name,
+    avatar_color: avatarColor || '',
+    avatar_image: avatarImage || ''
+  }), 'utf-8');
+  const res = parseJsonResult(await runPythonAndScrub('profile_save', tmp), 'profile');
+  // A failed shared-folder write (offline share, bad path) must not lose the
+  // local edit — config was already updated above, so report and carry on.
+  if (!res.success) return { success: false, output: res.output, savedLocally: true };
+  return res;
+});
+
+ipcMain.handle('profile:list', async () => {
+  const tmp = tempJsonFile('profiles_read');
+  fs.writeFileSync(tmp, JSON.stringify({ events_root: ideationEventsRoot() }), 'utf-8');
+  return parseJsonResult(await runPythonAndScrub('profiles_read', tmp), 'profiles');
+});
+
+// Settings: pick the shared ideationData folder (OneDrive / network share).
+// Validated on selection so a typo'd or offline path surfaces immediately
+// rather than as a confusing mid-generation failure.
+ipcMain.handle('ideation:browseDataFolder', async () => {
+  const result = await dialog.showOpenDialog({
+    title: 'Select the shared ideationData folder',
+    defaultPath: ideationDataRoot(),
+    properties: ['openDirectory']
+  });
+  if (result.canceled || !result.filePaths.length) return null;
+  return result.filePaths[0];
+});
+
+ipcMain.handle('ideation:dataFolderInfo', async () => {
+  const root = ideationDataRoot();
+  const events = path.join(root, 'Events');
+  return {
+    root,
+    isDefault: !(loadConfig().ideationDataPath || '').trim(),
+    exists: fs.existsSync(events),
+    templatesFound: fs.existsSync(path.join(events, 'TEMPLATES', 'Event_Ideation_1Pager.md'))
+  };
 });
 
 // ---- IPC: manual "Update all local caches from SVN" — convert_layout.lua,

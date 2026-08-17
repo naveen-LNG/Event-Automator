@@ -3,6 +3,7 @@ import os
 import re
 import json
 import copy as _copy
+from xlsx_safe import load_workbook_frozen
 from datetime import datetime, timedelta
 import openpyxl
 
@@ -181,7 +182,7 @@ def update_endless_treasure(design_path, start_date_str, event_name):
     os.chmod(file_path, 0o666)
 
     try:
-        wb = openpyxl.load_workbook(file_path)
+        wb = load_workbook_frozen(file_path)
         ws_chain = wb["折扣链数据"]
         ws_rec = wb["折扣链推荐"]
         ws_const = wb["折扣链常量"]

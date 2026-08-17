@@ -4,6 +4,8 @@ import re
 import json
 import openpyxl
 import copy as _copy
+
+from xlsx_safe import load_workbook_frozen
 from datetime import datetime, timedelta, time as dt_time
 
 
@@ -117,10 +119,26 @@ def update_resident_task(design_path, event_id, event_name, start_time, end_time
     tgt_upper = event_name.upper()
     tgt_pascal = event_name[0].upper() + event_name[1:]
 
+    # The extra-reward currency's Chinese suffix word is tied to event TYPE, not carried
+    # over from whatever event the template last belonged to: verified against every
+    # {Type}{digits}(能量|代币) alias in item.xlsx — every "能量" ("energy") entry is a
+    # Merge-type event, every other type (Sort, Sim, Blocks, Hunt, Drink, Dessert, ...)
+    # uses "代币" ("token"), with zero exceptions. A prefix-only swap would otherwise
+    # silently reproduce the wrong suffix (e.g. cloning a Merge template onto a Sort
+    # event would keep "能量" instead of switching to "代币").
+    tgt_family_match = re.match(r'^([A-Za-z]+)', event_name)
+    tgt_family = tgt_family_match.group(1) if tgt_family_match else event_name
+    tgt_suffix = "能量" if tgt_family.lower() == "merge" else "代币"
+
     os.chmod(file_path, 0o666)
 
     try:
-        wb = openpyxl.load_workbook(file_path)
+        # 任务列表's 任务ID column is formula-driven (e.g. "=A541+300") for ~30% of its
+        # rows, and a downstream build step reads those cached values rather than
+        # recalculating — so the formulas must be baked to literals before saving.
+        # See xlsx_safe.load_workbook_frozen for why.
+        wb = load_workbook_frozen(file_path)
+
         ws_chain = wb["任务链"]
         ws_list = wb["任务列表"]
 
@@ -181,20 +199,34 @@ def update_resident_task(design_path, event_id, event_name, start_time, end_time
 
         # --- Update col I/J/K in place on every existing 任务列表 row that carries them ---
         # (evergreen rows, e.g. the 16xx/17xx blocks — never mint new task IDs)
+        def swap_token_cell(cell, new_prefix):
+            """Detect this cell's OWN prefix+suffix and swap independently of any other
+            cell — verified in real data that col I and col J on the same row can carry
+            different suffixes (e.g. I='Merge2608能量', J='MERGE2608代币' for the same
+            reward), so J must never be assumed to mirror I's suffix."""
+            val = cell.value
+            if not isinstance(val, str):
+                return False
+            m = re.match(r'^([A-Za-z]+\d{3,4})(能量|代币)', val)
+            if m:
+                src_token, src_suffix = m.group(1), m.group(2)
+                cell.value = val.replace(src_token + src_suffix, new_prefix + tgt_suffix, 1)
+                return True
+            m2 = re.match(r'^([A-Za-z]+\d{3,4})', val)
+            if m2:
+                cell.value = val.replace(m2.group(1), new_prefix)
+                print(f"Warning: 任务列表 row {cell.row} col {cell.column_letter} ({val!r}) didn't match "
+                      f"the expected 能量/代币 suffix pattern — swapped prefix only; verify the suffix manually.")
+                return True
+            return False
+
         token_updates = 0
         pack_updates = 0
         for r in range(2, ws_list.max_row + 1):
-            i_c = ws_list.cell(r, 9)
-            i_val = i_c.value
-            if isinstance(i_val, str):
-                m = re.match(r'^([A-Za-z]+\d{3,4})', i_val)
-                if m:
-                    src_token = m.group(1)
-                    i_c.value = i_val.replace(src_token, tgt_pascal)
-                    j_c = ws_list.cell(r, 10)
-                    if isinstance(j_c.value, str):
-                        j_c.value = j_c.value.replace(src_token.upper(), tgt_upper)
-                    token_updates += 1
+            i_changed = swap_token_cell(ws_list.cell(r, 9), tgt_pascal)
+            j_changed = swap_token_cell(ws_list.cell(r, 10), tgt_upper)
+            if i_changed or j_changed:
+                token_updates += 1
 
             if card_pack_prefix:
                 k_c = ws_list.cell(r, 11)
@@ -206,7 +238,7 @@ def update_resident_task(design_path, event_id, event_name, start_time, end_time
                         pack_updates += 1
 
         print(f"resident_task [任务列表]: Updated extra-reward token on {token_updates} row(s) -> "
-              f"{tgt_pascal!r}, card-pack prefix on {pack_updates} row(s) -> {card_pack_prefix!r}.")
+              f"{tgt_pascal + tgt_suffix!r}, card-pack prefix on {pack_updates} row(s) -> {card_pack_prefix!r}.")
 
         # --- Append new 任务链 rows spanning duration_days, alternating type, reusing the
         # chain's existing task list unchanged (task IDs are evergreen, see above) ---

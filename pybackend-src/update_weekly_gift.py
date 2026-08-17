@@ -2,6 +2,7 @@ import sys
 import os
 import json
 import openpyxl
+from xlsx_safe import load_workbook_frozen
 import copy as _copy
 from datetime import datetime, timedelta
 
@@ -64,7 +65,7 @@ def update_weekly_gift(design_path, event_id, start_time, end_time):
     os.chmod(file_path, 0o666)
 
     try:
-        wb = openpyxl.load_workbook(file_path)
+        wb = load_workbook_frozen(file_path)
         if "weekly_gift" not in wb.sheetnames:
             print("Error: weekly_gift sheet not found in store.xlsx")
             return False

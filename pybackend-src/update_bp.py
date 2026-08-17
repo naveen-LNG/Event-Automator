@@ -2,6 +2,7 @@ import sys
 import os
 import json
 import openpyxl
+from xlsx_safe import load_workbook_frozen
 import re
 from datetime import datetime
 
@@ -58,7 +59,7 @@ def main():
     item_path = os.path.join(design_path, "item.xlsx")
 
     try:
-        wb_bp = openpyxl.load_workbook(bp_path)
+        wb_bp = load_workbook_frozen(bp_path)
         
         # --- 1. Update battle_pass sheet ---
         ws_bp = wb_bp['battle_pass']
@@ -178,7 +179,7 @@ def main():
 
         # --- 5. Update item.xlsx ---
         try:
-            wb_item = openpyxl.load_workbook(item_path)
+            wb_item = load_workbook_frozen(item_path)
             ws_item = wb_item['item']
             
             new_item_id = prev_item_id + 1

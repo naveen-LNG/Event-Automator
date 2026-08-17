@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Event Automator (Standalone)</title>
-<link rel="stylesheet" href="style.css?v=6" />
+<link rel="stylesheet" href="style.css?v=8" />
 </head>
 <body>
 <div class="app-container">
@@ -14,7 +14,7 @@
     <div class="sidebar-board">
       <div class="brand">
         <div class="brand-mark" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg>
+          <img class="brand-glyph" src="brand-wordmark.png" alt="" draggable="false" />
         </div>
         <div class="brand-text">
           <span class="brand-title">Event Automator</span>
@@ -22,53 +22,72 @@
         </div>
       </div>
 
-      <button class="menu-btn chip-violet active-btn" data-view="main-events-view" title="Main Events">
-        <span class="icon-chip chip-violet"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg></span>
-        <span class="btn-text">Main Events</span>
+      <button class="menu-btn menu-btn-primary chip-sprint active-btn" data-view="sprint-view" data-rank="A" title="Sprint Board">
+        <span class="icon-chip chip-sprint"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18M3 12h18M3 19h11"/><circle cx="18.5" cy="19" r="2.5"/></svg></span>
+        <span class="btn-text">Sprint Board</span>
       </button>
-      <button class="menu-btn chip-cyan" data-view="minigames-view" title="Minigame Configs">
-        <span class="icon-chip chip-cyan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="10" rx="5"/><path d="M7 12h.01M9.5 9.5v5M17 12h.01M14.5 12h.01"/></svg></span>
-        <span class="btn-text">Minigame Configs</span>
-      </button>
-      <button class="menu-btn chip-amber" data-view="battlepass-view" title="Pet Battlepass">
-        <span class="icon-chip chip-amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 3 7v6c0 5 4 8 9 9 5-1 9-4 9-9V7l-9-5z"/><path d="M9 12l2 2 4-4"/></svg></span>
-        <span class="btn-text">Pet Battlepass</span>
-      </button>
-      <button class="menu-btn chip-rose" data-view="holiday-bp-view" title="Holiday Battlepass">
-        <span class="icon-chip chip-rose"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M4.5 6.5l15 11M19.5 6.5l-15 11M2 12h20"/></svg></span>
-        <span class="btn-text">Holiday Battlepass</span>
-      </button>
-      <button class="menu-btn chip-teal" data-view="decoration-shop-view" title="Decoration Shop">
-        <span class="icon-chip chip-teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2 3 7v13a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7l-3-5"/><path d="M3 7h18M9 11a3 3 0 0 0 6 0"/></svg></span>
-        <span class="btn-text">Decoration Shop</span>
-      </button>
-      <button class="menu-btn chip-orange" data-view="streak-challenge-view" title="Streak Challenge">
-        <span class="icon-chip chip-orange"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2c1 4-3 5-3 9a3 3 0 0 0 6 0c1 2-1 3-1 5a4 4 0 0 1-8 0c0-6 6-7 6-14z"/></svg></span>
-        <span class="btn-text">Streak Challenge</span>
-      </button>
-      <button class="menu-btn chip-pink" data-view="weekly-gift-view" title="Weekly Gift">
-        <span class="icon-chip chip-pink"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="8" width="18" height="13" rx="2"/><path d="M3 12h18M12 8v13"/><path d="M12 8c-1.5 0-4-1-4-3a2 2 0 0 1 4 0 2 2 0 0 1 4 0c0 2-2.5 3-4 3z"/></svg></span>
-        <span class="btn-text">Weekly Gift</span>
-      </button>
-      <button class="menu-btn chip-indigo" data-view="full-screen-gift-view" title="Full Screen Gift">
-        <span class="icon-chip chip-indigo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="18" rx="2"/><path d="M8 3v18M16 3v18M2 9h6M2 15h6M16 9h6M16 15h6"/></svg></span>
-        <span class="btn-text">Full Screen Gift</span>
-      </button>
-      <button class="menu-btn chip-blue" data-view="trivia-challenge-view" title="Trivia Challenge">
-        <span class="icon-chip chip-blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 2-2.5 2-2.5 4"/><path d="M12 17h.01"/></svg></span>
-        <span class="btn-text">Trivia Challenge</span>
-      </button>
-      <button class="menu-btn chip-emerald" data-view="endless-treasure-view" title="Endless Treasure">
-        <span class="icon-chip chip-emerald"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="10" width="18" height="10" rx="1"/><path d="M3 10 5 4h14l2 6M9 14a3 3 0 0 0 6 0"/></svg></span>
-        <span class="btn-text">Endless Treasure</span>
-      </button>
-      <button class="menu-btn chip-yellow" data-view="ideation-view" title="Ideation">
+      <button class="menu-btn menu-btn-primary chip-yellow" data-view="ideation-view" data-rank="K" title="Ideation">
         <span class="icon-chip chip-yellow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a6 6 0 0 0-4 10.5c.6.6 1 1.4 1 2.3V16h6v-1.2c0-.9.4-1.7 1-2.3A6 6 0 0 0 12 2z"/></svg></span>
         <span class="btn-text">Ideation</span>
       </button>
+      <button class="menu-btn menu-btn-primary chip-violet" data-view="main-events-view" data-rank="Q" title="Main Events">
+        <span class="icon-chip chip-violet"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg></span>
+        <span class="btn-text">Main Events</span>
+      </button>
+
+      <div class="nav-group" id="nav-group-regular">
+        <button class="nav-group-header" type="button" aria-expanded="true" aria-controls="nav-group-regular-items" title="Regular Updates">
+          <span class="nav-group-rule" aria-hidden="true"></span>
+          <span class="nav-group-label">Regular Updates</span>
+          <span class="nav-group-count" id="nav-group-regular-count"></span>
+          <svg class="nav-group-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+        <div class="nav-group-items" id="nav-group-regular-items">
+      <button class="menu-btn chip-cyan" data-view="minigames-view" data-rank="J" title="Minigame Configs">
+        <span class="icon-chip chip-cyan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="10" rx="5"/><path d="M7 12h.01M9.5 9.5v5M17 12h.01M14.5 12h.01"/></svg></span>
+        <span class="btn-text">Minigame Configs</span>
+      </button>
+      <button class="menu-btn chip-amber" data-view="battlepass-view" data-rank="10" title="Pet Battlepass">
+        <span class="icon-chip chip-amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 3 7v6c0 5 4 8 9 9 5-1 9-4 9-9V7l-9-5z"/><path d="M9 12l2 2 4-4"/></svg></span>
+        <span class="btn-text">Pet Battlepass</span>
+      </button>
+      <button class="menu-btn chip-rose" data-view="holiday-bp-view" data-rank="9" title="Holiday Battlepass">
+        <span class="icon-chip chip-rose"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M4.5 6.5l15 11M19.5 6.5l-15 11M2 12h20"/></svg></span>
+        <span class="btn-text">Holiday Battlepass</span>
+      </button>
+      <button class="menu-btn chip-teal" data-view="decoration-shop-view" data-rank="8" title="Decoration Shop">
+        <span class="icon-chip chip-teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2 3 7v13a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7l-3-5"/><path d="M3 7h18M9 11a3 3 0 0 0 6 0"/></svg></span>
+        <span class="btn-text">Decoration Shop</span>
+      </button>
+      <button class="menu-btn chip-orange" data-view="streak-challenge-view" data-rank="7" title="Streak Challenge">
+        <span class="icon-chip chip-orange"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2c1 4-3 5-3 9a3 3 0 0 0 6 0c1 2-1 3-1 5a4 4 0 0 1-8 0c0-6 6-7 6-14z"/></svg></span>
+        <span class="btn-text">Streak Challenge</span>
+      </button>
+      <button class="menu-btn chip-pink" data-view="weekly-gift-view" data-rank="6" title="Weekly Gift">
+        <span class="icon-chip chip-pink"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="8" width="18" height="13" rx="2"/><path d="M3 12h18M12 8v13"/><path d="M12 8c-1.5 0-4-1-4-3a2 2 0 0 1 4 0 2 2 0 0 1 4 0c0 2-2.5 3-4 3z"/></svg></span>
+        <span class="btn-text">Weekly Gift</span>
+      </button>
+      <button class="menu-btn chip-indigo" data-view="full-screen-gift-view" data-rank="5" title="Full Screen Gift">
+        <span class="icon-chip chip-indigo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="18" rx="2"/><path d="M8 3v18M16 3v18M2 9h6M2 15h6M16 9h6M16 15h6"/></svg></span>
+        <span class="btn-text">Full Screen Gift</span>
+      </button>
+      <button class="menu-btn chip-blue" data-view="trivia-challenge-view" data-rank="4" title="Trivia Challenge">
+        <span class="icon-chip chip-blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 2-2.5 2-2.5 4"/><path d="M12 17h.01"/></svg></span>
+        <span class="btn-text">Trivia Challenge</span>
+      </button>
+      <button class="menu-btn chip-emerald" data-view="endless-treasure-view" data-rank="3" title="Endless Treasure">
+        <span class="icon-chip chip-emerald"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="10" width="18" height="10" rx="1"/><path d="M3 10 5 4h14l2 6M9 14a3 3 0 0 0 6 0"/></svg></span>
+        <span class="btn-text">Endless Treasure</span>
+      </button>
+        </div>
+      </div>
 
       <div class="sidebar-spacer"></div>
 
+      <button class="menu-btn profile-btn" data-view="profile-view" title="Your Profile">
+        <span class="profile-avatar" id="sidebar-avatar" aria-hidden="true"></span>
+        <span class="btn-text" id="sidebar-profile-name">Profile</span>
+      </button>
       <button class="menu-btn chip-slate" data-view="settings-view" title="Settings">
         <span class="icon-chip chip-slate"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>
         <span class="btn-text">Settings</span>
@@ -97,8 +116,10 @@
     </div>
 
     <!-- MAIN EVENTS VIEW -->
-    <section id="main-events-view" class="main-container view" aria-labelledby="main-events-heading">
+    <section id="main-events-view" class="main-container view" data-accent="violet" aria-labelledby="main-events-heading">
       <div class="header-section">
+        <span class="view-glyph" aria-hidden="true">♦</span>
+        <span class="view-eyebrow">Build Pipeline</span>
         <h1 id="main-events-heading" class="header-title">Event Automation Tool</h1>
         <p class="header-subtitle">Streamline event generation and deployment</p>
       </div>
@@ -152,8 +173,10 @@
     </section>
 
     <!-- MINIGAMES VIEW -->
-    <section id="minigames-view" class="main-container view" aria-labelledby="minigames-heading">
+    <section id="minigames-view" class="main-container view" data-accent="cyan" aria-labelledby="minigames-heading">
       <div class="header-section">
+        <span class="view-glyph" aria-hidden="true">♣</span>
+        <span class="view-eyebrow">Regular Update</span>
         <h1 id="minigames-heading" class="header-title">Minigame Configurations</h1>
         <p class="header-subtitle">Add and manage multiple minigame runs</p>
       </div>
@@ -181,8 +204,10 @@
     </section>
 
     <!-- BATTLEPASS VIEW -->
-    <section id="battlepass-view" class="main-container view" aria-labelledby="bp-heading">
+    <section id="battlepass-view" class="main-container view" data-accent="amber" aria-labelledby="bp-heading">
       <div class="header-section">
+        <span class="view-glyph" aria-hidden="true">♠</span>
+        <span class="view-eyebrow">Regular Update</span>
         <h1 id="bp-heading" class="header-title">Battle Pass Configuration</h1>
         <p class="header-subtitle">Automate multi-sheet updates for the next BP cycle</p>
       </div>
@@ -210,8 +235,10 @@
     </section>
 
     <!-- HOLIDAY BP VIEW -->
-    <section id="holiday-bp-view" class="main-container view" aria-labelledby="hbp-heading">
+    <section id="holiday-bp-view" class="main-container view" data-accent="rose" aria-labelledby="hbp-heading">
       <div class="header-section">
+        <span class="view-glyph" aria-hidden="true">♥</span>
+        <span class="view-eyebrow">Regular Update</span>
         <h1 id="hbp-heading" class="header-title">Holiday Battle Pass Configuration</h1>
         <p class="header-subtitle">Automate complex 4-variant flows for festive events</p>
       </div>
@@ -240,8 +267,10 @@
     </section>
 
     <!-- DECORATION SHOP VIEW -->
-    <section id="decoration-shop-view" class="main-container view" aria-labelledby="decoshop-heading">
+    <section id="decoration-shop-view" class="main-container view" data-accent="teal" aria-labelledby="decoshop-heading">
       <div class="header-section">
+        <span class="view-glyph" aria-hidden="true">♦</span>
+        <span class="view-eyebrow">Regular Update</span>
         <h1 id="decoshop-heading" class="header-title">Decoration Shop Configuration</h1>
         <p class="header-subtitle">Card Back &amp; Frame Configuration + PVP Bots Card Back Update</p>
       </div>
@@ -291,11 +320,30 @@
           <button id="decoshop-execute-btn" class="primary-btn">Commit Decoration Shop Config</button>
         </div>
       </div>
+      <div class="stacked-card">
+        <h2 class="card-title">PVP Bots Card Back Update</h2>
+        <p class="header-subtitle small" style="margin:0 0 8px;">Adds the new skin(s) above to Robot_Calc.xlsx's weight tables, then re-rolls every bot's frame/card-back assignment (a bot that isn't selected keeps its current value).</p>
+        <div class="form-row">
+          <label class="form-label" for="robotpvp-calc-path">Robot_Calc.xlsx</label>
+          <input type="text" id="robotpvp-calc-path" class="text-input mono" placeholder="Not set — browse for the calculator workbook" disabled />
+        </div>
+        <div class="execution-footer" style="justify-content:flex-start; margin-bottom:8px;">
+          <button id="robotpvp-browse-btn" class="secondary-btn">Browse for Robot_Calc.xlsx</button>
+        </div>
+        <div class="form-row"><label class="form-label" for="robotpvp-frame-weight">New Frame Weight (each)</label><input type="text" id="robotpvp-frame-weight" class="text-input mono" value="30" /></div>
+        <div class="form-row"><label class="form-label" for="robotpvp-cardback-weight">New Card Back Weight</label><input type="text" id="robotpvp-cardback-weight" class="text-input mono" value="30" /></div>
+        <div class="board-divider"></div>
+        <div class="execution-footer" style="justify-content:flex-end;">
+          <button id="robotpvp-execute-btn" class="primary-btn">Commit PVP Bots Card Back Update</button>
+        </div>
+      </div>
     </section>
 
     <!-- STREAK CHALLENGE VIEW -->
-    <section id="streak-challenge-view" class="main-container view" aria-labelledby="streak-heading">
+    <section id="streak-challenge-view" class="main-container view" data-accent="orange" aria-labelledby="streak-heading">
       <div class="header-section">
+        <span class="view-glyph" aria-hidden="true">♣</span>
+        <span class="view-eyebrow">Regular Update</span>
         <h1 id="streak-heading" class="header-title">Streak Challenge Configuration</h1>
         <p class="header-subtitle">Appends a new resident_task.xlsx cycle (任务链 + 任务列表) — independent of the Main Events checklist</p>
       </div>
@@ -339,8 +387,10 @@
     </section>
 
     <!-- WEEKLY GIFT VIEW -->
-    <section id="weekly-gift-view" class="main-container view" aria-labelledby="weekly-gift-heading">
+    <section id="weekly-gift-view" class="main-container view" data-accent="pink" aria-labelledby="weekly-gift-heading">
       <div class="header-section">
+        <span class="view-glyph" aria-hidden="true">♥</span>
+        <span class="view-eyebrow">Regular Update</span>
         <h1 id="weekly-gift-heading" class="header-title">Weekly Gift Configuration</h1>
         <p class="header-subtitle">Enables store.xlsx "weekly_gift" rows for this event — a fixed, gapless weekly grid (10001, 10002, ...) that events claim rows from by date overlap, not by cloning</p>
       </div>
@@ -383,8 +433,10 @@
     </section>
 
     <!-- FULL SCREEN GIFT VIEW -->
-    <section id="full-screen-gift-view" class="main-container view" aria-labelledby="fsg-heading">
+    <section id="full-screen-gift-view" class="main-container view" data-accent="indigo" aria-labelledby="fsg-heading">
       <div class="header-section">
+        <span class="view-glyph" aria-hidden="true">♠</span>
+        <span class="view-eyebrow">Regular Update</span>
         <h1 id="fsg-heading" class="header-title">Full Screen Gift Configuration</h1>
         <p class="header-subtitle">Appends a new store.xlsx "recommend_gift" full-screen gift (栏位归属=16) — clones the most recent instance's config, recurring on a ~14-day cadence</p>
       </div>
@@ -418,8 +470,10 @@
     </section>
 
     <!-- TRIVIA CHALLENGE VIEW -->
-    <section id="trivia-challenge-view" class="main-container view" aria-labelledby="trivia-heading">
+    <section id="trivia-challenge-view" class="main-container view" data-accent="blue" aria-labelledby="trivia-heading">
       <div class="header-section">
+        <span class="view-glyph" aria-hidden="true">♦</span>
+        <span class="view-eyebrow">Regular Update</span>
         <h1 id="trivia-heading" class="header-title">Trivia Challenge (答题挑战) Cycle Refresh</h1>
         <p class="header-subtitle">Archives the current live quiz batch to Quiz_备份 and writes a fresh 100-question set into localization_quiz.xlsx + answer_challenge.xlsx, keyed to the upcoming 答题挑战 cycle's start date in mini_mgr.xlsx</p>
       </div>
@@ -451,8 +505,10 @@
     </section>
 
     <!-- ENDLESS TREASURE VIEW -->
-    <section id="endless-treasure-view" class="main-container view" aria-labelledby="endless-treasure-heading">
+    <section id="endless-treasure-view" class="main-container view" data-accent="emerald" aria-labelledby="endless-treasure-heading">
       <div class="header-section">
+        <span class="view-glyph" aria-hidden="true">♣</span>
+        <span class="view-eyebrow">Regular Update</span>
         <h1 id="endless-treasure-heading" class="header-title">Endless Treasure (折扣链)</h1>
         <p class="header-subtitle">endless_treasure.xlsx — 折扣链数据 / 折扣链推荐 / 折扣链阶段数据 / 折扣链常量. Analysis only for now — no automation wired up yet.</p>
       </div>
@@ -526,9 +582,32 @@
       </div>
     </section>
 
-    <!-- IDEATION VIEW -->
-    <section id="ideation-view" class="main-container view" aria-labelledby="ideation-heading">
+    <!-- SPRINT BOARD (landing) -->
+    <section id="sprint-view" class="main-container view" data-accent="sprint" aria-labelledby="sprint-heading">
       <div class="header-section">
+        <span class="view-glyph" aria-hidden="true">♠</span>
+        <span class="view-eyebrow">Mission Control</span>
+        <h1 id="sprint-heading" class="header-title">Sprint Board</h1>
+        <p class="header-subtitle">Pick a sprint from the roadmap and see what still needs configuring. The plan comes from the exported Feishu roadmap; the ticks come from the config workbooks in the active branch.</p>
+      </div>
+
+      <div class="stacked-card">
+        <div class="form-row">
+          <label class="form-label" for="sprint-select">Sprint</label>
+          <select id="sprint-select" class="text-input"></select>
+          <button class="secondary-btn small" id="sprint-refresh-btn" type="button">Refresh</button>
+        </div>
+        <p class="settings-hint" id="sprint-summary"></p>
+      </div>
+
+      <div id="sprint-detail"></div>
+    </section>
+
+    <!-- IDEATION VIEW -->
+    <section id="ideation-view" class="main-container view" data-accent="yellow" aria-labelledby="ideation-heading">
+      <div class="header-section">
+        <span class="view-glyph" aria-hidden="true">✦</span>
+        <span class="view-eyebrow">Creative Lab</span>
         <h1 id="ideation-heading" class="header-title">Event Ideation</h1>
         <p class="header-subtitle">Generates distinct 1-Pager theme drafts for the 35+ US women player base, following the studio's real Event_Ideation_1Pager.md template. Every draft is written to disk under ideationData so feedback happens against the actual document. Uses the Claude API when a key is set in Settings, otherwise falls back to a local Ollama server if one is configured there.</p>
       </div>
@@ -559,6 +638,8 @@
         </div>
       </div>
 
+      <div id="ideation-lessons-panel"></div>
+
       <div id="ideation-results"></div>
 
       <div id="artreq-trigger-card" class="stacked-card" style="display:none;">
@@ -577,9 +658,65 @@
       <div id="artreq-results"></div>
     </section>
 
-    <!-- SETTINGS VIEW -->
-    <section id="settings-view" class="main-container view" aria-labelledby="settings-heading">
+    <!-- PROFILE VIEW -->
+    <section id="profile-view" class="main-container view" data-accent="violet" aria-labelledby="profile-heading">
       <div class="header-section">
+        <span class="view-glyph" aria-hidden="true">♥</span>
+        <span class="view-eyebrow">Identity</span>
+        <h1 id="profile-heading" class="header-title">Your Profile</h1>
+        <p class="header-subtitle">How you appear to the rest of the team on shared ideation work — your name and avatar are stamped on the drafts you generate, the feedback you leave, and the documents you mark as Final.</p>
+      </div>
+
+      <div class="stacked-card">
+        <h2 class="card-title">Identity</h2>
+        <div class="profile-editor">
+          <div class="profile-avatar-preview" id="profile-avatar-preview" aria-hidden="true"></div>
+          <div class="profile-fields">
+            <div class="form-row">
+              <label class="form-label" for="author-name-input">Display Name</label>
+              <input type="text" id="author-name-input" class="text-input" placeholder="Naveen Kumar" />
+            </div>
+            <div class="form-row">
+              <label class="form-label">Signed in as</label>
+              <span id="author-id-display" class="info-value"></span>
+            </div>
+          </div>
+        </div>
+        <p class="settings-hint">Your account comes from your Windows sign-in — there's no separate login to remember, and nothing here grants or restricts access. It answers "who wrote this", not "who's allowed to".</p>
+      </div>
+
+      <div class="stacked-card">
+        <h2 class="card-title">Avatar</h2>
+        <div class="form-row">
+          <label class="form-label">Colour</label>
+          <div class="avatar-swatches" id="avatar-swatches"></div>
+        </div>
+        <div class="form-row">
+          <label class="form-label">Picture</label>
+          <button class="secondary-btn small" id="avatar-upload-btn" type="button">Upload Image…</button>
+          <button class="secondary-btn small" id="avatar-clear-btn" type="button">Use Initials</button>
+          <input type="file" id="avatar-file-input" accept="image/png,image/jpeg,image/gif,image/webp" style="display:none;" />
+        </div>
+        <p class="settings-hint">Pictures are resized to 96×96 before saving so they stay small enough to sync with the shared folder instantly. With no picture set, your initials are shown on the colour above.</p>
+        <div class="board-divider"></div>
+        <div class="execution-footer" style="justify-content:space-between;">
+          <span class="settings-hint" id="profile-save-status" style="margin:0;"></span>
+          <button id="profile-save-btn" class="primary-btn">Save Profile</button>
+        </div>
+      </div>
+
+      <div class="stacked-card">
+        <h2 class="card-title">Team</h2>
+        <p class="settings-hint">Everyone who has saved a profile into the shared ideation folder. If a colleague is missing here, they either haven't set a profile yet or aren't pointed at the same folder.</p>
+        <div id="team-roster"></div>
+      </div>
+    </section>
+
+    <!-- SETTINGS VIEW -->
+    <section id="settings-view" class="main-container view" data-accent="slate" aria-labelledby="settings-heading">
+      <div class="header-section">
+        <span class="view-glyph" aria-hidden="true">✦</span>
+        <span class="view-eyebrow">System</span>
         <h1 id="settings-heading" class="header-title">Tool Settings</h1>
         <p class="header-subtitle">Configure branch paths, workspace, and environment</p>
       </div>
@@ -615,6 +752,18 @@
           <button class="secondary-btn" id="browse-unity-exe-btn">Browse</button>
         </div>
         <p class="settings-hint">Needed only for step 2 (ProtoToLua), run headlessly via <code>Unity.exe -batchmode -executeMethod ProtoTool.ProtoToLua</code> against the active branch's Unity project.</p>
+      </div>
+
+      <div class="stacked-card">
+        <h2 class="card-title">Shared Ideation Data</h2>
+        <div class="form-row">
+          <label class="form-label" for="ideation-data-path-input">Ideation Data Folder</label>
+          <input type="text" id="ideation-data-path-input" class="text-input mono" placeholder="(default — local, not shared)" readonly />
+          <button class="secondary-btn small" id="browse-ideation-data-btn" type="button">Browse</button>
+          <button class="secondary-btn small" id="reset-ideation-data-btn" type="button">Reset</button>
+        </div>
+        <p class="settings-hint" id="ideation-data-status"></p>
+        <p class="settings-hint">Point this at a folder everyone syncs — e.g. inside <code>OneDrive - Liquidnitro Games Private Limited</code> — and the whole team shares one set of themes, feedback, and lessons. Leave it at the default to work solo. Feedback is stored as one file per entry, so two people reviewing at once can't overwrite each other.</p>
       </div>
 
       <div class="stacked-card">
@@ -654,7 +803,7 @@
     </section>
 
     <!-- PLACEHOLDER VIEW -->
-    <section id="placeholder-view" class="main-container view placeholder-outer" aria-labelledby="placeholder-title">
+    <section id="placeholder-view" class="main-container view placeholder-outer" data-accent="slate" aria-labelledby="placeholder-title">
       <div class="huge-blue-board">
         <div class="card-icon-container" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v6M12 16v6M2 12h6M16 12h6"/><circle cx="12" cy="12" r="3"/></svg>

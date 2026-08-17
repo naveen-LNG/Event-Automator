@@ -18,15 +18,14 @@ Two providers, chosen by Electron (main.js) and passed in as payload["provider"]
 
 Feedback loop: every piece of feedback a designer submits on a theme is
 (1) applied immediately via a regeneration call, and (2) distilled into a
-short, reusable "lesson" appended to a per-event-type list in
-_ideation_feedback_store.json under ideationData/Events (path supplied by
-Electron - lives alongside the studio's existing per-event Art
-Requirements/Feedback/One-Pager folders, not hidden in the OS's per-user
-app-data folder, since this is studio design knowledge, not per-user app
-state). Every future generate/regenerate call folds the accumulated lessons
-into its system prompt, so the same notes don't need to be given twice. Each
-regeneration also appends a human-readable entry to a per-event
-"<Type>/Feedback/<ref> Ideation Feedback.md" file.
+short, reusable "lesson". Both are persisted by ideation_store as one
+immutable file per entry, so several designers sharing the ideationData
+folder (OneDrive/network share, path configurable in Settings) never write
+the same file and never lose each other's feedback to a sync conflict.
+Every future generate/regenerate call folds the accumulated, non-retracted
+lessons into its system prompt, so the same note doesn't need giving twice.
+A human-readable "<Type>/Feedback/<ref> Ideation Feedback.md" digest is
+regenerated from those entries so the trail is readable outside this app.
 """
 import sys
 import os
@@ -35,6 +34,8 @@ import json
 
 import openpyxl
 import anthropic
+
+import ideation_store as store
 
 MODEL = "claude-opus-5"
 
@@ -149,66 +150,69 @@ nostalgia and heritage, spa and retreat settings, community and social events. \
 Avoid themes that skew toward young/teen pop culture, gamer-culture references, \
 or generic fantasy/sci-fi with no connection to this audience's actual interests."""
 
-MAX_THEME_HISTORY_PER_TYPE = 30
 
 
 def log(msg):
     print(f"[Ideation] {msg}", file=sys.stderr, flush=True)
 
 
-def _load_feedback_store(path):
-    if path and os.path.exists(path):
-        try:
-            with open(path, "r", encoding="utf-8-sig") as f:
-                data = json.load(f)
-                if isinstance(data, dict):
-                    return data
-        except Exception as e:
-            log(f"Warning: could not read feedback store, starting fresh: {e}")
-    return {"_global": {"lessons": [], "history": []}}
+def write_feedback_digest(events_root, event_type, ref_name, doc_kind, kind_label):
+    """Human-readable feedback trail, alongside the studio's real
+    <Type>/Feedback/<code> ... .pdf files - so a designer browsing the event
+    folder sees the discussion without opening this app.
 
-
-def _save_feedback_store(path, data):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-
-
-def _known_lessons_block(store, event_type):
-    global_lessons = store.get("_global", {}).get("lessons", [])
-    type_lessons = store.get(event_type, {}).get("lessons", [])
-    all_lessons = global_lessons + type_lessons
-    if not all_lessons:
-        return ""
-    bullets = "\n".join(f"- {l}" for l in all_lessons)
-    return (
-        "\n\nLessons from past feedback on this studio's events - do not repeat "
-        f"these mistakes:\n{bullets}"
-    )
-
-
-def _append_event_feedback_log(events_root, event_type, ref_name, title, lesson, feedback_text, kind="Ideation"):
-    """Human-readable per-event trail, alongside the studio's real
-    <Type>/Feedback/<code> ... .pdf files - so a designer opening this
-    event's folder sees the feedback next to everything else, not just the
-    machine-readable lessons store. Shared by both the Ideation and Art
-    Requirement pipelines (kind distinguishes the log file and header)."""
+    Regenerated wholesale from the entry files every time rather than
+    appended to. Append-to-one-file is exactly the pattern that makes a
+    synced folder produce "conflicted copy" duplicates; a fully derived file
+    converges to the same content on every machine once sync settles, so a
+    conflicted copy is harmless rather than lossy."""
     if not events_root:
-        return
-    ref_name = re.sub(r'[\\/:*?"<>|]', '_', ref_name or "UnnamedEvent")
+        return None
+    entries = store.read_feedback_entries(events_root, event_type, doc_kind=doc_kind, ref_name=ref_name)
+    if not entries:
+        return None
+    retracted = store.read_retractions(events_root, event_type)
+
+    safe_ref = re.sub(r'[\\/:*?"<>|]', '_', ref_name or "UnnamedEvent")
     log_dir = os.path.join(events_root, event_type, "Feedback")
     os.makedirs(log_dir, exist_ok=True)
-    log_path = os.path.join(log_dir, f"{ref_name} {kind} Feedback.md")
+    log_path = os.path.join(log_dir, f"{safe_ref} {kind_label} Feedback.md")
 
-    is_new = not os.path.exists(log_path)
-    with open(log_path, "a", encoding="utf-8") as f:
-        if is_new:
-            f.write(f"# {kind} Feedback Log — {title} ({ref_name})\n\n")
-        f.write(f"## Round — draft at time of feedback: \"{title}\"\n\n")
-        f.write(f"**Feedback:** {feedback_text}\n\n")
+    lines = [
+        f"# {kind_label} Feedback Log — {safe_ref}",
+        "",
+        "_Generated from the feedback entries in `Feedback/entries/`. "
+        "Edits here are overwritten - add feedback through the tool._",
+        "",
+    ]
+    for e in entries:
+        is_retracted = e.get("entry_id") in retracted
+        lines.append(f"## {e.get('author_name')} — {e.get('created_at')}")
+        lines.append("")
+        lines.append(f"**On:** {e.get('subject_title')}")
+        lines.append("")
+        lines.append(f"**Feedback:** {e.get('feedback')}")
+        lines.append("")
+        lesson = (e.get("extracted_lesson") or "").strip()
         if lesson:
-            f.write(f"**Lesson extracted (applied to all future {event_type} {kind.lower()} runs):** {lesson}\n\n")
-        f.write("---\n\n")
+            if is_retracted:
+                r = retracted[e["entry_id"]]
+                lines.append(
+                    f"**Lesson (RETRACTED by {r.get('author_name')}"
+                    f"{' — ' + r['reason'] if r.get('reason') else ''}):** ~~{lesson}~~"
+                )
+            else:
+                lines.append(f"**Lesson (applied to future {event_type} {kind_label.lower()} runs):** {lesson}")
+            lines.append("")
+        if e.get("revised_title"):
+            lines.append(f"**Revised to:** {e['revised_title']}")
+            lines.append("")
+        lines.append("---")
+        lines.append("")
+
+    with open(log_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+    return log_path
 
 
 def find_latest_doc(folder, exclude_dirname="Drafts"):
@@ -235,22 +239,6 @@ def find_latest_doc(folder, exclude_dirname="Drafts"):
     except Exception as e:
         log(f"Warning: could not read {latest}: {e}")
         return None, None
-
-
-def _record_lesson(store, event_type, lesson, theme_name, feedback_text):
-    if event_type not in store:
-        store[event_type] = {"lessons": [], "history": []}
-    store[event_type].setdefault("lessons", [])
-    store[event_type].setdefault("history", [])
-    if lesson:
-        # ponytail: plain append, no dedupe/summarization yet - revisit if a
-        # type's lesson list grows large enough to dominate the prompt.
-        store[event_type]["lessons"].append(lesson)
-    store[event_type]["history"].append({
-        "theme_name": theme_name,
-        "feedback": feedback_text,
-        "extracted_lesson": lesson
-    })
 
 
 def _recent_events_for_type(design_path, event_type, limit=5):
@@ -297,47 +285,7 @@ def _read_template(events_root, filename):
         return ""
 
 
-def _theme_history_path(events_root):
-    return os.path.join(events_root, "_ideation_theme_history.json") if events_root else ""
-
-
-def _load_theme_history(path):
-    if path and os.path.exists(path):
-        try:
-            with open(path, "r", encoding="utf-8-sig") as f:
-                data = json.load(f)
-                if isinstance(data, dict):
-                    return data
-        except Exception as e:
-            log(f"Warning: could not read theme history, starting fresh: {e}")
-    return {}
-
-
-def _save_theme_history(path, data):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-
-
-def _theme_history_block(history, event_type):
-    past = history.get(event_type, [])
-    if not past:
-        return "(no themes generated for this event type yet - nothing to avoid repeating)"
-    return "\n".join(f"- {t['theme_name']} ({t['internal_reference_name']})" for t in past)
-
-
-def _record_generated_themes(history, event_type, themes):
-    entries = history.setdefault(event_type, [])
-    for t in themes:
-        entries.append({
-            "theme_name": t.get("theme_name", ""),
-            "internal_reference_name": t.get("internal_reference_name", "")
-        })
-    # ponytail: hard cap, keep-most-recent trim - no dedup/summarization yet.
-    del entries[:-MAX_THEME_HISTORY_PER_TYPE]
-
-
-def _render_theme_markdown(theme, event_type, duration_days, status_line):
+def _render_theme_markdown(theme, event_type, duration_days, status_line, author_name=""):
     """Mirrors the real Event_Ideation_1Pager.md section structure (Event
     Overview / Theme & Reasoning / New Features / Product Alignment /
     Event Item Visual References / Effort Estimation / Submission
@@ -351,9 +299,11 @@ def _render_theme_markdown(theme, event_type, duration_days, status_line):
     key_features = "\n".join(f"- {f}" for f in (vd.get("key_features") or []))
     ui_direction = "\n".join(f"- {f}" for f in (vd.get("ui_direction") or []))
 
+    by_line = f"\n**By:** {author_name}" if author_name else ""
+
     return f"""# Event Ideation 1-Pager — {theme.get('theme_name')}
 
-**Status:** {status_line}
+**Status:** {status_line}{by_line}
 
 ## 1. Event Overview
 
@@ -433,7 +383,7 @@ AI-drafted via the Event Automator Ideation tab. Treat as a first draft for PO r
 """
 
 
-def _write_theme_draft(events_root, event_type, theme, duration_days):
+def _write_theme_draft(events_root, event_type, theme, duration_days, author_name=""):
     """Writes every generated/regenerated theme to disk immediately, so
     feedback happens against an actual document instead of only the
     in-app card. Lives in a Drafts/ subfolder of the same "One-Pager
@@ -445,7 +395,7 @@ def _write_theme_draft(events_root, event_type, theme, duration_days):
     draft_dir = os.path.join(events_root, event_type, "One-Pager Ideation", "Drafts")
     os.makedirs(draft_dir, exist_ok=True)
     draft_path = os.path.join(draft_dir, f"{ref_name} Draft.md")
-    md = _render_theme_markdown(theme, event_type, duration_days, "Draft — under review, not yet selected")
+    md = _render_theme_markdown(theme, event_type, duration_days, "Draft — under review, not yet selected", author_name)
     with open(draft_path, "w", encoding="utf-8") as f:
         f.write(md)
     return draft_path
@@ -596,9 +546,10 @@ def generate_main():
     event_type = payload.get("event_type", "")
     duration_days = payload.get("duration_days", 14)
     design_path = payload.get("design_path", "")
-    feedback_store_path = payload.get("feedback_store_path", "")
     events_root = payload.get("events_root", "")
     provider = payload.get("provider") or "anthropic"
+    author_id = payload.get("author_id", "")
+    author_name = payload.get("author_name", "")
     try:
         theme_count = max(1, min(10, int(payload.get("theme_count", 5))))
     except (TypeError, ValueError):
@@ -609,12 +560,10 @@ def generate_main():
         sys.exit(1)
 
     try:
-        store = _load_feedback_store(feedback_store_path)
-        lessons_block = _known_lessons_block(store, event_type)
+        lessons_block = store.lessons_prompt_block(events_root, event_type)
         template_text = _read_template(events_root, "Event_Ideation_1Pager.md")
         recent_events = _recent_events_for_type(design_path, event_type)
-        theme_history = _load_theme_history(_theme_history_path(events_root))
-        past_themes_txt = _theme_history_block(theme_history, event_type)
+        past_themes_txt = store.past_themes_block(events_root, event_type)
 
         recent_txt = (
             "\n".join(f"- {e['alias']} (started {e['start_time'] or 'unknown date'})" for e in recent_events)
@@ -652,11 +601,10 @@ def generate_main():
         draft_paths = []
         if events_root:
             for t in themes:
-                p = _write_theme_draft(events_root, event_type, t, duration_days)
+                p = _write_theme_draft(events_root, event_type, t, duration_days, author_name)
                 if p:
                     draft_paths.append(p)
-            _record_generated_themes(theme_history, event_type, themes)
-            _save_theme_history(_theme_history_path(events_root), theme_history)
+            store.record_generated_themes(events_root, event_type, themes, author_id, author_name)
 
         print(json.dumps({"themes": themes, "provider": provider, "draft_paths": draft_paths}, ensure_ascii=False))
     except anthropic.AuthenticationError:
@@ -684,9 +632,10 @@ def regenerate_main():
 
     event_type = payload.get("event_type", "")
     duration_days = payload.get("duration_days", 14)
-    feedback_store_path = payload.get("feedback_store_path", "")
     events_root = payload.get("events_root", "")
     provider = payload.get("provider") or "anthropic"
+    author_id = payload.get("author_id", "")
+    author_name = payload.get("author_name", "")
     theme = payload.get("theme")
     feedback_text = (payload.get("feedback") or "").strip()
 
@@ -698,8 +647,7 @@ def regenerate_main():
         sys.exit(1)
 
     try:
-        store = _load_feedback_store(feedback_store_path)
-        lessons_block = _known_lessons_block(store, event_type)
+        lessons_block = store.lessons_prompt_block(events_root, event_type)
         template_text = _read_template(events_root, "Event_Ideation_1Pager.md")
 
         user_message = (
@@ -718,16 +666,18 @@ def regenerate_main():
         new_theme = result["theme"]
 
         lesson = (result.get("extracted_lesson") or "").strip()
-        if feedback_store_path:
-            _record_lesson(store, event_type, lesson, theme.get("theme_name", ""), feedback_text)
-            _save_feedback_store(feedback_store_path, store)
         draft_path = None
+        ref_name = theme.get("internal_reference_name", "")
         if events_root:
-            _append_event_feedback_log(events_root, event_type, theme.get("internal_reference_name", ""), theme.get("theme_name", ""), lesson, feedback_text, kind="Ideation")
-            draft_path = _write_theme_draft(events_root, event_type, new_theme, duration_days)
-            history = _load_theme_history(_theme_history_path(events_root))
-            _record_generated_themes(history, event_type, [new_theme])
-            _save_theme_history(_theme_history_path(events_root), history)
+            store.write_feedback_entry(
+                events_root, event_type, "ideation", ref_name,
+                theme.get("theme_name", ""), feedback_text, lesson,
+                author_id, author_name,
+                revised_title=new_theme.get("theme_name", ""),
+            )
+            write_feedback_digest(events_root, event_type, ref_name, "ideation", "Ideation")
+            draft_path = _write_theme_draft(events_root, event_type, new_theme, duration_days, author_name)
+            store.record_generated_themes(events_root, event_type, [new_theme], author_id, author_name)
 
         print(json.dumps({"theme": new_theme, "provider": provider, "draft_path": draft_path}, ensure_ascii=False))
     except anthropic.AuthenticationError:
@@ -739,6 +689,124 @@ def regenerate_main():
     except anthropic.APIConnectionError:
         print(json.dumps({"error": "Could not reach the Anthropic API. Check network access."}))
         sys.exit(1)
+    except Exception as e:
+        print(json.dumps({"error": str(e)}))
+        sys.exit(1)
+
+
+def entries_main():
+    """Read-only: the feedback thread + active lessons for a type, so the UI
+    can show who said what and offer to retract a bad lesson. No LLM call."""
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if len(sys.argv) < 2:
+        print(json.dumps({"error": "Usage: ideation_entries <payload.json>"}))
+        sys.exit(1)
+
+    with open(sys.argv[1], "r", encoding="utf-8-sig") as f:
+        payload = json.load(f)
+
+    events_root = payload.get("events_root", "")
+    event_type = payload.get("event_type", "")
+    doc_kind = payload.get("doc_kind") or None
+    ref_name = payload.get("ref_name") or None
+
+    try:
+        retracted = store.read_retractions(events_root, event_type)
+        entries = []
+        for e in store.read_feedback_entries(events_root, event_type, doc_kind=doc_kind, ref_name=ref_name):
+            r = retracted.get(e.get("entry_id"))
+            entries.append({**e, "retracted": bool(r), "retracted_by": (r or {}).get("author_name")})
+        # Profiles ride along with the thread so the UI can draw each
+        # author's avatar without a second round trip per render.
+        print(json.dumps({
+            "entries": entries,
+            "lessons": store.active_lessons(events_root, event_type),
+            "profiles": store.read_profiles(events_root),
+        }, ensure_ascii=False))
+    except Exception as e:
+        print(json.dumps({"error": str(e)}))
+        sys.exit(1)
+
+
+def retract_main():
+    """Retract a lesson so it stops being folded into future prompts. Writes
+    a separate retraction file rather than editing the original entry - two
+    people retracting different lessons must never touch the same file."""
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if len(sys.argv) < 2:
+        print(json.dumps({"error": "Usage: ideation_retract <payload.json>"}))
+        sys.exit(1)
+
+    with open(sys.argv[1], "r", encoding="utf-8-sig") as f:
+        payload = json.load(f)
+
+    events_root = payload.get("events_root", "")
+    event_type = payload.get("event_type", "")
+    entry_id = payload.get("entry_id", "")
+
+    if not events_root or not event_type or not entry_id:
+        print(json.dumps({"error": "Missing events_root, event_type, or entry_id."}))
+        sys.exit(1)
+
+    try:
+        store.write_retraction(events_root, event_type, entry_id,
+                               payload.get("author_id", ""), payload.get("author_name", ""),
+                               payload.get("reason", ""))
+        # Keep the human-readable digests in step with the retraction.
+        for e in store.read_feedback_entries(events_root, event_type):
+            if e.get("entry_id") == entry_id:
+                kind_label = "Art Requirement" if e.get("doc_kind") == "artreq" else "Ideation"
+                write_feedback_digest(events_root, event_type, e.get("ref_name"), e.get("doc_kind"), kind_label)
+                break
+        print(json.dumps({"ok": True, "lessons": store.active_lessons(events_root, event_type)}, ensure_ascii=False))
+    except Exception as e:
+        print(json.dumps({"error": str(e)}))
+        sys.exit(1)
+
+
+def profile_save_main():
+    """Write your own profile (name + avatar) into the shared folder so
+    colleagues see it beside your feedback. No LLM call."""
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if len(sys.argv) < 2:
+        print(json.dumps({"error": "Usage: profile_save <payload.json>"}))
+        sys.exit(1)
+
+    with open(sys.argv[1], "r", encoding="utf-8-sig") as f:
+        payload = json.load(f)
+
+    events_root = payload.get("events_root", "")
+    author_id = payload.get("author_id", "")
+    if not events_root or not author_id:
+        print(json.dumps({"error": "Missing events_root or author_id."}))
+        sys.exit(1)
+
+    try:
+        rec = store.write_profile(
+            events_root, author_id,
+            payload.get("display_name", ""),
+            payload.get("avatar_color", ""),
+            payload.get("avatar_image", ""),
+        )
+        print(json.dumps({"profile": rec}, ensure_ascii=False))
+    except Exception as e:
+        print(json.dumps({"error": str(e)}))
+        sys.exit(1)
+
+
+def profiles_read_main():
+    """Every known profile in the shared folder, for the sidebar chip and
+    the avatars in feedback threads."""
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if len(sys.argv) < 2:
+        print(json.dumps({"error": "Usage: profiles_read <payload.json>"}))
+        sys.exit(1)
+
+    with open(sys.argv[1], "r", encoding="utf-8-sig") as f:
+        payload = json.load(f)
+
+    try:
+        print(json.dumps({"profiles": store.read_profiles(payload.get("events_root", ""))}, ensure_ascii=False))
     except Exception as e:
         print(json.dumps({"error": str(e)}))
         sys.exit(1)

@@ -59,10 +59,10 @@ import json
 
 import anthropic
 
+import ideation_store as store
 from ideation_generator import (
     KNOWN_TYPES, log, _read_template, _client, _call_claude, _call_ollama,
-    _load_feedback_store, _save_feedback_store, _known_lessons_block, _record_lesson,
-    _append_event_feedback_log, find_latest_doc,
+    write_feedback_digest, find_latest_doc,
 )
 
 MODEL_MAX_TOKENS_BASE = 5000
@@ -281,7 +281,7 @@ def _regenerate_variation(provider, payload, system_prompt, user_message):
     return _call_claude(payload.get("api_key", ""), system_prompt, user_message, REGENERATE_SCHEMA, 8500)
 
 
-def _render_markdown(doc, event_type, status_line):
+def _render_markdown(doc, event_type, status_line, author_name=""):
     go = doc.get("gameplay_overview") or {}
     zones_md = ""
     for z in (doc.get("zones") or []):
@@ -300,9 +300,11 @@ def _render_markdown(doc, event_type, status_line):
     lean_into_md = "\n".join(f"- {x}" for x in (adg.get("lean_into") or []))
     avoid_md = "\n".join(f"- {x}" for x in (adg.get("avoid") or []))
 
+    by_line = f"\n**By:** {author_name}" if author_name else ""
+
     return f"""# {doc.get('title')}
 
-**Status:** {status_line}
+**Status:** {status_line}{by_line}
 
 ## 1. Gameplay Overview
 
@@ -349,7 +351,7 @@ AI-drafted via the Event Automator Art Requirement tab. Treat as a first draft f
 """
 
 
-def _write_variation_draft(events_root, event_type, doc, index):
+def _write_variation_draft(events_root, event_type, doc, index, author_name=""):
     if not events_root:
         return None
     title = doc.get("title") or "Untitled"
@@ -358,7 +360,7 @@ def _write_variation_draft(events_root, event_type, doc, index):
     os.makedirs(draft_dir, exist_ok=True)
     path = os.path.join(draft_dir, f"{ref} Variation {index + 1}.md")
     with open(path, "w", encoding="utf-8") as f:
-        f.write(_render_markdown(doc, event_type, f"Draft variation {index + 1} — under review, not yet selected"))
+        f.write(_render_markdown(doc, event_type, f"Draft variation {index + 1} — under review, not yet selected", author_name))
     return path
 
 
@@ -373,9 +375,10 @@ def generate_main():
 
     event_type = payload.get("event_type", "")
     ideation_theme = payload.get("ideation_theme") or {}
-    feedback_store_path = payload.get("feedback_store_path", "")
     events_root = payload.get("events_root", "")
     provider = payload.get("provider") or "anthropic"
+    author_id = payload.get("author_id", "")
+    author_name = payload.get("author_name", "")
     try:
         variation_count = max(1, min(10, int(payload.get("variation_count", 3))))
     except (TypeError, ValueError):
@@ -389,8 +392,7 @@ def generate_main():
         sys.exit(1)
 
     try:
-        store = _load_feedback_store(feedback_store_path)
-        lessons_block = _known_lessons_block(store, event_type)
+        lessons_block = store.lessons_prompt_block(events_root, event_type)
         final_spec_template_text = _read_template(events_root, "Event_Final_Art_Requirement.md")
         art_req_folder = os.path.join(events_root, event_type, "Art Requirements") if events_root else ""
         _, past_doc_text = find_latest_doc(art_req_folder)
@@ -411,7 +413,7 @@ def generate_main():
         draft_paths = []
         if events_root:
             for i, v in enumerate(variations):
-                p = _write_variation_draft(events_root, event_type, v, i)
+                p = _write_variation_draft(events_root, event_type, v, i, author_name)
                 if p:
                     draft_paths.append(p)
 
@@ -440,9 +442,10 @@ def regenerate_main():
         payload = json.load(f)
 
     event_type = payload.get("event_type", "")
-    feedback_store_path = payload.get("feedback_store_path", "")
     events_root = payload.get("events_root", "")
     provider = payload.get("provider") or "anthropic"
+    author_id = payload.get("author_id", "")
+    author_name = payload.get("author_name", "")
     variation = payload.get("variation")
     variation_index = payload.get("variation_index", 0)
     feedback_text = (payload.get("feedback") or "").strip()
@@ -455,8 +458,7 @@ def regenerate_main():
         sys.exit(1)
 
     try:
-        store = _load_feedback_store(feedback_store_path)
-        lessons_block = _known_lessons_block(store, event_type)
+        lessons_block = store.lessons_prompt_block(events_root, event_type)
         final_spec_template_text = _read_template(events_root, "Event_Final_Art_Requirement.md")
         art_req_folder = os.path.join(events_root, event_type, "Art Requirements") if events_root else ""
         _, past_doc_text = find_latest_doc(art_req_folder)
@@ -475,16 +477,17 @@ def regenerate_main():
         new_variation = result["variation"]
 
         lesson = (result.get("extracted_lesson") or "").strip()
-        if feedback_store_path:
-            _record_lesson(store, event_type, lesson, variation.get("title", ""), feedback_text)
-            _save_feedback_store(feedback_store_path, store)
         draft_path = None
+        ref_name = payload.get("ref_name") or variation.get("title", "")
         if events_root:
-            _append_event_feedback_log(
-                events_root, event_type, variation.get("title", ""), variation.get("title", ""),
-                lesson, feedback_text, kind="Art Requirement"
+            store.write_feedback_entry(
+                events_root, event_type, "artreq", ref_name,
+                variation.get("title", ""), feedback_text, lesson,
+                author_id, author_name,
+                revised_title=new_variation.get("title", ""),
             )
-            draft_path = _write_variation_draft(events_root, event_type, new_variation, variation_index)
+            write_feedback_digest(events_root, event_type, ref_name, "artreq", "Art Requirement")
+            draft_path = _write_variation_draft(events_root, event_type, new_variation, variation_index, author_name)
 
         print(json.dumps({"variation": new_variation, "provider": provider, "draft_path": draft_path}, ensure_ascii=False))
     except anthropic.AuthenticationError:
@@ -528,8 +531,12 @@ def save_final_main():
         final_dir = os.path.join(events_root, event_type, "Art Requirements")
         os.makedirs(final_dir, exist_ok=True)
         path = os.path.join(final_dir, f"{ref} Art Requirement.md")
+        selector = payload.get("author_name", "")
+        status = "Selected as Final (draft — pending Art Lead review)"
+        if selector:
+            status += f" · selected by {selector}"
         with open(path, "w", encoding="utf-8") as f:
-            f.write(_render_markdown(variation, event_type, "Selected as Final (draft — pending Art Lead review)"))
+            f.write(_render_markdown(variation, event_type, status, selector))
         print(json.dumps({"path": path}))
     except Exception as e:
         print(json.dumps({"error": str(e)}))

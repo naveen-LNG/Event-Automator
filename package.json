@@ -5,8 +5,11 @@
   "main": "main.js",
   "author": "SkipBo Event Automation",
   "scripts": {
+    "prestart": "npm run sync:py",
     "start": "electron .",
+    "sync:py": "powershell -ExecutionPolicy Bypass -File scripts/sync-pybackend.ps1",
     "build:py": "powershell -ExecutionPolicy Bypass -File scripts/build-pybackend.ps1",
+    "build:icon": "python scripts/make-icon.py",
     "dist": "npm run build:py && electron-builder"
   },
   "devDependencies": {
@@ -23,6 +26,7 @@
       "main.js",
       "preload.js",
       "renderer/**/*",
+      "build/icon.png",
       "!pybackend_dist/**"
     ],
     "extraResources": [
@@ -36,6 +40,7 @@
       }
     ],
     "win": {
+      "icon": "build/icon.ico",
       "target": [
         {
           "target": "nsis",
@@ -56,7 +61,9 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Event Automator"
+      "shortcutName": "Event Automator",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico"
     }
   }
 }

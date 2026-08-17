@@ -2,6 +2,7 @@ import sys
 import os
 import json
 import copy as _copy
+from xlsx_safe import load_workbook_frozen
 from datetime import datetime, timedelta
 import openpyxl
 
@@ -63,7 +64,7 @@ def update_full_screen_gift(design_path, start_date_str):
     os.chmod(file_path, 0o666)
 
     try:
-        wb = openpyxl.load_workbook(file_path)
+        wb = load_workbook_frozen(file_path)
         if "recommend_gift" not in wb.sheetnames:
             print("Error: recommend_gift sheet not found in store.xlsx")
             return False

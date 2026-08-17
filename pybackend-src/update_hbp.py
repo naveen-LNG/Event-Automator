@@ -3,7 +3,10 @@ import os
 import openpyxl
 import json
 import re
+import datetime
 import copy as _copy
+
+from xlsx_safe import load_workbook_frozen
 
 def copy_cell_format(src_cell, dst_cell):
     """Copy number format + style from src_cell to dst_cell (call after
@@ -58,6 +61,21 @@ def find_last_matching_block(ws, pattern, alias_col=2):
     rows.reverse()
     return rows
 
+SHEET_TIME_FORMAT = '%Y-%m-%d %H:%M:%S'
+
+def parse_time(raw, field):
+    """Validate a UI-supplied datetime and normalise it to the sheet's format."""
+    text = str(raw).strip()
+    for fmt in ('%Y-%m-%d %H:%M:%S', '%Y/%m/%d %H:%M:%S',
+                '%Y-%m-%d %H:%M', '%Y/%m/%d %H:%M'):
+        try:
+            return datetime.datetime.strptime(text, fmt).strftime(SHEET_TIME_FORMAT)
+        except ValueError:
+            continue
+    print(f"Fatal Error: {field} is not a valid date/time: {raw!r}. "
+          f"Expected e.g. 2026-09-11 00:00:00")
+    sys.exit(1)
+
 def main():
     sys.stdout.reconfigure(encoding='utf-8')
     try:
@@ -71,15 +89,26 @@ def main():
         payload = json.load(f)
 
     holiday_id = payload['holiday_id'] # e.g. "260601"
-    start_time = payload['start_time']
-    end_time = payload['end_time']
+    # The UI passes these through as free text, so a typo like "2026:09-14"
+    # would otherwise be written straight into the sheet and only surface much
+    # later as a bad live date. Normalise to the format the sheet already uses.
+    start_time = parse_time(payload['start_time'], 'start_time')
+    end_time = parse_time(payload['end_time'], 'end_time')
+    if end_time <= start_time:
+        print(f"Fatal Error: end_time ({end_time}) is not after start_time ({start_time})")
+        sys.exit(1)
+
+    if not re.fullmatch(r'\d{6}', str(holiday_id).strip()):
+        print(f"Fatal Error: holiday_id must be 6 digits, got {holiday_id!r}")
+        sys.exit(1)
+    holiday_id = str(holiday_id).strip()
 
     bp_path = os.path.join(design_path, "festivals_bp.xlsx")
     item_path = os.path.join(design_path, "item.xlsx")
     store_path = os.path.join(design_path, "store.xlsx")
 
     try:
-        wb_bp = openpyxl.load_workbook(bp_path)
+        wb_bp = load_workbook_frozen(bp_path)
         
         # --- 1. festivals_bp sheet ---
         ws_bp = wb_bp['festivals_bp']
@@ -226,7 +255,7 @@ def main():
         wb_bp.save(bp_path)
 
         # --- 5. item.xlsx ---
-        wb_item = openpyxl.load_workbook(item_path)
+        wb_item = load_workbook_frozen(item_path)
         ws_item = wb_item['item']
         item_block = find_last_matching_block(ws_item, r'^\d{6}节日BP通行证')
         insert_item_r = (item_block[-1] + 1) if item_block else (ws_item.max_row + 1)
@@ -241,7 +270,7 @@ def main():
         wb_item.save(item_path)
 
         # --- 6. store.xlsx ---
-        wb_store = openpyxl.load_workbook(store_path)
+        wb_store = load_workbook_frozen(store_path)
 
         # store_recharge: clone the most recent holiday-cycle block, wherever it
         # currently sits (never a hardcoded row — the sheet grows every cycle).

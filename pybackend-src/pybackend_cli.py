@@ -43,6 +43,9 @@ def main():
     elif script == "update_decoration_shop":
         import update_decoration_shop
         update_decoration_shop.main()
+    elif script == "update_robot_pvp":
+        import update_robot_pvp
+        update_robot_pvp.main()
     elif script == "update_resident_task":
         import update_resident_task
         update_resident_task.main()
@@ -82,6 +85,21 @@ def main():
     elif script == "ideation_regenerate":
         import ideation_generator
         ideation_generator.regenerate_main()
+    elif script == "ideation_entries":
+        import ideation_generator
+        ideation_generator.entries_main()
+    elif script == "ideation_retract":
+        import ideation_generator
+        ideation_generator.retract_main()
+    elif script == "sprint_board":
+        import sprint_board
+        sprint_board.main()
+    elif script == "profile_save":
+        import ideation_generator
+        ideation_generator.profile_save_main()
+    elif script == "profiles_read":
+        import ideation_generator
+        ideation_generator.profiles_read_main()
     elif script == "artreq_generate":
         import art_requirement_generator
         art_requirement_generator.generate_main()

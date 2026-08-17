@@ -5,6 +5,7 @@ import shutil
 import stat
 import json
 import openpyxl
+from xlsx_safe import load_workbook_frozen
 import copy as _copy
 
 
@@ -133,7 +134,7 @@ def main():
 
     try:
         # === 1. icon.xlsx -> icon_skin: 2 new frames + 1 new card skin (mid+big) ===
-        wb_icon = openpyxl.load_workbook(icon_path)
+        wb_icon = load_workbook_frozen(icon_path)
         ws_icon = wb_icon["icon_skin"]
 
         # Frames: FRAME_SHOP_NN, inserted right before "// 卡牌皮肤" divider.
@@ -154,32 +155,36 @@ def main():
                 copy_cell_format(frame_template[c_idx], dst_c)
         card_skin_divider += 2  # shifted down by the 2 rows we just inserted
 
-        # Card skin (mid+big): CARD_SKIN_MID/BIG_NNN, inserted right before "//头像" divider.
+        # Card skin (mid+big): CARD_SKIN_MID/BIG_NNN, inserted right before "//头像"
+        # divider when present. Some branches (confirmed: WorkSpcae_Design) have no
+        # such divider at all — the block is simply a true tail — so fall back to
+        # appending after the real last row instead of hard-failing.
         last_card_row, last_card_num = last_row_matching_prefix(ws_icon, 1, r"^CARD_SKIN_MID_(\d+)$")
         card_template = [ws_icon.cell(last_card_row, c) for c in range(1, ws_icon.max_column + 1)]
         card_big_template = [ws_icon.cell(last_card_row + 1, c) for c in range(1, ws_icon.max_column + 1)]
         avatar_divider = find_divider_row(ws_icon, "//头像")
-        if avatar_divider is None:
-            raise ValueError("icon_skin: '//头像' divider not found")
         new_card_num = last_card_num + 1
-        shift_rows_down(ws_icon, avatar_divider, 2)
+        if avatar_divider is not None:
+            shift_rows_down(ws_icon, avatar_divider, 2)
+            insert_at = avatar_divider
+        else:
+            insert_at = get_real_last_row(ws_icon) + 1
         mid_values = [f"CARD_SKIN_MID_{new_card_num:03d}", f"{cardback_alias}皮肤中图", f"img_cards_{new_card_num:03d}", "CARD_SKIN_60"]
         big_values = [f"CARD_SKIN_BIG_{new_card_num:03d}", f"{cardback_alias}皮肤大图", f"img_cardsshow_{new_card_num:03d}", "CARD_SKIN_B_60"]
         for c_idx, val in enumerate(mid_values):
-            dst_c = ws_icon.cell(avatar_divider, c_idx + 1)
+            dst_c = ws_icon.cell(insert_at, c_idx + 1)
             dst_c.value = val
             copy_cell_format(card_template[c_idx], dst_c)
         for c_idx, val in enumerate(big_values):
-            dst_c = ws_icon.cell(avatar_divider + 1, c_idx + 1)
+            dst_c = ws_icon.cell(insert_at + 1, c_idx + 1)
             dst_c.value = val
             copy_cell_format(card_big_template[c_idx], dst_c)
-        ws_icon.cell(avatar_divider + 1, 4).value = "CARD_SKIN_B_60"
 
         wb_icon.save(icon_path)
         print(f"icon.xlsx: added FRAME_SHOP_{new_frame_nums[0]}/{new_frame_nums[1]}, CARD_SKIN_MID/BIG_{new_card_num:03d}")
 
         # === 2. item.xlsx -> item: 2 new 5xxx (frames), 1 new 6xxx (card back) ===
-        wb_item = openpyxl.load_workbook(item_path)
+        wb_item = load_workbook_frozen(item_path)
         ws_item = wb_item["item"]
 
         last_5xxx_row = last_row_with_id_prefix(ws_item, 5000, 6000)
@@ -262,7 +267,7 @@ def main():
         print("item.xlsx: item_frame + item_cardBg rows appended")
 
         # === 5. asset_ref.xlsx -> key_asset: 1 new CARD_SHOP_NN before "// StarPass" ===
-        wb_asset = openpyxl.load_workbook(asset_ref_path)
+        wb_asset = load_workbook_frozen(asset_ref_path)
         ws_key = wb_asset["key_asset"]
         last_cardshop_row, last_cardshop_num = last_row_matching_prefix(ws_key, 1, r"^CARD_SHOP_(\d+)$")
         key_template = [ws_key.cell(last_cardshop_row, c) for c in range(1, ws_key.max_column + 1)]
@@ -281,7 +286,7 @@ def main():
         print(f"asset_ref.xlsx: added {cardshop_name}")
 
         # === 6. card.xlsx -> card_skin_atlas: append 1 row (true tail) ===
-        wb_card = openpyxl.load_workbook(card_path)
+        wb_card = load_workbook_frozen(card_path)
         ws_atlas = wb_card["card_skin_atlas"]
         last_base = 0
         last_base_row = None
@@ -355,7 +360,7 @@ def main():
         print(f"card.xlsx: card_skin_atlas base {new_base}, card_style {len(template_offsets)} rows cloned")
 
         # === 8. skin_shop.xlsx -> Skin Item: 1 new 10xxx (card back), 2 new 20xxx (frames) ===
-        wb_shop = openpyxl.load_workbook(skin_shop_path)
+        wb_shop = load_workbook_frozen(skin_shop_path)
         ws_shopitem = wb_shop["皮肤Item"]
 
         # 10xxx block: find last numeric ID starting with "100" (card-back series)

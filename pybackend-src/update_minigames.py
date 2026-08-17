@@ -2,6 +2,7 @@ import sys
 import os
 import json
 import openpyxl
+from xlsx_safe import load_workbook_frozen
 
 def main():
     sys.stdout.reconfigure(encoding='utf-8')
@@ -26,7 +27,7 @@ def main():
         sys.exit(1)
 
     try:
-        wb = openpyxl.load_workbook(excel_path)
+        wb = load_workbook_frozen(excel_path)
     except Exception as e:
         print(f"Error loading workbook: {str(e)}")
         sys.exit(1)

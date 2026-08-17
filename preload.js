@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('api', {
   hbpGet: (params) => ipcRenderer.invoke('hbp:get', params),
   hbpCommit: (params) => ipcRenderer.invoke('hbp:commit', params),
   decoShopCommit: (params) => ipcRenderer.invoke('decoshop:commit', params),
+  robotPvpCommit: (params) => ipcRenderer.invoke('robotpvp:commit', params),
   residentTaskCommit: (params) => ipcRenderer.invoke('residenttask:commit', params),
   weeklyGiftCommit: (params) => ipcRenderer.invoke('weeklygift:commit', params),
   fullScreenGiftGet: (params) => ipcRenderer.invoke('fullscreengift:get', params),
@@ -41,5 +42,15 @@ contextBridge.exposeInMainWorld('api', {
 
   artReqGenerate: (params) => ipcRenderer.invoke('artreq:generate', params),
   artReqRegenerate: (params) => ipcRenderer.invoke('artreq:regenerate', params),
-  artReqSaveFinal: (params) => ipcRenderer.invoke('artreq:saveFinal', params)
+  artReqSaveFinal: (params) => ipcRenderer.invoke('artreq:saveFinal', params),
+
+  ideationEntries: (params) => ipcRenderer.invoke('ideation:entries', params),
+  ideationRetract: (params) => ipcRenderer.invoke('ideation:retract', params),
+  ideationBrowseDataFolder: () => ipcRenderer.invoke('ideation:browseDataFolder'),
+  ideationDataFolderInfo: () => ipcRenderer.invoke('ideation:dataFolderInfo'),
+
+  sprintBoard: (params) => ipcRenderer.invoke('sprint:board', params),
+
+  profileSave: (params) => ipcRenderer.invoke('profile:save', params),
+  profileList: () => ipcRenderer.invoke('profile:list')
 });
