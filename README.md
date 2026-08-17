@@ -58,6 +58,26 @@ npm run build:py   # once, or whenever pybackend-src/ changes
 npm start           # launches the app against the local pybackend_dist/ build
 ```
 
+## Keeping this repo in sync with the live tool
+
+The live tool's actual working copy is not this git checkout — it lives
+elsewhere on the primary dev machine (alongside the larger, non-git SkipBo/Unity
+project tree the Python backend is shared with) and gets copied into this repo
+before each push. That gap has caused real drift more than once: a fix landing
+on the live tool without ever reaching GitHub.
+
+`npm install` sets `core.hooksPath` to `githooks/` automatically, which enables
+a `pre-push` hook that runs `scripts/check-drift.ps1` — it hashes every file
+this repo tracks against the live tool's copy and **blocks the push** if
+anything differs. Run it manually any time with:
+
+```bash
+npm run check:drift
+```
+
+If it reports drift, copy the listed files from the live tool into this repo
+before pushing again.
+
 ## Repository layout
 
 - `main.js` / `preload.js` — Electron main process and the IPC bridge to the renderer.
@@ -66,3 +86,4 @@ npm start           # launches the app against the local pybackend_dist/ build
   runtime by the bundled python.org embeddable interpreter — end users never
   install Python themselves.
 - `scripts/build-pybackend.ps1` — assembles the bundled interpreter + dependencies.
+- `scripts/check-drift.ps1` / `githooks/pre-push` — the sync-drift guard above.

@@ -1,0 +1,13 @@
+#!/bin/sh
+# Blocks `git push` if the live tool (C:\SkipBo\tools\EventAutomationDesktop +
+# the sibling PythonBackend folder) has diverged from what's committed here.
+# See scripts/check-drift.ps1 for the actual comparison logic and why this
+# exists - the repo has drifted out of sync with the live tool multiple times.
+#
+# Installed via `git config core.hooksPath githooks` (see README) - this file
+# is versioned, unlike .git/hooks/, so every clone gets it automatically once
+# that one-time config is set (package.json's postinstall sets it for you).
+
+repo_root="$(git rev-parse --show-toplevel)"
+powershell -ExecutionPolicy Bypass -File "$repo_root/scripts/check-drift.ps1"
+exit $?
