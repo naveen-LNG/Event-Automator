@@ -6,14 +6,16 @@ pybackend-src/__pycache__/
 *.log
 .DS_Store
 
-# ideationData: ONLY Events/TEMPLATES is tracked.
+# ideationData: Events/TEMPLATES and Roadmap are tracked; per-event generated
+# output (ideation / art-requirement PDFs, feedback stores) is not.
 #
-# Everything else under here is either generated per-event output (ideation /
-# art-requirement PDFs, feedback stores) or confidential: Roadmap/Roadmap.xlsx
-# is the Feishu roadmap export and contains unreleased event names and launch
-# dates. This repo is PUBLIC - that file must never be committed. It is
-# distributed to each machine out-of-band instead (see README).
+# Roadmap/Roadmap.xlsx is the Feishu roadmap export that the Sprint Board tab
+# requires. It contains unreleased event names and launch dates, so it is only
+# committed because THIS REPO IS PRIVATE. If it is ever made public again, this
+# file must be removed from the repo and its history first.
 ideationData/**
 !ideationData/Events/
 !ideationData/Events/TEMPLATES/
 !ideationData/Events/TEMPLATES/**
+!ideationData/Roadmap/
+!ideationData/Roadmap/**

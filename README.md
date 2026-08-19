@@ -58,27 +58,23 @@ npm run build:py   # once, or whenever pybackend-src/ changes
 npm start           # launches the app against the local pybackend_dist/ build
 ```
 
-## Sprint Board — one file you must supply yourself
+## Sprint Board and the roadmap
 
-The **Sprint Board** tab reads the studio roadmap exported from Feishu, expected at:
+The **Sprint Board** tab joins the studio roadmap (the plan) against what is
+actually configured in the design workbooks (the reality). The roadmap is the
+Feishu export committed at `ideationData/Roadmap/Roadmap.xlsx`, and it ships
+inside the installer and portable build, so the tab works with no setup.
 
-```
-ideationData/Roadmap/Roadmap.xlsx
-```
+Either the Strict or the ordinary OOXML export flavour works — the parser
+handles both, so there is no save-as setting to remember.
 
-That file is **deliberately not committed to this repo** — it contains unreleased
-event names and launch dates, and this repo is public. It is therefore not
-included in the installer or portable build either. Without it the Sprint Board
-tab reports "No roadmap found" and every other tab works normally.
+To refresh the plan, re-export from Feishu over that file and commit it; then
+rebuild so the new export is picked up by installed copies.
 
-To enable it, get the current `Roadmap.xlsx` export through an internal channel
-(shared drive / Feishu export) and drop it at that path:
-
-- **Installed / portable build:** `<app folder>/resources/ideationData/Roadmap/Roadmap.xlsx`
-- **Running from source:** `ideationData/Roadmap/Roadmap.xlsx` in this repo
-
-Either the Strict or the ordinary OOXML export flavour works — the parser handles
-both, so no save-as setting to remember.
+> **This repository is private, and must stay private.** The roadmap holds
+> unreleased event names, launch dates and the monetisation schedule. If the
+> repo is ever made public, remove `ideationData/Roadmap/` from both the working
+> tree *and* the git history first, and re-add it to `.gitignore`.
 
 ## Keeping this repo in sync with the live tool
 

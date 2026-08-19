@@ -134,7 +134,7 @@ Get-ChildItem $liveDesktop -Force | ForEach-Object {
 # ideationData is only partly tracked, so classify its subfolders explicitly too.
 $ideationKnown = @{
     "Events" = "only Events\TEMPLATES is tracked; per-event output is generated"
-    "Roadmap" = "Feishu roadmap export - NOT committed (public repo; contains unreleased event names/dates). Must be distributed to each machine out-of-band."
+    "Roadmap" = "Feishu roadmap export - tracked (repo is private); compared below"
 }
 $liveIdeation = Join-Path $liveDesktop "ideationData"
 if (Test-Path $liveIdeation) {
@@ -143,10 +143,14 @@ if (Test-Path $liveIdeation) {
             $drift += "UNCLASSIFIED under ideationData (decide: track or ignore): $($_.Name)"
         }
     }
-    # The Sprint Board tab hard-requires this file at runtime. It is deliberately
-    # not committed, so warn (not fail) if the dev machine itself is missing it.
-    if (-not (Test-Path (Join-Path $liveIdeation "Roadmap\Roadmap.xlsx"))) {
-        Write-Warning "ideationData\Roadmap\Roadmap.xlsx is absent - the Sprint Board tab will not work in builds made from this tree."
+    # The Sprint Board tab hard-requires this file at runtime, and it ships in
+    # the build, so an out-of-sync copy here means shipping a stale roadmap.
+    $rel = "ideationData\Roadmap\Roadmap.xlsx"
+    $liveRoadmap = Join-Path $liveIdeation "Roadmap\Roadmap.xlsx"
+    if (Test-Path $liveRoadmap) {
+        Compare-File $rel $liveRoadmap (Join-Path $repoRoot $rel)
+    } else {
+        Write-Warning "$rel is absent from the live tool - the Sprint Board tab will not work in builds made from this tree."
     }
 }
 
