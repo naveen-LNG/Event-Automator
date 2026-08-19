@@ -58,6 +58,28 @@ npm run build:py   # once, or whenever pybackend-src/ changes
 npm start           # launches the app against the local pybackend_dist/ build
 ```
 
+## Sprint Board — one file you must supply yourself
+
+The **Sprint Board** tab reads the studio roadmap exported from Feishu, expected at:
+
+```
+ideationData/Roadmap/Roadmap.xlsx
+```
+
+That file is **deliberately not committed to this repo** — it contains unreleased
+event names and launch dates, and this repo is public. It is therefore not
+included in the installer or portable build either. Without it the Sprint Board
+tab reports "No roadmap found" and every other tab works normally.
+
+To enable it, get the current `Roadmap.xlsx` export through an internal channel
+(shared drive / Feishu export) and drop it at that path:
+
+- **Installed / portable build:** `<app folder>/resources/ideationData/Roadmap/Roadmap.xlsx`
+- **Running from source:** `ideationData/Roadmap/Roadmap.xlsx` in this repo
+
+Either the Strict or the ordinary OOXML export flavour works — the parser handles
+both, so no save-as setting to remember.
+
 ## Keeping this repo in sync with the live tool
 
 The live tool's actual working copy is not this git checkout — it lives

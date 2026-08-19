@@ -6,8 +6,14 @@ pybackend-src/__pycache__/
 *.log
 .DS_Store
 
-# Generated ideation output (per-event PDFs, feedback stores) - runtime
-# artifacts, not source. ideationData/Events/TEMPLATES/*.md is still tracked.
-ideationData/Events/*/
+# ideationData: ONLY Events/TEMPLATES is tracked.
+#
+# Everything else under here is either generated per-event output (ideation /
+# art-requirement PDFs, feedback stores) or confidential: Roadmap/Roadmap.xlsx
+# is the Feishu roadmap export and contains unreleased event names and launch
+# dates. This repo is PUBLIC - that file must never be committed. It is
+# distributed to each machine out-of-band instead (see README).
+ideationData/**
+!ideationData/Events/
 !ideationData/Events/TEMPLATES/
-ideationData/Events/_*.json
+!ideationData/Events/TEMPLATES/**

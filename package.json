@@ -12,6 +12,7 @@
     "build:py": "powershell -ExecutionPolicy Bypass -File scripts/build-pybackend.ps1",
     "build:icon": "python scripts/make-icon.py",
     "check:drift": "powershell -ExecutionPolicy Bypass -File scripts/check-drift.ps1",
+    "test": "node tests/ui_contract_test.js && node tests/sprint_ui_test.js",
     "dist": "npm run build:py && electron-builder"
   },
   "devDependencies": {

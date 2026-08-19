@@ -75,6 +75,15 @@ Get-ChildItem (Join-Path $liveDesktop "scripts") -File | ForEach-Object {
     Compare-File $rel $_.FullName (Join-Path $repoRoot $rel)
 }
 
+# --- tests/ ---
+$liveTests = Join-Path $liveDesktop "tests"
+if (Test-Path $liveTests) {
+    Get-ChildItem $liveTests -File | ForEach-Object {
+        $rel = "tests\$($_.Name)"
+        Compare-File $rel $_.FullName (Join-Path $repoRoot $rel)
+    }
+}
+
 # --- ideationData/Events/TEMPLATES (the only tracked part of ideationData) ---
 $liveTemplates = Join-Path $liveDesktop "ideationData\Events\TEMPLATES"
 if (Test-Path $liveTemplates) {
@@ -94,6 +103,50 @@ if (Test-Path $repoBackendSrc) {
     $liveNames = (Get-ChildItem $liveBackend -Filter "*.py").Name
     Get-ChildItem $repoBackendSrc -Filter "*.py" | Where-Object { $liveNames -notcontains $_.Name } | ForEach-Object {
         $drift += "IN REPO BUT DELETED FROM LIVE SOURCE: pybackend-src\$($_.Name)"
+    }
+}
+
+# --- Catch-all: any top-level content in the live tool that this script does
+# not already classify. Without this, a brand-new folder is invisible to the
+# drift check entirely - which is exactly how ideationData\Roadmap\Roadmap.xlsx
+# (required by the Sprint Board tab) shipped absent for months and only turned
+# up when the tab failed on someone else's PC. Everything must be either
+# compared above or deliberately listed here with a reason.
+$knownUntracked = @{
+    "node_modules"     = "installed dependency, never committed"
+    "release"          = "build output"
+    "pybackend_dist"   = "build output (assembled interpreter)"
+    "package-lock.json" = "not currently tracked in this repo"
+    ".git"             = "git metadata"
+    ".gitignore"       = "compared implicitly - repo-managed"
+    "README.md"        = "repo-managed docs"
+    "githooks"         = "repo-managed hooks"
+    "pybackend-src"    = "mirror of the authoritative PythonBackend folder"
+}
+$classifiedTracked = @("main.js", "preload.js", "package.json", "renderer", "build", "scripts", "tests", "ideationData")
+Get-ChildItem $liveDesktop -Force | ForEach-Object {
+    $n = $_.Name
+    if ($classifiedTracked -contains $n) { return }
+    if ($knownUntracked.ContainsKey($n)) { return }
+    $drift += "UNCLASSIFIED (in live tool, not checked or ignored by this script): $n"
+}
+
+# ideationData is only partly tracked, so classify its subfolders explicitly too.
+$ideationKnown = @{
+    "Events" = "only Events\TEMPLATES is tracked; per-event output is generated"
+    "Roadmap" = "Feishu roadmap export - NOT committed (public repo; contains unreleased event names/dates). Must be distributed to each machine out-of-band."
+}
+$liveIdeation = Join-Path $liveDesktop "ideationData"
+if (Test-Path $liveIdeation) {
+    Get-ChildItem $liveIdeation -Force | ForEach-Object {
+        if (-not $ideationKnown.ContainsKey($_.Name)) {
+            $drift += "UNCLASSIFIED under ideationData (decide: track or ignore): $($_.Name)"
+        }
+    }
+    # The Sprint Board tab hard-requires this file at runtime. It is deliberately
+    # not committed, so warn (not fail) if the dev machine itself is missing it.
+    if (-not (Test-Path (Join-Path $liveIdeation "Roadmap\Roadmap.xlsx"))) {
+        Write-Warning "ideationData\Roadmap\Roadmap.xlsx is absent - the Sprint Board tab will not work in builds made from this tree."
     }
 }
 
