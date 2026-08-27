@@ -152,7 +152,8 @@ def main():
               'import os\ndesign_path = os.path.abspath("../dsn")\n')
         got = cc._script_design_path(lb / "conf_fill_ex.py", lb)
         check(cc._same_dir(got, dsn),
-              "design path is resolved from the script's own literal", f"got {got}")
+              "the path a script hardcodes can still be read (diagnostics)",
+              f"got {got}")
         check(cc._script_design_path(lb / "nope.py", lb) is None,
               "an unreadable script yields no design path")
         write(lb, "no_path.py", "x = 1\n")
@@ -213,6 +214,52 @@ def main():
         check(any("no 'layout' sheet" in w for w in warns),
               "a workbook missing the expected sheet warns instead of guessing",
               "; ".join(warns)[:120])
+
+        # --- design_path redirect -----------------------------------------
+        # conf_fill_ex.py and the conf_complex_gen.py it imports both hardcode
+        # design_path, so Magic Builder used to ignore the chosen workspace.
+        rd = Path(d) / "rd"
+        (rd / "Py").mkdir(parents=True)
+        (rd / "chosen").mkdir()
+        write(rd / "Py", "conf_complex_gen.py",
+              'import os\ndesign_path = os.path.abspath("../hardcoded")\n'
+              'def where(): return design_path\n')
+        write(rd / "Py", "conf_fill_ex.py",
+              'import os\ndesign_path = os.path.abspath("../hardcoded")\n'
+              'import conf_complex_gen\n'
+              'print("ENTRY:" + design_path)\n'
+              'print("SIB:" + conf_complex_gen.where())\n'
+              'print("CWD:" + os.getcwd())\n')
+        r = cc._run_project_script(sys.executable, rd / "Py" / "conf_fill_ex.py",
+                                   cwd=rd / "Py", design_override=rd / "chosen",
+                                   log=quiet)
+        out = r.stdout or ""
+        check(r.returncode == 0, "redirected script runs", (r.stderr or "")[:150])
+        check("ENTRY:" + str(rd / "chosen") in out,
+              "entry script's design_path points at the chosen workspace")
+        check("SIB:" + str(rd / "chosen") in out,
+              "imported sibling's design_path is redirected too")
+        check("CWD:" + str(rd / "Py") in out,
+              "working directory stays the real script folder, so its other "
+              "relative paths still resolve")
+        check("hardcoded" not in out,
+              "the hardcoded workspace is not used anywhere")
+        # The originals must never be touched - they are shared SVN files.
+        original = (rd / "Py" / "conf_fill_ex.py").read_text(encoding="utf-8")
+        check('os.path.abspath("../hardcoded")' in original,
+              "the script on disk is left unmodified")
+
+        # A script without the assignment must fail loudly, not silently run
+        # against its own hardcoded folder.
+        write(rd / "Py", "no_assign.py", "print('hi')\n")
+        try:
+            cc._run_project_script(sys.executable, rd / "Py" / "no_assign.py",
+                                   cwd=rd / "Py", design_override=rd / "chosen",
+                                   log=quiet)
+            check(False, "an un-redirectable script is refused")
+        except RuntimeError as e:
+            check("would have written to its own hardcoded workspace" in str(e),
+                  "an un-redirectable script is refused rather than misdirected")
 
         # --- preflight only inspects the scripts it actually runs ---
         lvl = Path(d) / "lvl"; lvl.mkdir()

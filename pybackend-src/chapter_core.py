@@ -26,6 +26,7 @@ import json
 import os
 import re
 import shutil
+import tempfile
 import subprocess
 import sys
 from datetime import datetime as _datetime, timedelta as _timedelta
@@ -189,7 +190,8 @@ def _same_dir(a, b):
     try:
         return Path(a).resolve() == Path(b).resolve()
     except Exception:
-        return str(a).rstrip("\/").lower() == str(b).rstrip("\/").lower()
+        strip = chr(92) + "/"
+        return str(a).rstrip(strip).lower() == str(b).rstrip(strip).lower()
 
 
 def _script_design_path(script_path, cwd):
@@ -434,15 +436,90 @@ _BOOTSTRAP = (
 )
 
 
-def _run_project_script(py_exe, script, args=(), cwd=None, timeout=None):
-    """Run one of the SkipBo project scripts the way a normal python would."""
-    cmd = [py_exe, "-c", _BOOTSTRAP, str(script), *[str(a) for a in args]]
-    return subprocess.run(
-        cmd,
-        cwd=str(cwd) if cwd else None,
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
-        timeout=timeout,
-    )
+# Both conf_fill_ex.py and the conf_complex_gen.py it imports open with
+#
+#     design_path = os.path.abspath(".../trunk/design/DesignData/WorkSpcae3/design")
+#
+# hardcoded, with no argument or config to override it, so Magic Builder would
+# always read and write WorkSpcae3 no matter which workspace was chosen here -
+# while every other step, and the QA validation at the end, use the chosen one.
+#
+# Level_Builder3 is a separate SVN working copy shared with the rest of the
+# project and used standalone, so it is left untouched: patched copies of the
+# scripts are run from a temp folder instead. The working directory stays the
+# real Py folder, so the other CWD-relative paths in those scripts
+# (../../__WorkSpace/__BackUp and friends) still resolve exactly as before.
+_DESIGN_ASSIGN_RE = re.compile(
+    r"""^(\s*design_path\s*=\s*)os\.path\.abspath\(\s*['"][^'"]*['"]\s*\)""",
+    re.MULTILINE)
+
+
+def _redirected_script_dir(script_path, design_dir, log):
+    """Copy a script and its siblings, pointing design_path at design_dir.
+
+    Returns (entry_script, tempdir) or (None, None) when the assignment is not
+    found in the entry script - callers must treat that as fatal rather than
+    quietly running against the hardcoded workspace.
+    """
+    src_dir = Path(script_path).parent
+    replacement = repr(str(design_dir))
+    tmp = Path(tempfile.mkdtemp(prefix="ea_lvlbuilder_"))
+    patched = []
+    for py in src_dir.glob("*.py"):
+        text = py.read_text("utf-8", errors="replace")
+        # Function replacement, not a template: a Windows path is full of
+        # backslashes and re.sub would read them as escape sequences.
+        new_text, n = _DESIGN_ASSIGN_RE.subn(
+            lambda m: m.group(1) + replacement, text)
+        if n:
+            patched.append(f"{py.name} ({n})")
+        (tmp / py.name).write_text(new_text, encoding="utf-8")
+
+    entry = tmp / Path(script_path).name
+    entry_text = entry.read_text("utf-8", errors="replace")
+    if replacement not in entry_text:
+        shutil.rmtree(tmp, ignore_errors=True)
+        return None, None
+    log(f"  Redirected design_path -> {design_dir}")
+    log(f"  (patched: {', '.join(patched)})")
+    return entry, tmp
+
+
+def _run_project_script(py_exe, script, args=(), cwd=None, timeout=None,
+                        design_override=None, log=None):
+    """Run one of the SkipBo project scripts the way a normal python would.
+
+    design_override redirects the script's hardcoded design folder; see
+    _redirected_script_dir. It is fatal if the redirect cannot be applied,
+    because the fallback would silently write to the wrong workspace.
+    """
+    tmp = None
+    try:
+        if design_override is not None:
+            entry, tmp = _redirected_script_dir(script, design_override,
+                                                log or (lambda *a, **k: None))
+            if entry is None:
+                raise RuntimeError(
+                    "Could not redirect " + Path(script).name + " to the "
+                    "selected workspace: its 'design_path = "
+                    "os.path.abspath(...)' line was not found, so it would "
+                    "have written to its own hardcoded workspace instead."
+                    "\n\n"
+                    "The Level Builder scripts have probably changed shape. "
+                    "Report this rather than running the step - the run would "
+                    "target the wrong design folder."
+                )
+            script = entry
+        cmd = [py_exe, "-c", _BOOTSTRAP, str(script), *[str(a) for a in args]]
+        return subprocess.run(
+            cmd,
+            cwd=str(cwd) if cwd else None,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=timeout,
+        )
+    finally:
+        if tmp is not None:
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 def preflight_project_scripts(cfg, log):
@@ -1789,50 +1866,40 @@ def run_qa_validation(cfg: AppConfig, log):
 def check_level_conflicts(cfg, log):
     """Raise if the new chapter's level ids already exist.
 
-    Split out of run_step1_magic_builder so the preflight can run it
-    before any step writes anything, and so it can be tested without
-    driving the real Magic Builder against real project files.
+    Checks the workspace selected in the app, which is where Magic Builder now
+    writes: _run_project_script redirects the design_path those scripts
+    hardcode (see _redirected_script_dir). Before that redirect existed this
+    check and the script disagreed - it passed on the selected workspace while
+    the script raised a conflict from WorkSpcae3.
+
+    Split out of run_step1_magic_builder so the preflight can run it before
+    any step writes, and so it is testable without driving the real Magic
+    Builder against real project files.
     """
-    # Pre-flight: do the new chapter's levels already exist?
-    #
-    # This used to look in cfg.design() - the workspace picked in the app - and
-    # so passed clean while conf_fill_ex.py itself raised "refill level id
-    # conflict". conf_fill_ex.py does NOT use the selected workspace: it hard
-    # codes a relative path to trunk/.../WorkSpcae3/design and resolves it
-    # against its own folder, with no override from args or config. The literal
-    # is read out of the script rather than copied here, so this follows along
-    # if the Level Builder ever changes it.
     new_first = cfg.new_ch * 1000 + 1
-    new_last  = cfg.new_ch * 1000 + 200
-    target = _script_design_path(cfg.lvl_py / "conf_fill_ex.py", cfg.lvl_py)
-    if target is None:
-        target = cfg.design()
-        log("  ⚠  Could not read Magic Builder's design path; checking the "
-            "selected workspace instead.", "WARN")
-    elif not _same_dir(target, cfg.design()):
-        # Worth saying out loud: the levels land somewhere other than the
-        # workspace the user chose, and the QA step later validates the chosen
-        # one. See the notes in run_qa_validation.
-        log(f"  Magic Builder targets: {target}", "WARN")
-        log(f"  (not the selected workspace: {cfg.design()})", "WARN")
-    if not target.is_dir():
-        log(f"  ⚠  That folder does not exist - conf_fill_ex.py will fail on it: "
-            f"{target}", "WARN")
+    new_last = cfg.new_ch * 1000 + 200
+    target = cfg.design()
+
+    if not Path(target).is_dir():
+        log(f"  ⚠  Selected design folder does not exist: {target}", "WARN")
+        return
 
     # Each workbook keeps its ids in its own sheet: pve_layout.xlsx has no
-    # 'level' sheet at all, so falling back to wb.active only happened to read
-    # the right one.
+    # 'level' sheet at all, so falling back to the first sheet only happened
+    # to read the right one.
     for name, sheet_name in (("pve_level.xlsx", "level"), ("pve_layout.xlsx", "layout")):
-        xlsx_path = target / name
+        xlsx_path = Path(target) / name
         if not xlsx_path.exists():
+            log(f"  ⚠  {name} not found in {target} - skipping its pre-check", "WARN")
             continue
         try:
             import openpyxl as _oxl
             wb = _oxl.load_workbook(str(xlsx_path), read_only=True, data_only=True)
             if sheet_name not in wb.sheetnames:
+                sheets = ", ".join(wb.sheetnames)
                 wb.close()
                 log(f"  ⚠  {name} has no '{sheet_name}' sheet - skipping pre-check "
-                    f"(sheets: {', '.join(wb.sheetnames)})", "WARN")
+                    f"(sheets: {sheets})", "WARN")
                 continue
             sheet = wb[sheet_name]
             keys = {row[0].value for row in sheet.iter_rows(min_row=2)
@@ -1845,10 +1912,10 @@ def check_level_conflicts(cfg, log):
                     f"already exist in {name}.\n\n"
                     f"Found {len(conflict)} conflicting level(s) "
                     f"({min(conflict)}-{max(conflict)}) in:\n  {xlsx_path}\n\n"
-                    f"Magic Builder has already been run for this chapter. To "
-                    f"re-run it, first remove rows {new_first}-{new_last} from "
-                    f"the '{sheet_name}' sheet of pve_level.xlsx and "
-                    f"pve_layout.xlsx in:\n  {target}\n\n"
+                    f"Magic Builder has already been run for this chapter in "
+                    f"this workspace. To re-run it, first remove rows "
+                    f"{new_first}-{new_last} from the '{sheet_name}' sheet of "
+                    f"pve_level.xlsx and pve_layout.xlsx in:\n  {target}\n\n"
                     f"If that chapter was genuinely already built, it needs no "
                     f"run - check before deleting anything."
                 )
@@ -1893,7 +1960,8 @@ def run_step1_magic_builder(cfg: AppConfig, log):
     py_exe = _resolve_interpreter(py_script, log)
     log(f"\nRunning conf_fill_ex.py -c CondFilterConf.json …")
     result = _run_project_script(py_exe, py_script,
-                                 ["-c", "CondFilterConf.json"], cwd=cfg.lvl_py)
+                                 ["-c", "CondFilterConf.json"], cwd=cfg.lvl_py,
+                                 design_override=cfg.design(), log=log)
     if result.stdout: log(result.stdout.strip())
     if result.stderr: log(f"[STDERR] {result.stderr.strip()}")
     if result.returncode != 0:
