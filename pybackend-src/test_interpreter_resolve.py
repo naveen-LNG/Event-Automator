@@ -261,6 +261,54 @@ def main():
             check("would have written to its own hardcoded workspace" in str(e),
                   "an un-redirectable script is refused rather than misdirected")
 
+        # --- redirect must not move the script -----------------------------
+        # Regression: the first attempt copied the scripts to a temp folder.
+        # These scripts do
+        #     self_path = os.path.dirname(os.path.realpath(__file__))
+        #     os.chdir(self_path)
+        # and read CondFilterConf.json from self_path, so a copy elsewhere
+        # broke that read - and would have written their __BackUp folder into
+        # a temp dir that then got deleted.
+        anchored = Path(d) / "anchored"
+        (anchored / "Py").mkdir(parents=True)
+        (anchored / "chosen").mkdir()
+        write(anchored / "Py", "sidecar.json", '{"ok": true}\n')
+        write(anchored / "Py", "conf_complex_gen.py",
+              'import os\ndesign_path = os.path.abspath("../hardcoded")\n'
+              'self_path = os.path.dirname(os.path.realpath(__file__))\n'
+              'def where(): return design_path\n'
+              'def sidecar(): return open(os.path.join(self_path, "sidecar.json")).read()\n')
+        write(anchored / "Py", "conf_fill_ex.py",
+              'import os\n'
+              'design_path = os.path.abspath("../hardcoded")\n'
+              'self_path = os.path.dirname(os.path.realpath(__file__))\n'
+              'os.chdir(self_path)\n'
+              'import conf_complex_gen\n'
+              'print("DESIGN:" + design_path)\n'
+              'print("SELF:" + self_path)\n'
+              'print("SIDECAR:" + conf_complex_gen.sidecar().strip())\n'
+              'print("SIBDESIGN:" + conf_complex_gen.where())\n')
+        r = cc._run_project_script(sys.executable,
+                                   anchored / "Py" / "conf_fill_ex.py",
+                                   cwd=anchored / "Py",
+                                   design_override=anchored / "chosen",
+                                   log=quiet)
+        out = r.stdout or ""
+        check(r.returncode == 0, "anchored script runs", (r.stderr or "")[:200])
+        check("DESIGN:" + str(anchored / "chosen") in out,
+              "design_path is redirected to the chosen workspace")
+        check("SIBDESIGN:" + str(anchored / "chosen") in out,
+              "the imported sibling is redirected as well")
+        # realpath() expands 8.3 short names, so compare as paths not strings.
+        self_reported = out.split("SELF:")[1].splitlines()[0]
+        check(cc._same_dir(self_reported, anchored / "Py"),
+              "self_path still points at the script's REAL folder, not a copy",
+              f"got {self_reported}")
+        check('SIDECAR:{"ok": true}' in out,
+              "a data file beside the script is still found (CondFilterConf.json case)")
+        check("REDIRECT_OK" not in (r.stderr or ""),
+              "the launcher's own marker is stripped from stderr")
+
         # --- preflight only inspects the scripts it actually runs ---
         lvl = Path(d) / "lvl"; lvl.mkdir()
         mp = Path(d) / "map"; mp.mkdir()

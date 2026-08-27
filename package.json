@@ -1,6 +1,6 @@
 {
   "name": "event-automation-desktop",
-  "version": "1.9.0",
+  "version": "1.9.1",
   "description": "Standalone desktop version of the SkipBo Event Automation Tool (no Unity Editor, no Python install required).",
   "main": "main.js",
   "author": "SkipBo Event Automation",

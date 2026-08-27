@@ -436,87 +436,82 @@ _BOOTSTRAP = (
 )
 
 
-# Both conf_fill_ex.py and the conf_complex_gen.py it imports open with
+# conf_fill_ex.py and the conf_complex_gen.py it imports both hardcode
 #
 #     design_path = os.path.abspath(".../trunk/design/DesignData/WorkSpcae3/design")
 #
-# hardcoded, with no argument or config to override it, so Magic Builder would
-# always read and write WorkSpcae3 no matter which workspace was chosen here -
-# while every other step, and the QA validation at the end, use the chosen one.
+# with no argument or config to override it, so Magic Builder would always
+# read and write WorkSpcae3 no matter which workspace was chosen here - while
+# every other step, and the QA validation at the end, use the chosen one.
 #
-# Level_Builder3 is a separate SVN working copy shared with the rest of the
-# project and used standalone, so it is left untouched: patched copies of the
-# scripts are run from a temp folder instead. The working directory stays the
-# real Py folder, so the other CWD-relative paths in those scripts
-# (../../__WorkSpace/__BackUp and friends) still resolve exactly as before.
-_DESIGN_ASSIGN_RE = re.compile(
-    r"""^(\s*design_path\s*=\s*)os\.path\.abspath\(\s*['"][^'"]*['"]\s*\)""",
-    re.MULTILINE)
+# Level_Builder3 is a separate SVN working copy, shared with the rest of the
+# project and used standalone, so it is never modified. The scripts are also
+# never relocated: they anchor everything on their own location (self_path =
+# dirname(realpath(__file__)) followed by os.chdir(self_path)), so a copy
+# elsewhere takes CondFilterConf.json and the __WorkSpace/__BackUp folder with
+# it. Instead a small launcher patches the source in memory and execs it with
+# __file__ still pointing at the original file.
+_REDIRECT_LAUNCHER = '"""Run a Level Builder script with its hardcoded design_path redirected.\n\nWritten to a temp file and invoked as:\n    python <this> <design_dir> <script> [args...]\n\nThe scripts are NOT copied. They anchor everything on their own location -\n    self_path = os.path.dirname(os.path.realpath(__file__))\n    os.chdir(self_path)\n- so relocating them moves CondFilterConf.json and the __WorkSpace/__BackUp\nfolder with them. Instead the source is patched in memory and executed with\n__file__ still pointing at the original file, which keeps self_path, the chdir\nand every sibling path exactly as a normal run would have them.\n"""\nimport os\nimport re\nimport sys\nimport types\n\nASSIGN = re.compile(\n    r"""^(\\s*design_path\\s*=\\s*)os\\.path\\.abspath\\(\\s*[\'"][^\'"]*[\'"]\\s*\\)""",\n    re.MULTILINE)\n\nIMPORT_RE = re.compile(r"^\\s*(?:import|from)\\s+([A-Za-z_]\\w*)", re.MULTILINE)\n\n\ndef patch(src, design_dir):\n    return ASSIGN.subn(lambda m: m.group(1) + repr(design_dir), src)\n\n\ndef read(path):\n    with open(path, "r", encoding="utf-8", errors="replace") as f:\n        return f.read()\n\n\ndef main():\n    design_dir = sys.argv[1]\n    script = os.path.abspath(sys.argv[2])\n    args = sys.argv[3:]\n    script_dir = os.path.dirname(script)\n\n    sys.path.insert(0, script_dir)\n    sys.argv = [script] + args\n\n    entry_src = read(script)\n    entry_src, n = patch(entry_src, design_dir)\n    if not n:\n        sys.stderr.write(\n            "REDIRECT_FAILED: no \'design_path = os.path.abspath(...)\' in "\n            + os.path.basename(script) + "\\n")\n        sys.exit(3)\n\n    # Only siblings the entry actually imports, and only those that carry the\n    # same hardcoded assignment. Pre-loading anything else could run import\n    # side effects the real invocation never triggers.\n    patched = [os.path.basename(script)]\n    for name in sorted(set(IMPORT_RE.findall(entry_src))):\n        sib = os.path.join(script_dir, name + ".py")\n        if not os.path.exists(sib) or name in sys.modules:\n            continue\n        sib_src = read(sib)\n        sib_src, sn = patch(sib_src, design_dir)\n        if not sn:\n            continue\n        mod = types.ModuleType(name)\n        mod.__file__ = sib\n        sys.modules[name] = mod\n        try:\n            exec(compile(sib_src, sib, "exec"), mod.__dict__)\n        except Exception:\n            del sys.modules[name]\n            raise\n        patched.append(name + ".py")\n\n    sys.stderr.write("REDIRECT_OK: " + ", ".join(patched) + "\\n")\n    g = {"__name__": "__main__", "__file__": script, "__builtins__": __builtins__}\n    exec(compile(entry_src, script, "exec"), g)\n\n\nif __name__ == "__main__":\n    main()\n'
 
 
-def _redirected_script_dir(script_path, design_dir, log):
-    """Copy a script and its siblings, pointing design_path at design_dir.
-
-    Returns (entry_script, tempdir) or (None, None) when the assignment is not
-    found in the entry script - callers must treat that as fatal rather than
-    quietly running against the hardcoded workspace.
-    """
-    src_dir = Path(script_path).parent
-    replacement = repr(str(design_dir))
-    tmp = Path(tempfile.mkdtemp(prefix="ea_lvlbuilder_"))
-    patched = []
-    for py in src_dir.glob("*.py"):
-        text = py.read_text("utf-8", errors="replace")
-        # Function replacement, not a template: a Windows path is full of
-        # backslashes and re.sub would read them as escape sequences.
-        new_text, n = _DESIGN_ASSIGN_RE.subn(
-            lambda m: m.group(1) + replacement, text)
-        if n:
-            patched.append(f"{py.name} ({n})")
-        (tmp / py.name).write_text(new_text, encoding="utf-8")
-
-    entry = tmp / Path(script_path).name
-    entry_text = entry.read_text("utf-8", errors="replace")
-    if replacement not in entry_text:
-        shutil.rmtree(tmp, ignore_errors=True)
-        return None, None
-    log(f"  Redirected design_path -> {design_dir}")
-    log(f"  (patched: {', '.join(patched)})")
-    return entry, tmp
+def _write_redirect_launcher():
+    """Drop the launcher in a temp file; returns (path, tempdir)."""
+    tmp = Path(tempfile.mkdtemp(prefix="ea_redirect_"))
+    f = tmp / "_ea_redirect.py"
+    f.write_text(_REDIRECT_LAUNCHER, encoding="utf-8")
+    return f, tmp
 
 
 def _run_project_script(py_exe, script, args=(), cwd=None, timeout=None,
                         design_override=None, log=None):
     """Run one of the SkipBo project scripts the way a normal python would.
 
-    design_override redirects the script's hardcoded design folder; see
-    _redirected_script_dir. It is fatal if the redirect cannot be applied,
-    because the fallback would silently write to the wrong workspace.
+    design_override redirects the design folder those scripts hardcode. The
+    script itself is neither modified nor moved; see _REDIRECT_LAUNCHER. A
+    redirect that cannot be applied is fatal, because carrying on would write
+    the chapter into the wrong workspace.
     """
     tmp = None
     try:
         if design_override is not None:
-            entry, tmp = _redirected_script_dir(script, design_override,
-                                                log or (lambda *a, **k: None))
-            if entry is None:
-                raise RuntimeError(
-                    "Could not redirect " + Path(script).name + " to the "
-                    "selected workspace: its 'design_path = "
-                    "os.path.abspath(...)' line was not found, so it would "
-                    "have written to its own hardcoded workspace instead."
-                    "\n\n"
-                    "The Level Builder scripts have probably changed shape. "
-                    "Report this rather than running the step - the run would "
-                    "target the wrong design folder."
-                )
-            script = entry
-        cmd = [py_exe, "-c", _BOOTSTRAP, str(script), *[str(a) for a in args]]
-        return subprocess.run(
+            launcher, tmp = _write_redirect_launcher()
+            cmd = [py_exe, str(launcher), str(design_override), str(script),
+                   *[str(a) for a in args]]
+        else:
+            cmd = [py_exe, "-c", _BOOTSTRAP, str(script),
+                   *[str(a) for a in args]]
+        result = subprocess.run(
             cmd,
             cwd=str(cwd) if cwd else None,
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=timeout,
         )
+        if design_override is not None:
+            stderr = result.stderr or ""
+            if "REDIRECT_FAILED" in stderr or result.returncode == 3:
+                raise RuntimeError(
+                    "Could not point " + Path(script).name + " at the selected "
+                    "workspace: its 'design_path = os.path.abspath(...)' line "
+                    "was not found, so it would have written to its own "
+                    "hardcoded workspace instead."
+                    "\n\n"
+                    "The Level Builder scripts have probably changed shape. "
+                    "Report this rather than running the step - the run would "
+                    "target the wrong design folder."
+                )
+            # The launcher reports what it patched on stderr; surface it in the
+            # log and keep it out of the script's own error output.
+            kept = []
+            for line in stderr.splitlines():
+                if line.startswith("REDIRECT_OK:"):
+                    if log:
+                        log(f"  Redirected design_path -> {design_override}")
+                        log(f"  (patched: {line.split(':', 1)[1].strip()})")
+                else:
+                    kept.append(line)
+            result = subprocess.CompletedProcess(
+                result.args, result.returncode, result.stdout, "\n".join(kept))
+        return result
     finally:
         if tmp is not None:
             shutil.rmtree(tmp, ignore_errors=True)
@@ -1868,7 +1863,7 @@ def check_level_conflicts(cfg, log):
 
     Checks the workspace selected in the app, which is where Magic Builder now
     writes: _run_project_script redirects the design_path those scripts
-    hardcode (see _redirected_script_dir). Before that redirect existed this
+    hardcode (see _REDIRECT_LAUNCHER). Before that redirect existed this
     check and the script disagreed - it passed on the selected workspace while
     the script raised a conflict from WorkSpcae3.
 
