@@ -480,11 +480,18 @@ def _run_project_script(py_exe, script, args=(), cwd=None, timeout=None,
         else:
             cmd = [py_exe, "-c", _BOOTSTRAP, str(script),
                    *[str(a) for a in args]]
+        # The child's stdout is a pipe, so Python encodes print() with the
+        # locale codec - cp1252 on these machines. These scripts print Chinese
+        # (save_map_data.py prints the map data), which made them die with
+        # UnicodeEncodeError before doing their work. Only stdio is forced:
+        # PYTHONUTF8 would also change how they open files, which could alter
+        # what they read and write.
+        env = dict(os.environ, PYTHONIOENCODING="utf-8")
         result = subprocess.run(
             cmd,
             cwd=str(cwd) if cwd else None,
             capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=timeout,
+            timeout=timeout, env=env,
         )
         if design_override is not None:
             stderr = result.stderr or ""
@@ -2034,20 +2041,66 @@ def run_step2_upload(cfg: AppConfig, log):
 
     log("  ✓ Screenshots committed to SVN")
 
-def run_step7_map_builder(cfg: AppConfig, scene_file: str, log):
-    """Parse Unity scene YAML, extract fruit/map positions, run save_map_data.py."""
-    scenes_dir = cfg.map_scenes
-    # Find scene file
-    if scene_file:
-        scene_path = Path(scene_file)
-    else:
-        unity_files = list(scenes_dir.glob("*.unity"))
-        # Prefer scene with latest chapter number
-        unity_files.sort(key=lambda p: p.name, reverse=True)
-        scene_path = unity_files[0] if unity_files else None
-    if not scene_path or not scene_path.exists():
+def _pick_map_scene(scenes_dir, explicit, log):
+    """Choose the .unity scene that actually holds the map blocks.
+
+    The old rule was "sort by name descending, take the first", commented as
+    preferring the latest chapter number. It picked BuilderScene.unity over
+    BuilderScene-testCh1.unity because '.' sorts above '-' - and
+    BuilderScene.unity is the empty template, with no FruitPanel in it, so the
+    step failed with "No FruitPanel found in scene". The names carry no chapter
+    number either, so there was nothing for that rule to work with.
+
+    Scenes are now chosen by content: only ones containing map blocks qualify,
+    most recently modified first. An explicit choice always wins.
+    """
+    if explicit:
+        p = Path(explicit)
+        if not p.exists():
+            raise FileNotFoundError(f"Scene file not found: {p}")
+        log(f"Using the scene you selected: {p.name}")
+        return p
+
+    candidates = sorted(Path(scenes_dir).glob("*.unity"))
+    if not candidates:
         raise FileNotFoundError(f"No .unity scene found in {scenes_dir}")
 
+    scored = []
+    for p in candidates:
+        try:
+            text = p.read_text("utf-8", errors="replace")
+        except Exception as e:
+            log(f"  ⚠  Could not read {p.name}: {e}", "WARN")
+            continue
+        panels = text.count("m_Name: FruitPanel")
+        scored.append((panels, p.stat().st_mtime, p))
+
+    usable = [t for t in scored if t[0] > 0]
+    if not usable:
+        detail = "\n".join(f"  {p.name}: no map blocks" for _, _, p in scored)
+        raise ValueError(
+            "None of the scenes in the Map Builder contain any map blocks "
+            "(FruitPanel), so there is nothing to read positions from.\n\n"
+            f"{scenes_dir}\n{detail}\n\n"
+            "Open the Map Builder, lay out the chapter's map, save the scene, "
+            "then run this step again."
+        )
+
+    # newest usable scene wins; panel count only breaks ties
+    usable.sort(key=lambda t: (t[1], t[0]), reverse=True)
+    panels, _, chosen = usable[0]
+    log(f"Scene: {chosen.name} ({panels} map blocks)")
+    for p_count, _, p in usable[1:]:
+        log(f"  (also usable: {p.name}, {p_count} blocks)")
+    for p_count, _, p in scored:
+        if p_count == 0:
+            log(f"  (skipped {p.name}: no map blocks)")
+    return chosen
+
+
+def run_step7_map_builder(cfg: AppConfig, scene_file: str, log):
+    """Parse Unity scene YAML, extract fruit/map positions, run save_map_data.py."""
+    scene_path = _pick_map_scene(cfg.map_scenes, scene_file, log)
     log(f"Parsing scene: {scene_path.name} …")
     with open(str(scene_path), "r", encoding="utf-8", errors="replace") as f:
         scene_text = f.read()

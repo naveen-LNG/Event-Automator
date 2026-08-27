@@ -309,6 +309,50 @@ def main():
         check("REDIRECT_OK" not in (r.stderr or ""),
               "the launcher's own marker is stripped from stderr")
 
+        # --- non-ASCII output must not kill a script -----------------------
+        # The child's stdout is a pipe, so print() uses the locale codec
+        # (cp1252 here). save_map_data.py prints the map data, which contains
+        # Chinese, so it died with UnicodeEncodeError before doing its work.
+        write(proj, "chatty.py", "print('\u6536\u96c6\u5361')\n")
+        r = cc._run_project_script(sys.executable, proj / "chatty.py", cwd=proj)
+        check(r.returncode == 0, "a script printing non-ASCII exits cleanly",
+              (r.stderr or "")[:160])
+        check("\u6536\u96c6\u5361" in (r.stdout or ""),
+              "the non-ASCII output survives the round trip")
+
+        # --- map scene is chosen by content, not by filename ---------------
+        # The old rule sorted names descending and took the first, which picked
+        # BuilderScene.unity (an empty template) over BuilderScene-testCh1.unity
+        # because '.' sorts above '-', and then failed with "No FruitPanel".
+        scenes = Path(d) / "scenes"
+        scenes.mkdir()
+        (scenes / "BuilderScene.unity").write_text("GameObject:\n  m_Name: Canvas\n",
+                                                   encoding="utf-8")
+        (scenes / "BuilderScene-testCh1.unity").write_text(
+            "GameObject:\n  m_Name: FruitPanel\nGameObject:\n  m_Name: FruitPanel\n",
+            encoding="utf-8")
+        picked = cc._pick_map_scene(scenes, "", quiet)
+        check(picked.name == "BuilderScene-testCh1.unity",
+              "the scene containing map blocks is chosen, not the alphabetical last",
+              f"picked {picked.name}")
+
+        explicit = cc._pick_map_scene(scenes, str(scenes / "BuilderScene.unity"), quiet)
+        check(explicit.name == "BuilderScene.unity",
+              "an explicitly chosen scene overrides the content check")
+
+        empty = Path(d) / "scenes_empty"
+        empty.mkdir()
+        (empty / "OnlyTemplate.unity").write_text("GameObject:\n  m_Name: Canvas\n",
+                                                  encoding="utf-8")
+        try:
+            cc._pick_map_scene(empty, "", quiet)
+            check(False, "a folder with no usable scene raises")
+        except ValueError as e:
+            check("no map blocks" in str(e).lower(),
+                  "the error explains that no scene has map blocks")
+            check("OnlyTemplate.unity" in str(e),
+                  "the error lists the scenes it looked at")
+
         # --- preflight only inspects the scripts it actually runs ---
         lvl = Path(d) / "lvl"; lvl.mkdir()
         mp = Path(d) / "map"; mp.mkdir()
