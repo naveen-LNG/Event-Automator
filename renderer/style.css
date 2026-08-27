@@ -252,6 +252,7 @@ button, input, select { font-family: inherit; }
 .chip-blue    { --hue-a: #38bdf8; --hue-b: #97dcfd; --hue-glow: rgba(56,189,248,0.42); }
 .chip-emerald { --hue-a: #34d399; --hue-b: #8bf0c6; --hue-glow: rgba(52,211,153,0.42); }
 .chip-slate   { --hue-a: #94a3b8; --hue-b: #d0dae6; --hue-glow: rgba(148,163,184,0.38); }
+.chip-lime    { --hue-a: #a3e635; --hue-b: #ccf280; --hue-glow: rgba(163,230,53,0.42); }
 
 /* ------------------------------------------------------------ deck card -- */
 .menu-btn {
@@ -531,6 +532,7 @@ button, input, select { font-family: inherit; }
 [data-accent="blue"]    { --hue-a: #38bdf8; --hue-b: #97dcfd; --hue-glow: rgba(56,189,248,0.42); }
 [data-accent="emerald"] { --hue-a: #34d399; --hue-b: #8bf0c6; --hue-glow: rgba(52,211,153,0.42); }
 [data-accent="slate"]   { --hue-a: #94a3b8; --hue-b: #d0dae6; --hue-glow: rgba(148,163,184,0.38); }
+[data-accent="lime"]    { --hue-a: #a3e635; --hue-b: #ccf280; --hue-glow: rgba(163,230,53,0.42); }
 
 /* -------------------------------------------------------- view hero ------ */
 .header-section {
@@ -1413,4 +1415,96 @@ select.text-input option { background: #121834; color: var(--fg); }
   body::before { animation: none; }
   .menu-btn:hover, .active-btn, .active-btn:hover { transform: none; }
   .sp-card:hover, .ideation-card:hover, .checklist-item:hover { transform: none; }
+}
+
+/* ====================================================== zone reference art = */
+/* Generated reference images sit inside the Art Requirement card, each with
+   its own feedback box: a note about the art regenerates the art, and never
+   rewrites the document. */
+.zone-image-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+.zone-image {
+  display: flex; gap: 12px;
+  padding: 11px;
+  border-radius: var(--radius-sm);
+  background: rgba(255,255,255,0.032);
+  border: 1px solid var(--line);
+  transition: border-color var(--dur) var(--ease);
+}
+.zone-image:hover { border-color: var(--line-hot); }
+.zone-image-thumb {
+  width: 92px; height: 164px; flex-shrink: 0;
+  object-fit: cover;
+  border-radius: 7px;
+  border: 1px solid var(--line-hot);
+  background: rgba(4,7,18,0.5);
+}
+.zone-image-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 7px; }
+.zone-image-head {
+  display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap;
+  font-size: 12.5px; color: var(--fg);
+}
+.zone-image-actions {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin-top: auto;
+}
+.zone-image-all {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11.5px; color: var(--fg-muted);
+  cursor: pointer; user-select: none;
+}
+.zone-image-all input { accent-color: var(--hue-a, var(--accent-1)); cursor: pointer; }
+
+@media (max-width: 520px) {
+  .zone-image-grid { grid-template-columns: 1fr; }
+}
+
+/* ---- asset pass picker -----------------------------------------------------
+   A full Merge event is ~96 renders at roughly half a minute each, so the user
+   picks which passes to spend before starting and sees the cost update live. */
+.pass-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  align-items: center;
+  padding: 10px 12px;
+  margin: 8px 0 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--card-2) 88%, transparent);
+}
+.pass-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+.artreq-pass { cursor: pointer; accent-color: var(--accent-1); }
+/* Chapter Update reuses the same picker chrome for its step selection. */
+.chapter-step { cursor: pointer; accent-color: var(--accent-1); }
+/* A pass whose data the document does not carry - an older draft has no
+   buildings or producers, so those passes cannot run and say so by being dim. */
+.pass-option-off { opacity: 0.45; cursor: not-allowed; }
+.pass-option-off .artreq-pass { cursor: not-allowed; }
+.pass-count {
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent-1) 18%, transparent);
+  color: var(--fg-muted);
+}
+.pass-total {
+  flex-basis: 100%;
+  font-size: 12px;
+  color: var(--fg-muted);
+  padding-top: 4px;
+  border-top: 1px solid var(--line);
+  margin-top: 2px;
 }

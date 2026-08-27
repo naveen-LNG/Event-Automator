@@ -1,0 +1,119 @@
+*** THE SINGLE MOST IMPORTANT CREATIVE TASK: THE FOUR OBJECTS ***
+Draw these four objects, exactly as described, and make their SHAPES the star of the picture. Generic
+stands, plain crates and plain counters have been rejected three times - every one of these must be a
+characterful piece of production equipment whose silhouette echoes the product:
+1 a tall HONEYCOMB RACK of hexagonal cubbies; 2 a low wide FARM CART with slatted side rails; 3 a giant CRACKED WALNUT HALF used as a bowl on a stepped foot; 4 a stout OPEN PICNIC HAMPER heaped with nuts
+THE FOUR OBJECTS ARE NOT MACHINES. They are display furniture and containers that hold goods - only the
+central producer is a machine. So NONE of the four may carry machine parts: no buttons, no control panels,
+no screens, no gauges or dials, no levers, no valve wheels, no hoppers, chutes, funnels, spouts, pipes or
+cranks. An earlier attempt bolted control panels and valve wheels onto them and it was wrong.
+Their character comes entirely from the SILHOUETTE echoing the product, plus at most one simple decorative
+touch: a scalloped rim, a fabric valance edge, a chunky bow, a leaf sprig, a painted stripe band, fat feet
+or plain castors on a trolley.
+They are four DIFFERENT KINDS of thing - one tall and narrow, one low and the widest in the room, one round
+and deep on a base, one chunky and compact - never two of the same, never a mirrored pair, and never one so
+small it looks like a cheap unlock (all four sit between 55% and 90% of the machine's height, on
+substantial bases, generously full).
+
+ABSOLUTE REQUIREMENTS - READ FIRST, THESE OVERRIDE EVERYTHING BELOW:
+- This is a REVISION of IMAGE 1, a candy/dessert production room. Keep its FRONTAL straight-on camera looking into the shop interior. NOT isometric, NOT a corner view, NOT objects floating on a blank background.
+- THE ITEM LIST IS LOCKED. This is a design requirement: the scene must contain EXACTLY the same goods as IMAGE 1 and nothing else. Every product visible in IMAGE 1 stays present, and NO new product is invented - do not add wrapped sweets, bonbons, extra nut or fruit varieties, extra jars, extra bottles, extra bags or any other edible that IMAGE 1 does not already show, and do not delete one either (if IMAGE 1 has a tool such as a nutcracker or a scoop, it stays). Count the distinct products in IMAGE 1 and match that list item for item.
+- EACH PRODUCT STAYS WITH ITS OWN HOLDER. Whatever sits in the left unit stays in the left unit, whatever sits in the right unit stays in the right unit, whatever sits on the floor stays on the floor. Nothing migrates between containers.
+- ONLY THE HOLDERS MAY BE REDESIGNED. The shape, silhouette, type and colour of the crate, shelf, rack, jar, bowl, basket, barrel or counter that HOLDS each product is yours to reinvent - the products inside them are not.
+- KEEP THE HANGING SIGNBOARD. The room's product signboard hangs from the ceiling at the top centre on its ropes, exactly as in IMAGE 1: same plaque shape, same product artwork on it (the hazelnuts, chocolate, fruit or sweets that identify this shop), same hanging position. It is the room's identifying board and must appear in EVERY render - do not remove it, do not replace it with a blank shape, do not shrink it into the background. It may be recoloured to suit the new scheme, nothing more.
+- KEEP THE TOP ROOF DECORATION. Whatever decorative treatment IMAGE 1 has along the top of the room - a scalloped valance, an awning, bunting, a garland, a decorated beam or trimmed roof edge - stays present and stays decorative. Do not leave the ceiling or roofline bare and undecorated. Recolour it, but keep the decoration.
+- READ IMAGE 1'S GOODS CAREFULLY BEFORE YOU START, because the item list has slipped on every previous attempt. Whatever confections it shows - nuts of each specific type, chocolate balls, honeycomb-patterned balls, wrapped twist candies, spread jars, and any tool such as a nutcracker or scoop - all of them stay, in the same variety and the same quantity. Add no new edible, drop no existing one. The HOLDER may become a different shape; its CONTENTS may not change.
+- ZERO text, letters, numbers or lettering anywhere. Picture icons only.
+- No people, no animals, no mascots, no hands.
+
+RENDER STYLE - FLAT TOY-LIKE VECTOR, 2.5D. IDENTICAL ACROSS EVERY ROOM. This is the second most important rule after the colour budget, and the last attempt broke it by coming back as a 3D render with material textures.
+- EVERY FORM IS SOFTLY MODELLED SO IT READS THREE-DIMENSIONAL. Each object has a clearly lit side, a mid
+  tone and a shadow side, blended with SMOOTH SOFT GRADIENTS, plus a cast shadow on the surface below it.
+  Rounded things look genuinely rounded; a dome bulges, a barrel curves, a tub has an inner wall in shade.
+- DO NOT PRODUCE A FLAT-COLOUR VECTOR LOOK. Some earlier attempts came back as large areas of single
+  uniform colour with almost no shading, and they were rejected for looking flat and papery. Avoid:
+  sticker-flat objects, infographic or icon flatness, unshaded fills, uniform pale surfaces, and shapes
+  that read as cut paper. Every surface earns its form through shading.
+- Keep it MATTE though - dimensional but not glossy. No wet plastic sheen, no hard specular dots, no
+  mirror highlights. Soft, generous, appetising shading is the target, of the kind IMAGE 2 shows.
+- ABSOLUTELY NO MATERIAL TEXTURE ON ANY OBJECT: no wood grain, no plank grain lines, no woven or wicker weave, no basket weave, no fabric weave or cloth fibres, no stone speckle, no metal brushing, no glass refraction or realistic reflections, no brush strokes, no paper grain, no noise, no bump or surface relief of any kind. A wooden crate is FLAT painted colour with at most a few bold plank divisions; a basket is a FLAT shape with at most a few bold woven bands; glass is a FLAT pale tint with ONE simple highlight shape.
+- NOT A 3D RENDER: no CG or Blender product-render look, no photoreal materials, no ambient-occlusion grime in the corners, no glossy specular hotspots, no rim reflections, no depth-of-field bokeh inside the room.
+- NO OUTLINES ON ANYTHING - AND NOTE THAT IMAGE 1 HAS THEM, SO YOU MUST DEPART FROM IT HERE.
+  Look at IMAGE 1: almost every object in it is ringed by a dark contour line - the signboard has a dark
+  border, the machine has darker edging, the crates and baskets are drawn with dark outlines. THE NEW
+  VERSION MUST NOT HAVE ANY OF THAT. This is the one respect in which you deliberately do NOT copy the
+  reference.
+  Remove every contour line, ink line, keyline, cartoon border and sticker-style edge from every object,
+  panel, container, the signboard and the architecture. Do not ring any shape with a darker band or a
+  deeper shade of its own colour. Where two shapes meet, they are separated ONLY by their two flat
+  colours being different - if that reads unclearly, change one of the colours; never draw an edge.
+  The finished picture must look like flat colour shapes assembled with no linework whatsoever.
+- DEPTH: PUSH THE SHADING 15% DEEPER THAN A NORMAL FLAT PASS. The surfaces stay flat, but the steps
+  between them must separate clearly - the last attempt read washed out and lost its form. For every
+  object, the shaded step is THE SAME HUE as its base colour, about 15% DARKER in value: a deeper shade
+  of the object's own colour, never grey, never a different hue, never muddy. Widen the value gap between
+  the lit face, the mid face and the shadow face so each form reads solid and three-dimensional.
+  Deepen the contact shadow under every object too - a 15% darker version of the floor's own colour where
+  the object meets it - so nothing looks like it is floating.
+  CRITICAL: this darker step is a BROAD SHADED FACE or plane of the form. It is NOT a thin darker rim, NOT
+  an edge band, and NOT an outline around the silhouette. Shade the form's planes, never trace its border.
+- Chunky rounded toy forms, bold readable silhouettes, matte finish.
+- Think moulded flat-colour toy pieces, or a clean vector illustration given just enough soft shading to sit in space. Flat and graphic first, dimensional second.
+
+=== IMAGE 2 IS A RENDER-QUALITY REFERENCE - MATCH ITS FINISH ONLY ===
+Match the LEVEL OF FINISH in IMAGE 2 and nothing else about it:
+- Smooth, soft GRADIENT shading across each form so objects feel rounded and solid - not a hard two-step
+  cel ramp, and not a flat unshaded fill either. Gentle, generous, clean.
+- Clear CAST SHADOWS and firm contact shadows on the floor beneath every object, so everything is planted.
+- Crisp clean edges with NO outlines at all, and still NO material texture anywhere - note that IMAGE 2's
+  plush toys are perfectly smooth and its floor has only plank divisions, no grain. That is the balance:
+  richly shaded, completely untextured.
+- Rich, confident colour that still sits in one harmonious family, and clear depth through overlap and
+  shadow rather than through fog or blur.
+DO NOT COPY IMAGE 2'S CONTENT: not its room, not its arches, not its toys or plinths, not its palette, not
+its layout, not its subject. Take the RENDER QUALITY only; everything else in this brief overrides it.
+
+=== THE COLOUR BUDGET - THIS IS THE MOST IMPORTANT RULE ===
+The last attempt failed by tinting EVERYTHING one colour. The room must NOT be monochromatic.
+
+- THE SHELL owns this room's identity and roughly 60-70% of the picture: the walls, the ceiling/framework and the floor are all in WARM BUTTER-CREAM. Render the shell LIGHT and PALE - high brightness, gentle saturation - so it reads as an airy backdrop, NOT as a heavy wash of colour. The floor is the LIGHTEST surface in the room and carries a design: large HEXAGON tiles in two very close pale tones
+- THE PRODUCER MACHINE IS A COMPLETELY DIFFERENT HUE FAMILY FROM THE SHELL: deep TEAL with cream details (chocolate and nuts keep their own brown). It is also the most SATURATED and highest-contrast object in the picture, and it must differ from the shell in BOTH hue AND VALUE - a pale machine on a pale shell reads washed out and was rejected. It must never share the walls' or the floor's colour.
+- THIS ROOM HAS ONE PRODUCER AND **FOUR** DISPLAY OBJECTS, each holding its own specific items. All four are kept, and each takes a DIFFERENT hue family: CORAL, MINT-GREEN, LAVENDER and RASPBERRY-PINK. No object may be the shell's hue WARM BUTTER-CREAM or a near neighbour of it - an earlier attempt painted the units the same blue as the walls and they sank straight into the background. Each object must be instantly separable from the wall behind it and from its neighbours by HUE, not merely by brightness.
+- THE GOODS keep their own natural, saturated product colours - fruit reds and greens, chocolate browns, candy brights - never tinted toward the shell.
+- The finished picture must contain at least FIVE clearly different hue families. It must NOT read as one colour with lighter and darker versions of itself. If the shell is WARM BUTTER-CREAM, then the machine, the two units and the goods are emphatically NOT WARM BUTTER-CREAM.
+
+PALETTE DISCIPLINE - EVERY COLOUR COMES FROM A CLEAN CANDY SET. This is a sweet-shop game, so every hue must be clean, fresh and appetising: mint, aqua, turquoise, sky-blue, periwinkle, lilac, lavender, bubblegum pink, raspberry, coral, peach, butter-yellow, tangerine, lime. Clear and sweet, sitting in one bright tonal register so they harmonise - the contrast between them comes from HUE, never from one of them being dirtier than the others.
+ABSOLUTELY NO MUDDY, EARTHY OR GREYED TERTIARY COLOURS ANYWHERE ON THE ARCHITECTURE, THE MACHINE OR THE UNITS: no olive, no moss, no sage, no khaki, no mustard, no dusty rose, no mauve, no taupe, no greige, no brick, no rust, no burnt orange, no maroon, no muted brown-pink. Those read dull and cheap next to candy colours and the last attempt was rejected for exactly that.
+The only browns allowed are the PRODUCT's own - real chocolate and real nuts - and they stay warm and appetising, never extended onto furniture or walls. The shell is PALE but still carries real colour; it must not wash out to near-white.
+
+=== KEEP THE ROOM'S EXISTING BACKGROUND LAYOUT AND STYLE ===
+DO NOT REBUILD OR REPLACE THE ARCHITECTURE. Keep the back wall, the window or opening, the columns, the ceiling and the roof structure as IMAGE 1 already has them - same layout, same architectural style, same proportions, the same NUMBER and SHAPE of windows or arches, in the same places. Do not swap the room for a different kind of building, and do not introduce a new roof type, canopy, pergola, gable, arch, plank ceiling or beam arrangement that IMAGE 1 does not have. Do not add wall fittings that IMAGE 1 does not have - no pegboards, no wall shelves, no panels, no hooks, no pictures. The room's shell changes ONLY its COLOUR (per the budget above) and its floor pattern.
+
+=== ASYMMETRY - THE CLIENT'S NOTE IS THAT THE SHAPES ARE SYMMETRICAL ===
+Within the existing architecture, the FOUR display objects must break every kind of symmetry:
+- FOUR DIFFERENT SILHOUETTES. No two of the four are the same kind of container, and none is a mirrored
+  copy of another. Not two matching crates, not two matching shelf units, not a pair either side of the
+  machine. Each one is a distinctly different object.
+- FOUR DIFFERENT PROPORTIONS but COMPARABLE MASS, per the equal-value rule above: tall-and-narrow,
+  low-and-widest, round-and-deep, chunky-and-compact. None of them small or slight.
+- FOUR DIFFERENT COLOURS, as assigned above.
+- AN UNBALANCED ARRANGEMENT. Do not put two objects on the left and two on the right at matching
+  heights. Weight the left of the room with the tall piece and let the right spread out low and wide. Let the small goods sit at different depths left and right, and let one object
+  overlap the frame edge while the opposite side stays open.
+- The producer stays centred, but nothing around it is mirrored: not the objects, not the props, not the
+  goods, not the way they cluster.
+
+=== THE PRODUCER ===
+Bring the machine into the NEAR FOREGROUND: its base low and close to the bottom of the frame, scaled UP so it clearly dominates both side units, fully unobstructed with nothing in front of or overlapping it, centred on the floor plane nearest the viewer.
+DO NOT REDESIGN THE MACHINE. This is the PRODUCER and players must recognise it, so its SHAPE IS LOCKED: same silhouette, same body, dome, hopper, tubes, nozzle, spout, tray, panel, knobs and feet, in the same arrangement and the same proportions to each other as IMAGE 1. Do not swap it for a different machine, do not restyle it, do not add or remove parts. ONLY its POSITION (forward), its SIZE (larger) and its COLOURS (per the budget above) may change.
+
+=== THE CHARACTER STAGE ===
+Reserve a clear standing zone for a character, even though none is drawn: an open, uncluttered apron of floor across the LOWER-LEFT foreground, deep and wide enough for a character about 45% of the picture's height to stand there. Nothing may be placed in it. Keep the display units LATERAL to that spot so a character standing there would not cover the producer or any unit. Scale everything to that character: counters waist-to-chest height, the producer clearly taller than the character, individual goods hand-sized.
+
+=== GENERAL ===
+- One repeating SIGNATURE MOTIF for this room, used sparingly on trims and the floor: a hexagon. No other decorative motif.
+- The window view stays OPEN: simple soft-focus countryside - gentle green fields, a few rounded trees, soft hills, calm sky. No beach, no sea, no palms.
+- No two objects that touch may share a colour; every contact point differs in hue and brightness.
+
+=== FINAL CHECK BEFORE YOU RENDER ===
+1. Shell (walls, ceiling/framework, floor) = WARM BUTTER-CREAM, pale and light. 2. Machine = deep TEAL with cream details (chocolate and nuts keep their own brown) - a different family, the most saturated thing in frame. 3. FOUR objects from FOUR DIFFERENT TYPOLOGIES - tall column, widest low counter, deep round vessel, chunky compact - four different footprints but COMPARABLE MASS (all 55-90% of machine height, none a trinket, all on substantial bases, all generously full), four stepped heights, four different colours: CORAL, MINT-GREEN, LAVENDER and RASPBERRY-PINK - none of them WARM BUTTER-CREAM. 4. Goods in their own natural colours. 5. Every surface FLAT colour, no material texture, NO outline or darker edge around anything - but shading steps 15% deeper in the same hue so forms read solid. 6. Nothing mirrored left to right. 7. The producer forward, biggest, unobstructed. 8. The LOWER-LEFT floor apron empty. 9. The hanging signboard present at top centre with its product artwork. 10. The roofline decoration present. 11. The item list identical to IMAGE 1 - nothing invented, nothing dropped.

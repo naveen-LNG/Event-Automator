@@ -35,6 +35,9 @@ contextBridge.exposeInMainWorld('api', {
   endlessTreasureGet: (params) => ipcRenderer.invoke('endlesstreasure:get', params),
   endlessTreasureCommit: (params) => ipcRenderer.invoke('endlesstreasure:commit', params),
 
+  chapterGet: (params) => ipcRenderer.invoke('chapter:get', params),
+  chapterRun: (params) => ipcRenderer.invoke('chapter:run', params),
+
   ideationGenerate: (params) => ipcRenderer.invoke('ideation:generate', params),
   ideationRegenerate: (params) => ipcRenderer.invoke('ideation:regenerate', params),
   ideationSaveFinal: (params) => ipcRenderer.invoke('ideation:saveFinal', params),
@@ -48,6 +51,11 @@ contextBridge.exposeInMainWorld('api', {
   ideationRetract: (params) => ipcRenderer.invoke('ideation:retract', params),
   ideationBrowseDataFolder: () => ipcRenderer.invoke('ideation:browseDataFolder'),
   ideationDataFolderInfo: () => ipcRenderer.invoke('ideation:dataFolderInfo'),
+
+  comfyCheck: () => ipcRenderer.invoke('comfy:check'),
+  artReqImages: (params) => ipcRenderer.invoke('artreq:images', params),
+  artReqPlan: (params) => ipcRenderer.invoke('artreq:plan', params),
+  artReqRegenImage: (params) => ipcRenderer.invoke('artreq:regenImage', params),
 
   sprintBoard: (params) => ipcRenderer.invoke('sprint:board', params),
 

@@ -106,7 +106,14 @@ vm.runInContext(fs.readFileSync(path.join(__dirname,'..','renderer','app.js'),'u
   assert(sel.innerHTML.includes('store submission'), 'Store Submission milestones not labelled');
   console.log(`OK  picker lists all ${REAL.sprints.length} columns, marks the current one and the milestones`);
 
-  // 3. Detail renders the real sprint with its config match
+  // 3. Detail renders a known sprint with its config match.
+  //    Pinned explicitly rather than relying on whichever sprint is "current":
+  //    the roadmap's sprints are 14-day windows, so a test that asserts on
+  //    today's sprint passes for a fortnight and then fails on a calendar
+  //    rollover with nothing having changed in the code.
+  sel.value = 'Aug Event 1';
+  await sel.fire('change', { target: sel });
+  await new Promise(r => setTimeout(r, 400));
   const detail = get('#sprint-detail').innerHTML;
   assert(detail.includes('Five-Star Picnic'), 'primary event title missing from detail');
   assert(detail.includes('Dessert2608'), 'joined config alias not shown');
@@ -114,9 +121,18 @@ vm.runInContext(fs.readFileSync(path.join(__dirname,'..','renderer','app.js'),'u
   assert(detail.includes('All configured'), `expected Aug Event 1 fully configured, got: ${detail.match(/sp-count-pill[^>]*>([^<]*)/)}`);
   console.log('OK  detail shows event, joined config alias, overlay, and an all-clear pill');
 
-  // 4. Non-tab roadmap lines are surfaced read-only
-  assert(detail.includes('Chapter 82'), 'roadmap lines without a tool tab are not shown');
-  console.log("OK  roadmap lines this tool can't action (Chapter 82 …) still listed");
+  // 4a. "Chapter 82 + Star Chest" is now an actionable tab, not a read-only
+  //     line: it renders as a Chapter Update card wired to the chapter view,
+  //     and is marked configured because 章节82 exists in pve_chapter.xlsx.
+  assert(detail.includes('Chapter Update'), 'Chapter Update card missing from the board');
+  assert(/data-view="chapter-view"/.test(detail), 'Chapter Update card has no Open button to the tab');
+  assert(detail.includes('82'), 'the chapter number the roadmap asked for is not shown');
+  console.log('OK  "Chapter 82 + Star Chest" is an actionable Chapter Update card');
+
+  // 4b. Lines this tool genuinely cannot action are still surfaced read-only,
+  //     so claiming the chapter line did not swallow the rest of the scope.
+  assert(detail.includes('Event Pack theme refresh'), 'roadmap lines without a tool tab are not shown');
+  console.log("OK  roadmap lines this tool can't action (Event Pack theme …) still listed");
 
   // 5. Switching to the drifted sprint surfaces the drift loudly
   sel.value = 'Sep Event 1';

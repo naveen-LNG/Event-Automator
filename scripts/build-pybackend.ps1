@@ -36,13 +36,25 @@ $pkgDir = Join-Path $env:TEMP "pyembed_pkgs_$pyVersion"
 if (Test-Path $pkgDir) { Remove-Item $pkgDir -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $pkgDir | Out-Null
 
+# Dependency notes:
+#   openpyxl/et_xmlfile - Excel read/write (all config tabs)
+#   anthropic           - Ideation + Art Requirement generation
+#   pypdf               - reads finalized ideation/art-requirement PDFs
+#   pillow, numpy       - art reference + generated-image processing
+#   rapidocr_onnxruntime- text_detect.py (catches baked-in text in generated art).
+#                         Pulls onnxruntime + opencv + shapely: ~90MB of wheels,
+#                         ~230MB installed. That is the bulk of the bundle size.
+#                         Do NOT trim these: text_detect/bleed_check/icon_sheet
+#                         import them at module load, so the Art tabs break
+#                         outright without them.
+#
 # Full dependency resolution (not --no-deps) so pip pulls httpx/pydantic/etc.
 # alongside anthropic itself. pydantic-core is the one compiled (non-pure-Python)
 # wheel in this tree; verified cp314-win_amd64 wheels exist on PyPI as of this
 # writing (pydantic-core 2.46.4). If a future transitive dep drops win_amd64/py314
 # wheels, this download step fails loudly here rather than at runtime.
-Write-Host "Fetching backend dependencies (openpyxl, et_xmlfile, anthropic + its dependency tree)..."
-python -m pip download --only-binary=:all: --python-version 314 --platform win_amd64 -d $pkgDir openpyxl et_xmlfile anthropic
+Write-Host "Fetching backend dependencies (openpyxl, et_xmlfile, anthropic + tree, pypdf)..."
+python -m pip download --only-binary=:all: --python-version 314 --platform win_amd64 -d $pkgDir openpyxl et_xmlfile anthropic pypdf pillow numpy rapidocr_onnxruntime
 
 Get-ChildItem $pkgDir -Filter "*.whl" | ForEach-Object {
     $asZip = [System.IO.Path]::ChangeExtension($_.FullName, ".zip")

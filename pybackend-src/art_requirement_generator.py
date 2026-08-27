@@ -74,14 +74,50 @@ MODEL_MAX_TOKENS_PER_VARIATION = 4200  # richer document than a theme card - mor
 # once any exists).
 TYPE_GAMEPLAY_HINTS = {
     "Merge": (
-        "A Production Equipment & Product Chains table: for each producer "
-        "building, two upgrade chains (Chain A / Chain B) of themed items, "
-        "shown as an icon progression per level."
+        "Merge has a FIXED resource shape, set by the Merge2603 template and "
+        "confirmed against the shipped Merge2606 and Merge2608 documents and "
+        "their game data. Fill the STRUCTURED fields, not just prose:\n"
+        "  - zones: 3 scenes for a 14-16 day event, 4 for 17-21 days. Give each "
+        "a scene_material - the one physical material every structure in it is "
+        "built from - and leave main_tone empty, because Merge is polychrome.\n"
+        "  - buildings: 8 per scene, spread across areas A, B and C. Each needs "
+        "a silhouette, 3-5 key_features, and signage (exact wording, or an "
+        "empty array if it carries no text).\n"
+        "  - max_level: the upgrade stages per building. These must sum to "
+        "about 15 PER SCENE (45 across three) - Merge2608 ships 7 buildings at "
+        "level 1, 16 at level 2 and 2 at level 3. Vary them; do not give every "
+        "building the same number.\n"
+        "  - producers: exactly 4, each with exactly 2 chains of exactly 5 "
+        "items. Level 1 of a producer is the vessel closed, level 2 the same "
+        "vessel open with goods from both chains inside.\n"
+        "Every chain names its family and holds to it, and each rung is a "
+        "distinct more significant item - never more copies of the last one."
     ),
     "Dessert": (
-        "A Recipe / Ingredient Requirement: a common-recipes table and a "
-        "secret-recipes table, each mapping a dish to its required "
-        "ingredient icons."
+        "Dessert has a FIXED resource shape, confirmed against the shipped "
+        "Dessert2605 and Dessert2608 documents and the Dessert2608 game data. "
+        "Fill the STRUCTURED fields, not just prose:\n"
+        "  - zones: exactly 4, and their colour progression is fixed by the "
+        "framework - zone 1 green, zone 2 pink, zone 3 amber, zone 4 purple. "
+        "Give each a main_tone of WARM or COOL to match, and remember Dessert "
+        "is ISOMETRIC and FLAT, never painted like Merge.\n"
+        "  - buildings: 11, 11, 12, 12 across the four zones - 46 in all. Each "
+        "needs a silhouette and 3-5 key_features, and EVERY building shows a "
+        "culinary hook (a pastry case, a coffee machine, a recipe notebook) "
+        "because this is a cooking event. Signage is ALWAYS an empty array: "
+        "unlike Merge, Dessert buildings carry no text at all.\n"
+        "  - recipes: 24 common - 4 categories of 6, one category per zone, "
+        "each dish in its zone's colour family - plus the secret recipes "
+        "(Dessert2608 shipped 15, Dessert2605 6).\n"
+        "  - ingredients: 6 common and 5 secret. These are RAW components, not "
+        "dishes, and they map onto a fixed slot vocabulary that is re-skinned "
+        "each event rather than re-invented: flour, fruit, ice, matcha, meat, "
+        "milk, mint, spice, sweet, flower, pumpkin. Name them in the event's "
+        "own language over those slots.\n"
+        "  - event_motif: the one motif stamped into EVERY recipe. "
+        "Dessert2608's was the 5th-anniversary numeral 5, worked into all 24 "
+        "common dishes - a 5-shaped cookie, a 5 piped on a pie, a 5 candle.\n"
+        "Dessert has NO producers and NO merge chains - leave producers empty."
     ),
     "Blocks": (
         "A numbered before/after zone-restoration narrative (each zone "
@@ -106,20 +142,133 @@ TYPE_GAMEPLAY_HINTS = {
     ),
 }
 
+# A "zone" is this document's top-level VISUAL unit: one Merge scene, one Sort
+# floor, one Sim room. It is deliberately not renamed to "scene" - the whole
+# image pipeline, the per-zone regenerate path and every stored draft key off
+# `zones`, and the rename would buy nothing.
+#
+# Note that Merge's own documents use "zone" for a SUBDIVISION of a scene (each
+# scene has 3, labelled A/B/C, and buildings belong to one). That subdivision is
+# carried on the building as `area`, so both meanings can coexist without
+# renaming anything.
+
+BUILDING_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "building_number": {"type": "integer"},
+        "name": {"type": "string", "description": "e.g. 'Weaver's Round House'. A design name for the brief - it must NEVER be drawn on the building."},
+        "area": {"type": "string", "description": "Which subdivision of the scene this sits in, e.g. 'A', 'B', 'C'. Empty for event types that do not subdivide."},
+        "silhouette": {"type": "string", "description": "The shape, in one sentence. A building must be identifiable from its outline alone at thumbnail size."},
+        "key_features": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "3-5 recognisability anchors, the form Merge2606 uses (关键识别点) - e.g. 'bear ears', 'button windows', 'patch fabric'. This is the checklist the finished art is verified against."
+        },
+        "max_level": {
+            "type": "integer", "minimum": 1, "maximum": 3,
+            "description": "How many upgrade stages this building has. The brief describes the FINAL level; earlier stages are derived from it. Merge2608 ships 45 stages across 25 buildings - 7 at 1, 16 at 2, 2 at 3, summing to 15 per scene. Use 1 where the type has no upgrade mechanic."
+        },
+        "signage": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "EXACT wording of any sign on this building, e.g. ['SWEET OVEN']. An EMPTY array is meaningful and is not the same as omitting it: it declares the building carries NO text, which the reviewer then enforces strictly."
+        }
+    },
+    "required": ["building_number", "name", "area", "silhouette", "key_features", "max_level", "signage"],
+    "additionalProperties": False
+}
+
+CHAIN_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "chain_number": {"type": "integer", "minimum": 1, "maximum": 2},
+        "family": {
+            "type": "string",
+            "description": "The single category ALL five items belong to, e.g. 'willow basketry', 'seafood'. Mattel rejected a chain with a non-matching item at position 4: 应该统一为面包类. Naming the family up front is what keeps the chain pure."
+        },
+        "palette": {"type": "string", "description": "The one colour family this chain is built from, so it reads as a set."},
+        "items": {
+            "type": "array", "minItems": 5, "maxItems": 5,
+            "items": {"type": "string"},
+            "description": "The five rungs, level 1 to 5. Each is a DISTINCT, more significant item in the family, ending in the assembled or grand version - shipped example: bow tie, shoes, trousers, jacket, full suit. NEVER one-then-two-then-three of the same object: 而不是盲目的增加铃铛数量."
+        }
+    },
+    "required": ["chain_number", "family", "palette", "items"],
+    "additionalProperties": False
+}
+
+PRODUCER_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "producer_number": {"type": "integer"},
+        "name": {"type": "string"},
+        "palette": {"type": "string"},
+        "closed_description": {"type": "string", "description": "Level 1: the vessel CLOSED."},
+        "open_description": {"type": "string", "description": "Level 2: the SAME vessel OPEN, with goods from both its chains visible inside. Same shape, same materials, same fittings - only the lid and contents change."},
+        "chains": {"type": "array", "minItems": 2, "maxItems": 2, "items": CHAIN_SCHEMA}
+    },
+    "required": ["producer_number", "name", "palette", "closed_description", "open_description", "chains"],
+    "additionalProperties": False
+}
+
+INGREDIENT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "name": {"type": "string", "description": "The event's own name for it, e.g. 'Carnival Sugar'."},
+        "description": {"type": "string", "description": "The RAW component in one line - what it physically is before cooking. Not a dish."},
+        "palette": {"type": "string"},
+        "secret": {"type": "boolean", "description": "True for a secret-recipe ingredient, false for a common one. Dessert2608 shipped 6 common and 5 secret."}
+    },
+    "required": ["name", "description", "palette", "secret"],
+    "additionalProperties": False
+}
+
+RECIPE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "recipe_number": {"type": "integer"},
+        "name": {"type": "string"},
+        "zone_number": {"type": "integer", "description": "The zone whose colour family this dish belongs to. Dessert2608 ships 6 common recipes per zone."},
+        "description": {"type": "string", "description": "The finished dish, plated, in one or two lines."},
+        "palette": {"type": "string", "description": "This zone's colour family - zone 1 golden-brown baked goods, zone 2 pink frosted, zone 3 amber carnival, zone 4 violet drinks and jellies."},
+        "ingredients": {
+            "type": "array", "items": {"type": "string"},
+            "description": "The ingredient names this dish needs, matching entries in the top-level ingredients list."
+        },
+        "secret": {"type": "boolean", "description": "True for a secret recipe (research-unlocked), false for a common one."}
+    },
+    "required": ["recipe_number", "name", "zone_number", "description", "palette", "ingredients", "secret"],
+    "additionalProperties": False
+}
+
 ZONE_SCHEMA = {
     "type": "object",
     "properties": {
         "zone_number": {"type": "integer"},
         "zone_theme": {"type": "string", "description": "e.g. 'Tropical Rainforest', 'Rock Concert Stage'."},
         "palette_or_mood": {"type": "string"},
+        "main_tone": {
+            "type": "string", "enum": ["COOL", "WARM", ""],
+            "description": "The dominant tone, where the type commits to one (Sort and Sim do; Merge is polychrome and leaves this empty). The reviewer checks the render against it - a large off-tone area means content was carried in from a reference image."
+        },
+        "scene_material": {
+            "type": "string",
+            "description": "The ONE physical material every structure in this zone is built from, e.g. 'folded paper and cut card', 'blown glass'. The strongest organising idea in the Merge documents; empty for types that do not work this way."
+        },
         "construction_steps": {
             "type": "array",
             "items": {"type": "string"},
-            "description": "Numbered visual build-up steps or a building/level list for this zone - whichever this event type actually uses."
+            "description": "Numbered visual build-up steps for types that reveal a zone in stages (Blocks). Where the type has discrete buildings, use `buildings` instead and leave this empty."
+        },
+        "buildings": {
+            "type": "array",
+            "items": BUILDING_SCHEMA,
+            "description": "The buildable structures in this zone, each described at its FINAL level. Empty for types with no discrete buildings."
         },
         "reference_notes": {"type": "string", "description": "What reference art/mood imagery Art needs for this zone."}
     },
-    "required": ["zone_number", "zone_theme", "palette_or_mood", "construction_steps", "reference_notes"],
+    "required": ["zone_number", "zone_theme", "palette_or_mood", "main_tone", "scene_material",
+                 "construction_steps", "buildings", "reference_notes"],
     "additionalProperties": False
 }
 
@@ -128,10 +277,43 @@ CHARACTER_SCHEMA = {
     "properties": {
         "name": {"type": "string"},
         "role": {"type": "string", "enum": ["Gift-giving/mechanic NPC", "Judge/special guest", "Ordinary guest", "Chef/host", "Other"]},
+        "npc_id": {
+            "type": "string",
+            "description": "The favourability slot this fills: 101-104 for scene 1, 201-204 for scene 2, 301-304 for scene 3. Empty for characters outside that scheme. Merge2608 ships exactly these twelve."
+        },
+        "base_character": {
+            "type": "string",
+            "description": "WHICH EXISTING SkipBo cast member this is - hippo, raccoon, poodle, turtle, squirrel, rabbit, owl, monkey, pig, bear. These events RE-COSTUME the existing cast; they do not invent new animals. Merge2608 says so outright: 'reuse existing guests as boarding travelers', 'reuse existing guests in gala formalwear'. Leave empty only if this genuinely is a new character."
+        },
+        "costume": {
+            "type": "string",
+            "description": "The re-skin: what this cast member WEARS for this event, themed to its scene. This is the actual art requirement - the character underneath is already drawn."
+        },
         "design_notes": {"type": "string"},
         "scene_actions": {"type": "array", "items": {"type": "string"}}
     },
-    "required": ["name", "role", "design_notes", "scene_actions"],
+    "required": ["name", "role", "npc_id", "base_character", "costume", "design_notes", "scene_actions"],
+    "additionalProperties": False
+}
+
+EVENT_EXTRAS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "hot_air_balloon": {
+            "type": "string",
+            "description": "Every Merge event needs at least one themed hot air balloon - 每次活动需要至少1种热气球. Describe its look in one or two sentences, themed to the event. Empty for types that have none."
+        },
+        "achievement_badge": {
+            "type": "string",
+            "description": "The event achievement badge: which motif from the event it is built from, e.g. Merge2604 used 'the Maypole and blossoms'. Empty if the type has none."
+        },
+        "task_icons": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "The 3-4 find-the-object task icons - 任务事件图标一共需要3-4种. One short object description each. Empty for types with none."
+        }
+    },
+    "required": ["hot_air_balloon", "achievement_badge", "task_icons"],
     "additionalProperties": False
 }
 
@@ -153,6 +335,25 @@ ART_REQUIREMENT_SCHEMA = {
             "additionalProperties": False
         },
         "zones": {"type": "array", "minItems": 3, "maxItems": 6, "items": ZONE_SCHEMA},
+        "producers": {
+            "type": "array",
+            "items": PRODUCER_SCHEMA,
+            "description": "Merge producers. The template fixes the shape: 4 producers, each with 2 chains, each chain 5 levels - 每次活动固定需要4组生产器，每组生产器有2条生产链，每个生产链有5级产品. That is 8 producer icons and 40 item icons. Empty for event types with no producers."
+        },
+        "recipes": {
+            "type": "array",
+            "items": RECIPE_SCHEMA,
+            "description": "Dessert recipes. The template fixes the common half: 4 categories of 6, one category per zone, in that zone's colour family - 24 in all. The secret half varies (Dessert2608 shipped 15, Dessert2605 6). Empty for event types with no recipes."
+        },
+        "ingredients": {
+            "type": "array",
+            "items": INGREDIENT_SCHEMA,
+            "description": "Dessert ingredients: the raw components the recipes are built from. Dessert2608 shipped 11 - 6 common and 5 secret. Empty for event types with no recipes."
+        },
+        "event_motif": {
+            "type": "string",
+            "description": "The one recurring motif this event stamps on its assets - Dessert2608's was the 5th-anniversary numeral 5, which appears worked into every one of its 24 common recipes. One short phrase. Empty if the event has no such motif."
+        },
         "gameplay_specific_content": {
             "type": "string",
             "description": "The mechanic-specific art requirement section for this event type, as markdown - see the type-specific guidance given. If no verified historical structure exists for this type, this MUST start with '[INFERRED - no historical example for this type; confirm structure with Art Lead before use.]'."
@@ -167,13 +368,14 @@ ART_REQUIREMENT_SCHEMA = {
             "required": ["lean_into", "avoid"],
             "additionalProperties": False
         },
+        "event_extras": EVENT_EXTRAS_SCHEMA,
         "ui_icon_refresh_notes": {
             "type": "string",
             "description": "Which existing UI icons/panels (achievement badge, entry icon, restock/currency icon, event pack art) need re-skinning to this event's palette - reuse existing icon shapes and positions, only the motif/color changes."
         },
         "notes": {"type": "string"}
     },
-    "required": ["title", "gameplay_overview", "zones", "gameplay_specific_content", "characters", "art_direction_guidance", "ui_icon_refresh_notes", "notes"],
+    "required": ["title", "gameplay_overview", "zones", "producers", "recipes", "ingredients", "event_motif", "gameplay_specific_content", "characters", "event_extras", "art_direction_guidance", "ui_icon_refresh_notes", "notes"],
     "additionalProperties": False
 }
 
@@ -281,16 +483,137 @@ def _regenerate_variation(provider, payload, system_prompt, user_message):
     return _call_claude(payload.get("api_key", ""), system_prompt, user_message, REGENERATE_SCHEMA, 8500)
 
 
-def _render_markdown(doc, event_type, status_line, author_name=""):
+def _zone_image_md(doc, zone, md_dir):
+    """Markdown for a zone's generated reference image, if one exists.
+
+    Written as a path RELATIVE to the .md file so the document keeps working
+    when the ideationData folder is synced to another machine or a different
+    OneDrive root - an absolute path would break for every other designer.
+    """
+    path = (zone or {}).get("image_path") or ""
+    if not path or not os.path.exists(path):
+        return ""
+    try:
+        rel = os.path.relpath(path, md_dir).replace("\\", "/")
+    except ValueError:                      # different drive - no relative path exists
+        rel = path.replace("\\", "/")
+    alt = "Zone %s - %s" % (zone.get("zone_number", "?"), zone.get("zone_theme", ""))
+    return "\n![%s](%s)\n" % (alt.replace("]", ")"), rel)
+
+
+def _buildings_md(zone):
+    """The buildings table for one zone, or nothing if the type has none.
+
+    Level and Signage are columns rather than prose because both are consumed:
+    Level drives how many upgrade stages get rendered, and Signage is the exact
+    wording the reviewer checks the finished art against - with an empty cell
+    meaning "this building carries no text", which is enforced strictly.
+    """
+    blds = zone.get("buildings") or []
+    if not blds:
+        return ""
+    total = sum(int(b.get("max_level") or 1) for b in blds)
+    rows = "\n".join(
+        "| {n} | {name} | {area} | {lv} | {sil} | {feat} | {sign} |".format(
+            n=b.get("building_number", ""), name=b.get("name", ""),
+            area=b.get("area", "") or "—", lv=b.get("max_level", 1),
+            sil=(b.get("silhouette", "") or "").replace("|", "/"),
+            feat=", ".join(b.get("key_features") or []).replace("|", "/"),
+            sign=", ".join(b.get("signage") or []) or "— none —")
+        for b in blds)
+    return (
+        f"**Buildings ({len(blds)}) — {total} upgrade stages in this zone**\n\n"
+        "| # | Building | Area | Levels | Silhouette | Key Identification Points | Signage |\n"
+        "|---|---|---|---|---|---|---|\n"
+        f"{rows}\n\n")
+
+
+def _producers_md(doc):
+    """The producer and chain tables, or nothing if the type has no producers."""
+    prods = doc.get("producers") or []
+    if not prods:
+        return ""
+    out = [f"**Producers ({len(prods)})** — "
+           f"{len(prods) * 2} producer icons, "
+           f"{sum(len(p.get('chains') or []) for p in prods) * 5} item icons\n"]
+    for p in prods:
+        out.append(f"\n#### Producer {p.get('producer_number')} — {p.get('name')}\n")
+        out.append(f"**Palette:** {p.get('palette')}\n")
+        out.append(f"- **Level 1 (closed):** {p.get('closed_description')}")
+        out.append(f"- **Level 2 (open):** {p.get('open_description')}\n")
+        out.append("| Chain | Family | 1 | 2 | 3 | 4 | 5 |")
+        out.append("|---|---|---|---|---|---|---|")
+        for ch in (p.get("chains") or []):
+            items = list(ch.get("items") or []) + [""] * 5
+            out.append("| {c} | {f} | {i} |".format(
+                c=ch.get("chain_number", ""), f=ch.get("family", ""),
+                i=" | ".join(x.replace("|", "/") for x in items[:5])))
+        out.append("")
+    return "\n".join(out) + "\n"
+
+
+def _recipes_md(doc):
+    """The recipe and ingredient tables, or nothing if the type has no recipes."""
+    recipes = doc.get("recipes") or []
+    ings = doc.get("ingredients") or []
+    if not recipes and not ings:
+        return ""
+    out = []
+    if ings:
+        common = [i for i in ings if not i.get("secret")]
+        secret = [i for i in ings if i.get("secret")]
+        out.append(f"**Ingredients ({len(ings)})** — {len(common)} common, {len(secret)} secret\n")
+        out.append("| Ingredient | Secret | Description |")
+        out.append("|---|---|---|")
+        for i in ings:
+            out.append("| {n} | {s} | {d} |".format(
+                n=i.get("name", ""), s="yes" if i.get("secret") else "",
+                d=str(i.get("description", "")).replace("|", "/")))
+        out.append("")
+    if recipes:
+        common = [r for r in recipes if not r.get("secret")]
+        secret = [r for r in recipes if r.get("secret")]
+        motif = (doc.get("event_motif") or "").strip()
+        out.append(f"\n**Recipes ({len(recipes)})** — {len(common)} common, {len(secret)} secret")
+        if motif:
+            out.append(f"\nEvery recipe carries the event motif: **{motif}**.\n")
+        else:
+            out.append("")
+        for label, group in (("Common", common), ("Secret", secret)):
+            if not group:
+                continue
+            out.append(f"\n#### {label} recipes ({len(group)})\n")
+            out.append("| # | Zone | Dish | Ingredients |")
+            out.append("|---|---|---|---|")
+            for r in group:
+                out.append("| {n} | {z} | {d} | {i} |".format(
+                    n=r.get("recipe_number", ""), z=r.get("zone_number", ""),
+                    d=("**%s** — %s" % (r.get("name", ""), r.get("description", ""))).replace("|", "/"),
+                    i=", ".join(str(x).replace("|", "/") for x in (r.get("ingredients") or []))))
+            out.append("")
+    return "\n".join(out) + "\n"
+
+
+def _render_markdown(doc, event_type, status_line, author_name="", md_dir=None):
     go = doc.get("gameplay_overview") or {}
+    md_dir = md_dir or os.getcwd()
     zones_md = ""
     for z in (doc.get("zones") or []):
         steps = "\n".join(f"  {i + 1}. {s}" for i, s in enumerate(z.get("construction_steps") or []))
         zones_md += (
             f"\n### Zone {z.get('zone_number')} — {z.get('zone_theme')}\n\n"
             f"**Palette/Mood:** {z.get('palette_or_mood')}\n\n"
-            f"**Construction/Reveal Steps:**\n{steps}\n\n"
+        )
+        if z.get("scene_material"):
+            zones_md += f"**Scene Material:** {z['scene_material']}\n\n"
+        if z.get("main_tone"):
+            zones_md += f"**Main Tone:** {z['main_tone']}\n\n"
+        if steps:
+            zones_md += f"**Construction/Reveal Steps:**\n{steps}\n\n"
+        zones_md += _buildings_md(z)
+        zones_md += (
             f"**Reference Notes:** {z.get('reference_notes')}\n"
+            f"{_zone_image_md(doc, z, md_dir)}"
         )
     chars_md = "\n".join(
         f"| {c.get('name')} | {c.get('role')} | {c.get('design_notes')} | {', '.join(c.get('scene_actions') or [])} |"
@@ -322,6 +645,7 @@ def _render_markdown(doc, event_type, status_line, author_name=""):
 
 ## 3. Gameplay-Specific Art Requirement ({event_type})
 
+{_producers_md(doc)}{_recipes_md(doc)}
 {doc.get('gameplay_specific_content')}
 
 ## 4. Character Requirements
@@ -360,7 +684,9 @@ def _write_variation_draft(events_root, event_type, doc, index, author_name=""):
     os.makedirs(draft_dir, exist_ok=True)
     path = os.path.join(draft_dir, f"{ref} Variation {index + 1}.md")
     with open(path, "w", encoding="utf-8") as f:
-        f.write(_render_markdown(doc, event_type, f"Draft variation {index + 1} — under review, not yet selected", author_name))
+        f.write(_render_markdown(doc, event_type,
+                                 f"Draft variation {index + 1} — under review, not yet selected",
+                                 author_name, md_dir=draft_dir))
     return path
 
 
@@ -536,7 +862,7 @@ def save_final_main():
         if selector:
             status += f" · selected by {selector}"
         with open(path, "w", encoding="utf-8") as f:
-            f.write(_render_markdown(variation, event_type, status, selector))
+            f.write(_render_markdown(variation, event_type, status, selector, md_dir=final_dir))
         print(json.dumps({"path": path}))
     except Exception as e:
         print(json.dumps({"error": str(e)}))

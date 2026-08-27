@@ -109,6 +109,27 @@ def main():
     elif script == "artreq_save_final":
         import art_requirement_generator
         art_requirement_generator.save_final_main()
+    elif script == "artreq_images":
+        import artreq_images
+        artreq_images.images_main()
+    elif script == "artreq_plan":
+        import artreq_images
+        artreq_images.plan_main()
+    elif script == "comfy_check":
+        import artreq_images
+        artreq_images.check_main()
+    elif script == "artreq_regen_image":
+        import artreq_images
+        artreq_images.regenerate_main()
+    elif script == "sequence_review":
+        import sequence_review
+        sequence_review.main()
+    elif script == "get_chapter_info":
+        import chapter_update
+        chapter_update.info_main()
+    elif script == "update_chapter":
+        import chapter_update
+        chapter_update.run_main()
     else:
         print(f"Unknown script: {script}")
         sys.exit(1)

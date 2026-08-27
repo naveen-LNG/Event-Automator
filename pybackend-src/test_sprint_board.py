@@ -69,4 +69,27 @@ ev2 = sb._match_event_config(DESIGN, sep2)
 check(ev2 and not ev2["exact"], f"expected a date mismatch on Sep Event 2, got {ev2}")
 print(f"OK  drift found: Hotel Sim planned ->{sep2['end']} but {ev2['alias']} configured ->{ev2['end']}")
 
+# Chapter Update is matched by identity, not by date window: the roadmap names
+# the chapter ("Chapter 82 + Star Chest") and the check is simply whether that
+# number exists in pve_chapter.xlsx. Both directions are pinned here because a
+# regex that claimed too much (any line saying "chapter") or too little (only
+# one exact phrasing) silently breaks planned-vs-done for every sprint.
+check(sb._planned_chapters(aug1) == [82],
+      f"Aug Event 1 should plan chapter 82, got {sb._planned_chapters(aug1)}")
+ch_aug = [t for t in st["tabs"] if t["tab"] == "chapter"][0]
+check(ch_aug["status"] == "done",
+      f"chapter 82 exists in pve_chapter.xlsx, expected done, got {ch_aug['status']}")
+check(all("hapter" not in o for o in st["other_updates"]),
+      f"chapter line still listed as unactionable: {st['other_updates']}")
+ch_sep1 = [t for t in sb.sprint_status(DESIGN, sep1)["tabs"] if t["tab"] == "chapter"][0]
+check(ch_sep1["planned"], "Sep Event 1 should plan a chapter")
+print(f"OK  chapter tab: Aug=ch82 {ch_aug['status']}, "
+      f"Sep1=ch{sb._planned_chapters(sep1)} {ch_sep1['status']}, no longer unactionable")
+
+# A line mentioning chapters without naming one must NOT be claimed, or it
+# becomes a permanent TODO the tab can never satisfy.
+_e, _u = sb._parse_liveops("update:" + chr(10) + "- Chapter art theme refresh", 2026)
+check(_u[0]["tab"] is None, f"a numberless chapter line was wrongly claimed: {_u[0]}")
+print("OK  numberless 'Chapter art theme refresh' stays unclaimed")
+
 print("\nALL SPRINT BOARD TESTS PASSED")

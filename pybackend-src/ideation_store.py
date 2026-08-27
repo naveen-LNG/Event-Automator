@@ -81,6 +81,21 @@ def write_feedback_entry(events_root, event_type, doc_kind, ref_name, subject_ti
         return None
     ts = utc_stamp()
     entry_id = f"{ts}_{safe_token(author_id)}_{safe_token(ref_name)}_{safe_token(doc_kind)}"
+
+    # utc_stamp() is second-resolution, so two notes from the same author on the
+    # same document within one second produced an identical id and the second
+    # silently overwrote the first - real data loss in storage whose entire
+    # point is that concurrent writes cannot collide. Easy to hit now that
+    # "apply to all" writes an entry per image. Suffix until the name is free;
+    # the timestamp still sorts, the suffix only breaks ties.
+    d = _feedback_dir(events_root, event_type, "entries")
+    os.makedirs(d, exist_ok=True)
+    unique_id, n = entry_id, 1
+    while os.path.exists(os.path.join(d, f"{unique_id}.json")):
+        unique_id = f"{entry_id}_{n}"
+        n += 1
+    entry_id = unique_id
+
     entry = {
         "schema": SCHEMA_VERSION,
         "entry_id": entry_id,
@@ -95,8 +110,6 @@ def write_feedback_entry(events_root, event_type, doc_kind, ref_name, subject_ti
         "feedback": feedback,
         "extracted_lesson": extracted_lesson or "",
     }
-    d = _feedback_dir(events_root, event_type, "entries")
-    os.makedirs(d, exist_ok=True)
     with open(os.path.join(d, f"{entry_id}.json"), "w", encoding="utf-8") as f:
         json.dump(entry, f, indent=2, ensure_ascii=False)
     return entry

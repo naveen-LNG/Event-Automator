@@ -1,0 +1,102 @@
+[
+  {
+    "query": "the pass picker on the art requirement tab isn't updating the render count when i tick building sheets - can you check whether it's actually broken or just my machine",
+    "should_trigger": true,
+    "why": "A UI behaviour question that can only be answered by driving the app."
+  },
+  {
+    "query": "i just changed the nav group collapse in renderer/style.css, does the sidebar still animate properly or did i break it",
+    "should_trigger": true,
+    "why": "Touched style.css; the contract test checks a rule exists, never that it looks right."
+  },
+  {
+    "query": "can you grab me a screenshot of the sprint board showing Aug Event 2 for the standup deck",
+    "should_trigger": true,
+    "why": "A screenshot of the running app - no other route to it."
+  },
+  {
+    "query": "added a new ipc channel artreq:plan in main.js and bridged it in preload - is it actually reachable from the renderer",
+    "should_trigger": true,
+    "why": "IPC reachability is only provable from inside the running renderer."
+  },
+  {
+    "query": "before you tell me the fix works, actually open it and click the thing",
+    "should_trigger": true,
+    "why": "Explicit demand to verify in the real app rather than by test."
+  },
+  {
+    "query": "ok so the comfy Test Connection button in settings - does it show the right error when the url is garbage? dont just read the code",
+    "should_trigger": true,
+    "why": "Interactive behaviour, and the user has ruled out static reading."
+  },
+  {
+    "query": "npm start and see if the ideation view still renders after the schema change",
+    "should_trigger": true,
+    "why": "Names the launch command directly."
+  },
+  {
+    "query": "i want to see how the picker looks for one of the older drafts that has no buildings block, the ones from before we added the schema",
+    "should_trigger": true,
+    "why": "Needs the STUB_LEGACY mode the skill documents; unreachable otherwise."
+  },
+  {
+    "query": "run the python test suites in tools/EventAutomation/PythonBackend and tell me if anything's red",
+    "should_trigger": false,
+    "why": "Near miss - 'run', but the test suites, which this skill exists to supplement not replace."
+  },
+  {
+    "query": "run artreq_plan through pybackend_cli with this payload json and show me the pass counts",
+    "should_trigger": false,
+    "why": "Near miss - running the backend CLI directly, no UI involved."
+  },
+  {
+    "query": "npm run build:py - i think the bundled python is missing the rapidocr wheels after i reinstalled",
+    "should_trigger": false,
+    "why": "Near miss - an npm script about the bundle, not launching the app."
+  },
+  {
+    "query": "add a Characters tab to the sidebar nav next to Main Events, wire it to a new view",
+    "should_trigger": false,
+    "why": "Editing renderer files, not verifying them. Might run afterwards, but the ask is the edit."
+  },
+  {
+    "query": "the sprint board is showing the wrong dates for the Sept sprint, i think sprint_board.py is parsing the roadmap columns wrong",
+    "should_trigger": false,
+    "why": "Near miss - a UI symptom whose cause is clearly named as backend parsing."
+  },
+  {
+    "query": "why is the ui contract test failing on artreq-pass, what does that check even do",
+    "should_trigger": false,
+    "why": "Near miss - asks what a test checks; answerable by reading it."
+  },
+  {
+    "query": "launch the skipbo client from trunk/develop and check the merge2608 event art loads",
+    "should_trigger": false,
+    "why": "Near miss - 'launch', but the Unity game client, a different application entirely."
+  },
+  {
+    "query": "generate the reference images for variation 2 of the merge art requirement, scene pass only",
+    "should_trigger": false,
+    "why": "Near miss - a generation job; the CLI does this without the GUI."
+  },
+  {
+    "query": "electron-builder is failing on the nsis step when i run npm run dist, something about the icon",
+    "should_trigger": false,
+    "why": "Near miss - packaging the app, not running it."
+  },
+  {
+    "query": "what does window.api expose to the renderer? list the bridged channels",
+    "should_trigger": false,
+    "why": "Near miss - answerable by reading preload.js."
+  },
+  {
+    "query": "the app opens on a blank white window this morning and the console is empty, no idea why",
+    "should_trigger": true,
+    "why": "Diagnosing a launch failure needs launching it and looking at the frame."
+  },
+  {
+    "query": "make the pass picker counts bold and give the disabled ones a tooltip explaining why",
+    "should_trigger": false,
+    "why": "Near miss - a styling change request; the work is editing, not driving."
+  }
+]

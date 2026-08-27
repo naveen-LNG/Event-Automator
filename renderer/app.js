@@ -12,6 +12,7 @@
   let cachedFSG = null;
   let cachedTrivia = null;
   let cachedEndlessTreasure = null;
+  let cachedChapter = null;
   let ideationThemes = null;
   let ideationDraftPaths = [];
   let ideationSelectedIndex = -1;
@@ -112,6 +113,7 @@
     if (viewId === 'full-screen-gift-view') loadFullScreenGift();
     if (viewId === 'trivia-challenge-view') loadTrivia();
     if (viewId === 'endless-treasure-view') loadEndlessTreasure();
+    if (viewId === 'chapter-view') loadChapter();
     if (viewId === 'profile-view') refreshProfiles();
     if (viewId === 'sprint-view' && !sprintData) loadSprintBoard();
   }
@@ -126,6 +128,7 @@
     else if (currentView === 'full-screen-gift-view') await loadFullScreenGift(true);
     else if (currentView === 'trivia-challenge-view') await loadTrivia(true);
     else if (currentView === 'endless-treasure-view') await loadEndlessTreasure(true);
+    else if (currentView === 'chapter-view') await loadChapter(true);
   }
 
   $$('.menu-btn').forEach(btn => {
@@ -263,6 +266,22 @@
       row.appendChild(input);
       row.appendChild(browseBtn);
       container.appendChild(row);
+    });
+  }
+
+  // Chapter Update tool paths. Folder pickers, persisted like unityExePath.
+  for (const [btn, input, key] of [
+    ['#browse-chapter-lvlpy-btn', '#chapter-lvlpy-input', 'chapterLvlPyPath'],
+    ['#browse-chapter-mapbuilder-btn', '#chapter-mapbuilder-input', 'chapterMapBuilderPath'],
+  ]) {
+    $(btn).addEventListener('click', async () => {
+      const picked = await window.api.browseFolder(cfg[key] || '');
+      if (picked) {
+        $(input).value = picked;
+        cfg[key] = picked;
+        await window.api.saveConfig({ [key]: picked });
+        toast('Saved. Blank the field to go back to the guessed layout.', 'success');
+      }
     });
   }
 
@@ -473,6 +492,31 @@
     const showing = input.type === 'text';
     input.type = showing ? 'password' : 'text';
     btn.textContent = showing ? 'Show' : 'Hide';
+  });
+
+  $('#comfy-url-input').addEventListener('change', async (e) => {
+    cfg.comfyUrl = e.target.value.trim();
+    await window.api.saveConfig({ comfyUrl: cfg.comfyUrl });
+  });
+  $('#comfy-test-btn').addEventListener('click', async () => {
+    const resultEl = $('#comfy-test-result');
+    const btn = $('#comfy-test-btn');
+    btn.disabled = true; btn.textContent = 'Testing...';
+    resultEl.textContent = '';
+    resultEl.classList.remove('ok', 'error');
+
+    const res = await window.api.comfyCheck();
+    btn.disabled = false; btn.textContent = 'Test Connection';
+    let info = null;
+    try { info = JSON.parse(res.stdout); } catch (e) { /* fall through to raw output */ }
+    // 'wedged' is reported as its own state on purpose: the server answers
+    // status requests in milliseconds while refusing all work, so a plain
+    // reachable/unreachable readout would call a dead worker healthy.
+    const okState = info && info.state === 'ok';
+    resultEl.textContent = info ? info.detail : (res.output || 'No response.');
+    resultEl.classList.add(okState ? 'ok' : 'error');
+    log(`ComfyUI check: ${info ? info.state : 'error'} — ${info ? info.detail : res.output}`,
+        okState ? 'console-log-line' : 'console-log-error');
   });
 
   $('#ollama-base-url-input').addEventListener('change', async (e) => {
@@ -1539,6 +1583,156 @@
     }
   });
 
+  // ---------------- Chapter Update tab ----------------
+  // Chapter numbers are DETECTED, never typed: pve_chapter.xlsx's chapter sheet
+  // carries the internal map id (col A, 88000) and the display number (col C,
+  // 78) side by side, so the offset between them is a fact from the data rather
+  // than a setting that can drift. Everything downstream keys off that.
+  const CHAPTER_STEP_DEFAULT = ['validate', 'reward', 'art', 'asset', 'qa'];
+
+  async function loadChapter(force) {
+    if (cachedChapter && !force) { renderChapter(); return; }
+    cachedChapter = null;
+    const root = activeBranchRoot();
+    if (!root) { log('Cannot load Chapter info: branch path not set.', 'console-log-error'); return; }
+    const designPath = await window.api.resolveDesignPath(root, cfg.activeWorkspace);
+    log('Reading current chapter from pve_chapter.xlsx...');
+    const res = await window.api.chapterGet({ designPath });
+    if (!res.success) {
+      log(`Error loading Chapter info: ${res.output}`, 'console-log-error');
+      toast('Could not read pve_chapter.xlsx for this branch/workspace.', 'error');
+      return;
+    }
+    try {
+      cachedChapter = JSON.parse(res.stdout);
+      if (cachedChapter.error) {
+        log(`Error: ${cachedChapter.error}`, 'console-log-error');
+        toast(cachedChapter.error, 'error');
+        cachedChapter = null;
+        return;
+      }
+      log(`Chapter info loaded. Current chapter ${cachedChapter.display_old} -> new ${cachedChapter.display_new} (map id ${cachedChapter.new_map_id}).`);
+      renderChapter();
+    } catch (e) {
+      log(`Error parsing Chapter JSON: ${e.message}`, 'console-log-error');
+    }
+  }
+
+  function renderChapter() {
+    updateChapterSimDisplay();
+    if (!cachedChapter) return;
+    const c = cachedChapter;
+    $('#chapter-cur').textContent = `章节${c.display_old} (internal ${c.old_chapter})`;
+    $('#chapter-new').textContent = `章节${c.display_new} (internal ${c.new_chapter})`;
+    $('#chapter-mapid').textContent = c.new_map_id;
+    $('#chapter-range').textContent = `${c.level_range[0]} – ${c.level_range[1]}`;
+
+    // Rebuilt from the backend's own step list so the two can't drift apart.
+    // Level Balancing stays unticked by default: it needs a finished simulation
+    // run, which won't exist at the point the config steps are done. QA
+    // Validation is ticked — it only reads, and it is the sign-off gate.
+    // Steps with an external prerequisite say so inline, and Magic Builder is
+    // disabled outright when there is no system Python for conf_fill_ex.py —
+    // better than letting someone tick it and fail two minutes in.
+    $('#chapter-steps').innerHTML = c.steps.map(s => {
+      const noPy = s.key === 'magic' && c.has_system_python === false;
+      const off = noPy ? ' pass-option-off' : '';
+      const need = noPy ? 'No system Python found — install Python 3.9+' : (s.needs || '');
+      return `
+      <label class="pass-option${off}" title="${escapeHtml(need)}">
+        <input type="checkbox" class="chapter-step" value="${s.key}"
+          ${CHAPTER_STEP_DEFAULT.includes(s.key) ? 'checked' : ''} ${noPy ? 'disabled' : ''} />
+        <span>${escapeHtml(s.label)}</span>
+        ${need ? `<span class="pass-count">${escapeHtml(need.split('(')[0].trim().slice(0, 34))}</span>` : ''}
+      </label>`;
+    }).join('');
+  }
+
+  // The simulation folder is a machine-level tool path, so it persists in
+  // config like robotCalcPath / unityExePath rather than being retyped per run.
+  // Blank means "derive from the active branch", which is right on every normal
+  // checkout — the box shows the resolved path either way so it is never a
+  // guess what Level Balancing will read.
+  function chapterSimDefault() {
+    const root = activeBranchRoot();
+    // Built with an explicit separator: an unescaped \d in a template
+    // literal is silently swallowed by JS.
+    return root ? [root, 'develop', 'tools', 'RunCardEx2'].join('\\') : '';
+  }
+
+  function updateChapterSimDisplay() {
+    const el = $('#chapter-sim-path');
+    if (cfg.chapterSimPath) {
+      el.value = cfg.chapterSimPath;
+    } else {
+      const d = chapterSimDefault();
+      el.value = d ? `${d}   (branch default)` : '';
+    }
+  }
+
+  $('#chapter-sim-browse-btn').addEventListener('click', async () => {
+    const picked = await window.api.browseFolder(cfg.chapterSimPath || chapterSimDefault());
+    if (picked) {
+      cfg.chapterSimPath = picked;
+      updateChapterSimDisplay();
+      await window.api.saveConfig({ chapterSimPath: picked });
+      toast('Simulation folder saved.', 'success');
+    }
+  });
+
+  $('#chapter-sim-reset-btn').addEventListener('click', async () => {
+    cfg.chapterSimPath = '';
+    updateChapterSimDisplay();
+    await window.api.saveConfig({ chapterSimPath: '' });
+    toast('Reverted to the active branch default.', 'success');
+  });
+
+  $('#chapter-refresh-btn').addEventListener('click', () => loadChapter(true));
+
+  $('#chapter-run-btn').addEventListener('click', async () => {
+    if (!cachedChapter) { toast('Chapter metadata still loading...', 'error'); return; }
+    const steps = $$('#chapter-steps .chapter-step').filter(b => b.checked).map(b => b.value);
+    if (!steps.length) { toast('Tick at least one step to run.', 'error'); return; }
+
+    const c = cachedChapter;
+    const ok = confirm(
+      `Roll chapter ${c.display_old} forward to ${c.display_new}?\n\n` +
+      `Steps: ${steps.join(', ')}\n` +
+      `Workspace: ${cfg.activeWorkspace}\n\n` +
+      `This edits the design workbooks in place. Make sure they are not open in ` +
+      `Excel and that you can svn revert if something looks wrong.`
+    );
+    if (!ok) return;
+
+    const root = activeBranchRoot();
+    const btn = $('#chapter-run-btn');
+    btn.disabled = true; btn.textContent = 'Running...';
+    const res = await window.api.chapterRun({
+      branchRoot: root,
+      payload: {
+        workspace: cfg.activeWorkspace,
+        old_chapter: c.old_chapter,
+        display_offset: c.display_offset,
+        steps,
+        sim_path: cfg.chapterSimPath || '',
+        lvl_py: cfg.chapterLvlPyPath || '',
+        map_builder: cfg.chapterMapBuilderPath || '',
+        scene_file: ''
+      }
+    });
+    btn.disabled = false; btn.textContent = 'Run Chapter Update';
+
+    if (res.success) {
+      log(`Chapter Update complete — 章节${c.display_new} configured.`, 'console-log-success');
+      toast(`Chapter ${c.display_new} configured. Review the workbooks before committing.`, 'success');
+      cachedChapter = null;
+      await loadChapter(true);
+    } else {
+      log(`Chapter Update failed (exit ${res.code}).`, 'console-log-error');
+      toast('Chapter Update failed — see the output pane.', 'error');
+    }
+  });
+
   // ---------------- Trivia Challenge tab ----------------
   async function loadTrivia(force) {
     if (cachedTrivia && !force) { updateTriviaPreview(); return; }
@@ -2019,9 +2213,13 @@
         ${threadHtml('artreq', artReqRefName())}
 
         <div class="board-divider"></div>
+        <h3 class="card-title">Reference Images</h3>
+        ${renderZoneImages(v, idx)}
+
+        <div class="board-divider"></div>
         <div class="form-row">
-          <label class="form-label" for="artreq-feedback-${idx}">Feedback</label>
-          <textarea id="artreq-feedback-${idx}" class="text-input ideation-feedback" rows="2" placeholder="e.g. Icons need a consistent outline width; the gift NPC doesn't match the theme"></textarea>
+          <label class="form-label" for="artreq-feedback-${idx}">Document Feedback</label>
+          <textarea id="artreq-feedback-${idx}" class="text-input ideation-feedback" rows="2" placeholder="Changes to the WRITTEN document. Image notes go under each image above."></textarea>
         </div>
         <div class="execution-footer" style="justify-content:flex-end;">
           <button class="primary-btn small artreq-regen-btn" data-idx="${idx}">Submit Feedback &amp; Regenerate</button>
@@ -2030,12 +2228,239 @@
     `;
   }
 
+  // Reference images live under each variation. Image feedback is deliberately
+  // separate from document feedback: a note about the art should regenerate the
+  // art, not rewrite the spec, and the two accumulate as different lesson kinds.
+  function renderZoneImages(v, idx) {
+    const zones = v.zones || [];
+    const withImages = zones.filter(z => z.image_path);
+    if (!withImages.length) {
+      return `
+        <p class="settings-hint">No reference images yet. Generating renders one image per zone
+        through ComfyUI, grounded in the approved render spec and this event type's own shipped
+        art documents.</p>
+        ${passPickerHtml(idx, artReqVariations[idx])}
+        <div class="execution-footer" style="justify-content:flex-end;">
+          <button class="secondary-btn small artreq-images-btn" data-idx="${idx}">Generate Reference Images</button>
+        </div>`;
+    }
+    const cards = withImages.map(z => `
+      <div class="zone-image">
+        <img class="zone-image-thumb" src="${fileUrl(z.image_path)}" alt="Zone ${escapeHtml(String(z.zone_number))}" />
+        <div class="zone-image-body">
+          <div class="zone-image-head"><strong>Zone ${escapeHtml(String(z.zone_number))}</strong>
+            <span class="feedback-when mono">${escapeHtml(z.zone_theme || '')}</span></div>
+          <textarea id="zoneimg-fb-${idx}-${z.zone_number}" class="text-input ideation-feedback" rows="2"
+            placeholder="e.g. the press should be teal, not red"></textarea>
+          <div class="zone-image-actions">
+            <label class="zone-image-all">
+              <input type="checkbox" id="zoneimg-all-${idx}-${z.zone_number}" />
+              Apply to all images
+            </label>
+            <button class="secondary-btn small zoneimg-regen-btn"
+              data-idx="${idx}" data-zone="${escapeHtml(String(z.zone_number))}">Regenerate</button>
+          </div>
+        </div>
+      </div>`).join('');
+    return `<div class="zone-image-grid">${cards}</div>
+      <div class="execution-footer" style="justify-content:flex-end;">
+        <button class="secondary-btn small artreq-images-btn" data-idx="${idx}">Regenerate All From Scratch</button>
+      </div>`;
+  }
+
+  // file:// URL for a local render. Electron will not load a bare Windows path
+  // from an <img src>, and the path can contain spaces and non-ASCII.
+  function fileUrl(p) {
+    if (!p) return '';
+    return 'file:///' + String(p).replace(/\\/g, '/').split('/').map(encodeURIComponent).join('/');
+  }
+
+
+  // Which asset passes to render. Scene is on by default and is the only one an
+  // older document can satisfy; the rest need the buildings/producers the newer
+  // schema carries, so each is disabled until the document actually has them.
+  function passPickerHtml(idx, doc) {
+    const zones = (doc && doc.zones) || [];
+    const nb = zones.reduce((a, z) => a + ((z.buildings || []).length), 0);
+    const np = ((doc && doc.producers) || []).length;
+    // Merge carries producers and no recipes; Dessert the reverse. Each pass is
+    // gated on what the document actually has, so a type is never offered the
+    // other's asset classes.
+    const ns = zones.reduce((a, z) => a +
+      (z.buildings || []).reduce((b, x) => b + Math.max(0, (Number(x.max_level) || 1) - 1), 0), 0);
+    const nr = ((doc && doc.recipes) || []).length;
+    const ni = ((doc && doc.ingredients) || []).length;
+    const ex = (doc && doc.event_extras) || {};
+    const nx = (String(ex.hot_air_balloon || '').trim() ? 1 : 0)
+      + (String(ex.achievement_badge || '').trim() ? 1 : 0)
+      + ((ex.task_icons || []).filter(t => String(t).trim()).length);
+    const rows = [
+      ['scene', 'Scene overviews', zones.length, true],
+      ['building', 'Building sheets', nb, nb > 0],
+      // Gated on the stage count, not the building count: a Dessert document has
+      // 46 buildings and every one of them is max_level 1, so gating on nb left
+      // a live checkbox that would render nothing.
+      ['stage', 'Upgrade stages', ns, ns > 0],
+      ['icon', 'Chain item icons', ((doc && doc.producers) || []).reduce((a, pr) =>
+        a + (pr.chains || []).reduce((b, c) => b + ((c.items || []).length), 0), 0), np > 0],
+      ['producer', 'Producer icons', np * 2, np > 0],
+      ['recipe', 'Recipes', nr, nr > 0],
+      ['ingredient', 'Ingredients', ni, ni > 0],
+      ['extras', 'Balloon, badge, task icons', nx, nx > 0]
+    ];
+    const boxes = rows.map(([key, label, count, enabled]) => `
+      <label class="pass-option${enabled ? '' : ' pass-option-off'}">
+        <input type="checkbox" class="artreq-pass" data-idx="${idx}" value="${key}"
+          ${key === 'scene' ? 'checked' : ''} ${enabled ? '' : 'disabled'} />
+        <span>${label}</span><span class="pass-count">${count}</span>
+      </label>`).join('');
+    return `
+      <div class="pass-picker" data-idx="${idx}">
+        ${boxes}
+        <div class="pass-total" id="artreq-plan-${idx}">Scene overviews only — ${zones.length} render(s).</div>
+      </div>`;
+  }
+
+  // Seconds per render, measured across this session's runs. Mirrors the same
+  // constant in artreq_images.plan_main; kept here so the cost line needs no
+  // round trip.
+  const SECONDS_PER_RENDER = 32;
+
+  // Deliberately synchronous. This used to call artreq:plan on every tick, and
+  // driving it in the real app showed the cost line running TWO clicks behind:
+  // each tick spawned a Python process taking ~2s, and nothing guarded against
+  // responses arriving out of order, so a stale reply could land last and stick.
+  // The counts are already on the page - passPickerHtml rendered them into the
+  // .pass-count pills - so summing the ticked ones is exact, instant, and has no
+  // race to guard. artreq:plan remains the authoritative planner and is logged
+  // once before a run actually starts.
+  function refreshPlan(idx) {
+    const el = $(`#artreq-plan-${idx}`);
+    if (!el) return;
+    let total = 0, chosen = 0;
+    $$(`.pass-picker[data-idx="${idx}"] .pass-option`).forEach(o => {
+      const cb = o.querySelector('input');
+      if (cb && cb.checked) {
+        total += Number(o.querySelector('.pass-count').textContent) || 0;
+        chosen++;
+      }
+    });
+    if (!chosen) { el.textContent = 'Nothing selected.'; return; }
+    const mins = Math.round(total * SECONDS_PER_RENDER / 60);
+    el.textContent = `${total} render(s) — roughly ${mins} minute${mins === 1 ? '' : 's'}.`;
+  }
+
+  async function generateZoneImages(idx) {
+    const btn = $(`.artreq-images-btn[data-idx="${idx}"]`);
+    if (btn) { btn.disabled = true; btn.textContent = 'Rendering…'; }
+    log(`Generating reference images for variation ${idx + 1}…`);
+    const passes = $$(`.artreq-pass[data-idx="${idx}"]`).filter(c => c.checked).map(c => c.value);
+    // The authoritative count, straight from the backend, recorded before a
+    // long run starts so the log says what was actually asked for.
+    try {
+      const pl = JSON.parse((await window.api.artReqPlan({
+        variation: artReqVariations[idx], passes: passes.length ? passes : ['scene'] })).stdout);
+      if (pl.ok) log(`Plan: ${pl.passes.map(p => `${p.pass} ${p.count}`).join(', ')} — ${pl.total} render(s).`);
+    } catch (e) { /* the plan is informational; never block the run on it */ }
+    const res = await window.api.artReqImages({
+      eventType: $('#ideation-event-type').value,
+      variation: artReqVariations[idx],
+      variationIndex: idx,
+      passes: passes.length ? passes : ['scene']
+    });
+    if (btn) { btn.disabled = false; btn.textContent = 'Generate Reference Images'; }
+    if (!res.success) {
+      log(`Image generation failed: ${res.output}`, 'console-log-error');
+      toast('Image generation failed: ' + res.output, 'error');
+      return;
+    }
+    try {
+      const parsed = JSON.parse(res.stdout);
+      if (!parsed.ok) {
+        log(`Image generation failed: ${parsed.error}`, 'console-log-error');
+        toast(parsed.error || 'Image generation failed.', 'error');
+        return;
+      }
+      artReqVariations[idx] = parsed.doc || artReqVariations[idx];
+      reportImageReview(parsed.review);
+      Object.entries(parsed.extra_reviews || {}).forEach(([label, rev]) => {
+        (rev.findings || []).forEach(f => log(
+          `[${label}] ${f.level.toUpperCase()} ${f.frame}: ${f.message}`,
+          f.level === 'error' ? 'console-log-error' : 'console-log-warn'));
+      });
+      log(`Rendered ${parsed.generated}/${parsed.requested} image(s).`, 'console-log-success');
+      toast(`Rendered ${parsed.generated} reference image(s).`, 'success');
+      renderArtReqResults();
+    } catch (e) {
+      log(`Could not parse the image response: ${e.message}`, 'console-log-error');
+      toast('Could not parse the image response.', 'error');
+    }
+  }
+
+  async function regenerateZoneImage(idx, zoneNumber) {
+    const fb = $(`#zoneimg-fb-${idx}-${zoneNumber}`);
+    const allBox = $(`#zoneimg-all-${idx}-${zoneNumber}`);
+    const feedback = fb ? fb.value.trim() : '';
+    if (!feedback) { toast('Add a note describing the change first.', 'error'); return; }
+    const applyToAll = !!(allBox && allBox.checked);
+    const btn = $(`.zoneimg-regen-btn[data-idx="${idx}"][data-zone="${zoneNumber}"]`);
+    if (btn) { btn.disabled = true; btn.textContent = 'Revising…'; }
+    log(`Revising zone ${zoneNumber} image${applyToAll ? ' (applying to all zones)' : ''}…`);
+    const res = await window.api.artReqRegenImage({
+      eventType: $('#ideation-event-type').value,
+      variation: artReqVariations[idx],
+      variationIndex: idx,
+      zoneNumber,
+      feedback,
+      applyToAll
+    });
+    if (btn) { btn.disabled = false; btn.textContent = 'Regenerate'; }
+    if (!res.success) {
+      log(`Image regeneration failed: ${res.output}`, 'console-log-error');
+      toast('Image regeneration failed: ' + res.output, 'error');
+      return;
+    }
+    try {
+      const parsed = JSON.parse(res.stdout);
+      if (!parsed.ok) {
+        log(`Image regeneration failed: ${parsed.error}`, 'console-log-error');
+        toast(parsed.error || 'Image regeneration failed.', 'error');
+        return;
+      }
+      artReqVariations[idx] = parsed.doc || artReqVariations[idx];
+      reportImageReview(parsed.review);
+      await refreshIdeationEntries($('#ideation-event-type').value);
+      renderLessonsPanel();
+      renderArtReqResults();
+      log(`Revised ${parsed.regenerated} image(s). The note is stored and will condition future renders.`,
+          'console-log-success');
+      toast(`Revised ${parsed.regenerated} image(s) — note stored for next time.`, 'success');
+    } catch (e) {
+      log(`Could not parse the regeneration response: ${e.message}`, 'console-log-error');
+      toast('Could not parse the regeneration response.', 'error');
+    }
+  }
+
+  // The automated check runs backend-side on every render; surface whatever it
+  // found rather than letting a blank or duplicated image pass silently.
+  function reportImageReview(review) {
+    if (!review) return;
+    (review.findings || []).forEach(f => {
+      log(`Image review ${f.level}: ${f.frame} — ${f.message}`,
+          f.level === 'error' ? 'console-log-error' : 'console-log-line');
+    });
+    if (review.ok === false) toast('Image review found problems — see the log.', 'error');
+  }
+
   function renderArtReqResults() {
     const container = $('#artreq-results');
     if (!artReqVariations || !artReqVariations.length) { container.innerHTML = ''; return; }
     container.innerHTML = artReqVariations.map((v, i) => renderArtReqCard(v, i)).join('');
     $$('.artreq-select-btn').forEach(btn => btn.addEventListener('click', () => selectArtReqVariation(Number(btn.dataset.idx))));
     $$('.artreq-regen-btn').forEach(btn => btn.addEventListener('click', () => regenerateArtReqVariation(Number(btn.dataset.idx))));
+    $$('.artreq-images-btn').forEach(btn => btn.addEventListener('click', () => generateZoneImages(Number(btn.dataset.idx))));
+    $$('.artreq-pass').forEach(cb => cb.addEventListener('change', () => refreshPlan(Number(cb.dataset.idx))));
+    $$('.zoneimg-regen-btn').forEach(btn => btn.addEventListener('click', () => regenerateZoneImage(Number(btn.dataset.idx), btn.dataset.zone)));
   }
 
   $('#artreq-generate-btn').addEventListener('click', async () => {
@@ -2141,7 +2566,7 @@
     battlepass: 'battlepass-view', holiday_bp: 'holiday-bp-view',
     decoration_shop: 'decoration-shop-view', streak_challenge: 'streak-challenge-view',
     weekly_gift: 'weekly-gift-view', full_screen_gift: 'full-screen-gift-view',
-    endless_treasure: 'endless-treasure-view'
+    endless_treasure: 'endless-treasure-view', chapter: 'chapter-view'
   };
   const STATUS_META = {
     done:   { cls: 'sp-done',   label: 'Configured' },
@@ -2209,7 +2634,10 @@
     const cards = (d.tabs || []).map(t => {
       const m = STATUS_META[t.status] || STATUS_META['n/a'];
       const rows = (t.rows || []).slice(0, 3)
-        .map(r => `<div class="sp-row">${escapeHtml(r.name || '(unnamed)')} <span class="feedback-when">${escapeHtml(fmtRange(r.start, r.end))}${r.switch ? ' · ' + escapeHtml(r.switch) : ''}</span></div>`).join('');
+        .map(r => {
+          const meta = [r.start ? fmtRange(r.start, r.end) : '', r.switch || ''].filter(Boolean).join(' · ');
+          return `<div class="sp-row">${escapeHtml(r.name || '(unnamed)')}${meta ? ` <span class="feedback-when">${escapeHtml(meta)}</span>` : ''}</div>`;
+        }).join('');
       return `<div class="sp-card ${m.cls}">
         <div class="sp-card-head">
           <span class="sp-dot" aria-hidden="true"></span>
@@ -2258,8 +2686,11 @@
     pipelineSteps = data.pipelineSteps;
 
     $('#unity-exe-input').value = cfg.unityExePath || '';
+    $('#chapter-lvlpy-input').value = cfg.chapterLvlPyPath || '';
+    $('#chapter-mapbuilder-input').value = cfg.chapterMapBuilderPath || '';
     updateRobotPvpPathDisplay();
     $('#anthropic-key-input').value = cfg.anthropicApiKey || '';
+    $('#comfy-url-input').value = cfg.comfyUrl || '';
     $('#ollama-base-url-input').value = cfg.ollamaBaseUrl || '';
     $('#ollama-model-input').value = cfg.ollamaModel || 'qwen3:32b';
     $('#author-name-input').value = cfg.authorName || '';

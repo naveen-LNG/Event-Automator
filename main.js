@@ -122,9 +122,20 @@ function loadConfig() {
     ollamaModel: 'qwen3:32b',
     unityExePath: '',
     robotCalcPath: '',
+    // Blank = derive from the active branch (<branch>/develop/tools/RunCardEx2).
+    // Only set when the simulation output lives somewhere else on this machine.
+    chapterSimPath: '',
+    // tools/ sits OUTSIDE the branch checkout and its position relative to a
+    // branch differs (trunk/ is one level down, branches/Misc/ two), so these
+    // cannot be derived from the branch path the way design/ and develop/ are.
+    // Blank = guess <repo>/tools/...; Browse when the checkout is laid out
+    // differently on this machine.
+    chapterLvlPyPath: '',
+    chapterMapBuilderPath: '',
     // Blank = the local default folder next to the app. Point at a synced
     // folder to share ideation work with the team.
     ideationDataPath: '',
+    comfyUrl: 'https://skipbo.comfyui.liquidnitro.games',
     // Auto-filled from the OS on first launch (see detectIdentity).
     authorId: '',
     authorName: '',
@@ -569,6 +580,28 @@ ipcMain.handle('trivia:run', async (evt, { branchRoot, workspace }) => {
   });
 });
 
+// ---- IPC: Chapter Update (new PVE chapter roll-forward) ----
+
+ipcMain.handle('chapter:get', async (evt, { designPath }) => {
+  return runPython('get_chapter_info', [designPath]);
+});
+
+// Streamed rather than buffered: copying dynamic_map_NNNNN can take a while and
+// a silent progress pane reads as a hang.
+ipcMain.handle('chapter:run', async (evt, { branchRoot, payload }) => {
+  const tmp = tempJsonFile('chapter_payload');
+  fs.writeFileSync(tmp, JSON.stringify(payload), 'utf-8');
+
+  return new Promise((resolve) => {
+    let output = '';
+    const proc = spawn(PYTHON_EXE, [PYBACKEND_SCRIPT, 'update_chapter', branchRoot, tmp], { cwd: PYBACKEND_CWD });
+    proc.stdout.on('data', (d) => { output += d.toString(); evt.sender.send('pipeline:log-line', d.toString()); });
+    proc.stderr.on('data', (d) => { output += d.toString(); evt.sender.send('pipeline:log-line', d.toString()); });
+    proc.on('close', (code) => resolve({ success: code === 0, code, output }));
+    proc.on('error', (err) => resolve({ success: false, code: 1, output: `Failed to launch Python: ${err.message}` }));
+  });
+});
+
 // ---- IPC: Event type / history lookup (Main Events tab source picker) ----
 
 ipcMain.handle('eventtypes:get', async (evt, { designPath }) => {
@@ -902,6 +935,71 @@ ipcMain.handle('ideation:retract', async (evt, { eventType, entryId, reason }) =
 function roadmapPath() {
   return path.join(ideationDataRoot(), 'Roadmap', 'Roadmap.xlsx');
 }
+
+// ---- Reference images (ComfyUI / Nano Banana) ----
+// These call the same backend the document flow uses, so the zone image paths
+// stamped onto the variation come straight back to the renderer and end up
+// embedded in the .md when the variation is saved.
+
+ipcMain.handle('comfy:check', async () => {
+  const cfg = loadConfig();
+  const tmp = tempJsonFile('comfy_check');
+  fs.writeFileSync(tmp, JSON.stringify({ comfy_url: cfg.comfyUrl || '' }), 'utf-8');
+  return runPythonAndScrub('comfy_check', tmp);
+});
+
+// Passes beyond 'scene' are opt-in: a full Merge event is ~96 renders at roughly
+// half a minute each, so the renderer asks artreq:plan for the cost first and the
+// user chooses what to spend. Omitting passes keeps the original scene-only behaviour.
+ipcMain.handle('artreq:plan', async (evt, { variation, passes }) => {
+  const tmp = tempJsonFile('artreq_plan');
+  fs.writeFileSync(tmp, JSON.stringify({ doc: variation, passes: passes || null }), 'utf-8');
+  return runPythonAndScrub('artreq_plan', tmp);
+});
+
+ipcMain.handle('artreq:images', async (evt, { eventType, variation, variationIndex, passes }) => {
+  const cfg = loadConfig();
+  if (!(cfg.comfyUrl || '').trim()) {
+    return { success: false, output: 'Set the ComfyUI URL in Settings first.' };
+  }
+  const { provider } = resolveIdeationProvider(cfg);
+  const tmp = tempJsonFile('artreq_images');
+  fs.writeFileSync(tmp, JSON.stringify({
+    comfy_url: cfg.comfyUrl,
+    event_type: eventType,
+    doc: variation,
+    index: variationIndex,
+    provider,
+    api_key: cfg.anthropicApiKey,
+    ollama_base_url: cfg.ollamaBaseUrl,
+    ollama_model: cfg.ollamaModel || 'qwen3:32b',
+    ollama_vision_model: cfg.ollamaVisionModel || '',
+    passes: passes && passes.length ? passes : ['scene'],
+    events_root: ideationEventsRoot()
+  }), 'utf-8');
+  return runPythonAndScrub('artreq_images', tmp);
+});
+
+ipcMain.handle('artreq:regenImage', async (evt, { eventType, variation, variationIndex, zoneNumber, feedback, applyToAll }) => {
+  const cfg = loadConfig();
+  if (!(cfg.comfyUrl || '').trim()) {
+    return { success: false, output: 'Set the ComfyUI URL in Settings first.' };
+  }
+  const tmp = tempJsonFile('artreq_regen_image');
+  fs.writeFileSync(tmp, JSON.stringify({
+    comfy_url: cfg.comfyUrl,
+    event_type: eventType,
+    doc: variation,
+    index: variationIndex,
+    zone_number: zoneNumber,
+    feedback,
+    apply_to_all: !!applyToAll,
+    author_id: cfg.authorId,
+    author_name: cfg.authorName,
+    events_root: ideationEventsRoot()
+  }), 'utf-8');
+  return runPythonAndScrub('artreq_regen_image', tmp);
+});
 
 ipcMain.handle('sprint:board', async (evt, { designPath, selectedSprint }) => {
   const rp = roadmapPath();

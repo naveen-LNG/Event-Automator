@@ -5159,6 +5159,78 @@ def update_pack_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
         return False
 
 
+def get_event_time_range(proj_root, event_name):
+    """Return (start_str, end_str) for event_name from events.xlsx cols H/I, or (None, None)."""
+    import openpyxl
+
+    events_path = os.path.join(proj_root, "design", "DesignData", WORKSPACE_NAME, "design", "events.xlsx")
+    if not os.path.exists(events_path):
+        return None, None
+    try:
+        wb = openpyxl.load_workbook(events_path, data_only=True)
+        ws = wb["events"]
+    except Exception:
+        return None, None
+
+    evt_lower = event_name.lower()
+    for r in range(2, ws.max_row + 1):
+        alias = str(ws.cell(r, 2).value or "").lower()
+        if evt_lower in alias:
+            return (str(ws.cell(r, 8).value or "").strip() or None,
+                    str(ws.cell(r, 9).value or "").strip() or None)
+    return None, None
+
+
+def source_event_safe_to_comment(proj_root, src_evt, log_dir):
+    """
+    Decide whether the SOURCE event's guide rows should be commented out when its
+    content is cloned to a new event.
+
+    Verified against SVN history of trunk/WorkSpcae3/design/guide.xlsx: adding a new
+    event NEVER comments other events in the same commit. The active set accumulates
+    (observed 0 -> 1 -> 2 -> 3 concurrent events) and rows are commented separately,
+    later, when an event actually ENDS. So commenting is lifecycle-driven, not
+    clone-driven.
+
+    Practical rule that matches that: only comment the source if it has already
+    finished before the new event starts. If they overlap (the source is still live,
+    which is the common case since the UI defaults the Source dropdown to the latest
+    event of that type) leave it active — otherwise we'd disable the tutorial of a
+    currently-running event. When either date is unknown, default to NOT commenting,
+    since that's the behaviour the history shows.
+    """
+    from datetime import datetime
+
+    def _parse(s):
+        if not s:
+            return None
+        try:
+            return datetime.strptime(str(s).strip()[:19], "%Y-%m-%d %H:%M:%S")
+        except Exception:
+            try:
+                return datetime.strptime(str(s).strip()[:10], "%Y-%m-%d")
+            except Exception:
+                return None
+
+    _, src_end_str = get_event_time_range(proj_root, src_evt)
+    src_end = _parse(src_end_str)
+
+    tgt_start = _parse(load_extra_args(log_dir).get("start_time", ""))
+
+    if src_end is None or tgt_start is None:
+        log(f"guide: source '{src_evt}' end date or target start date unknown — leaving source rows ACTIVE "
+            f"(matches observed convention: adding an event never deactivates others).")
+        return False
+
+    if src_end < tgt_start:
+        log(f"guide: source '{src_evt}' ended {src_end_str} before the new event starts — safe to comment its rows.")
+        return True
+
+    log(f"guide: source '{src_evt}' is still live (ends {src_end_str}, new event starts {tgt_start}) — "
+        f"leaving its rows ACTIVE so the running event's tutorial keeps working.")
+    return False
+
+
 def update_guide_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
     """Step 19: Update guide.xlsx — clone, remap IDs, insert precisely after active events."""
     import openpyxl
@@ -5198,7 +5270,11 @@ def update_guide_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
     try:
         wb = load_workbook_frozen(file_path)
         modified = False
-        
+
+        # Decide once, up front, whether the source event's own rows should be
+        # deactivated — see source_event_safe_to_comment for the SVN-verified rule.
+        comment_src = source_event_safe_to_comment(proj_root, src_evt, log_dir)
+
         # 1. guide_section
         old_id_to_new_id = {}
         ws_sec = wb["guide_section"] if "guide_section" in wb.sheetnames else None
@@ -5273,15 +5349,20 @@ def update_guide_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                 # every OTHER currently-active event caught in that range. Confirmed via
                 # a real run: creating a new dessert event wiped out all 16 of sim2607's
                 # (an unrelated, still-open event) guide_section rows.
-                for src_r in src_rows:
-                    actual_src_r = src_r if src_r < insert_sec_row else src_r + len(src_rows)
-                    val = ws_sec.cell(actual_src_r, 1).value
-                    if val and not str(val).startswith("//"):
-                        ws_sec.cell(actual_src_r, 1, f"//{val}")
+                # ...and only when the source has actually ENDED (comment_src) — history
+                # shows commenting is lifecycle-driven, not triggered by cloning.
+                commented_n = 0
+                if comment_src:
+                    for src_r in src_rows:
+                        actual_src_r = src_r if src_r < insert_sec_row else src_r + len(src_rows)
+                        val = ws_sec.cell(actual_src_r, 1).value
+                        if val and not str(val).startswith("//"):
+                            ws_sec.cell(actual_src_r, 1, f"//{val}")
+                            commented_n += 1
 
                 modified = True
                 log(f"guide_section: Inserted at row {insert_sec_row}. Mapped {len(old_id_to_new_id)} IDs. "
-                    f"Commented out {len(src_rows)} source row(s) only.")
+                    f"Commented out {commented_n} source row(s).")
         
         # 2. guide and guide_backup
         ws_guide = wb["guide"] if "guide" in wb.sheetnames else None
@@ -5416,14 +5497,16 @@ def update_guide_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                 # any one event silently disabled every OTHER active event's triggers
                 # caught in that range. Confirmed via a real run alongside the same bug
                 # in guide_section: 31 unrelated sim2607 rows got wiped this way.
-                for src_r in src_rows:
-                    val = ws_trig.cell(src_r, 1).value
-                    if val and not str(val).startswith("//"):
-                        s_val = str(val).upper()
-                        # DO NOT comment out shared MergeFix triggers or global triggers
-                        if "MERGE_FIX" in s_val or "MERGEFIX" in s_val:
-                            continue
-                        ws_trig.cell(src_r, 1, f"//{val}")
+                # ...and only when the source has actually ENDED (comment_src).
+                if comment_src:
+                    for src_r in src_rows:
+                        val = ws_trig.cell(src_r, 1).value
+                        if val and not str(val).startswith("//"):
+                            s_val = str(val).upper()
+                            # DO NOT comment out shared MergeFix triggers or global triggers
+                            if "MERGE_FIX" in s_val or "MERGEFIX" in s_val:
+                                continue
+                            ws_trig.cell(src_r, 1, f"//{val}")
                 modified = True
                         
         # 4. guide_refui
@@ -5465,14 +5548,16 @@ def update_guide_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                 # and guide_trigger. The old hardcoded row-97 blanket range wiped out every
                 # other active event's UI refs caught in it (confirmed: 19 unrelated
                 # sim2607 rows here in the same real-run test).
-                for src_r in src_rows:
-                    val = ws_ui.cell(src_r, 1).value
-                    if val and not str(val).startswith("//"):
-                        s_val = str(val).upper()
-                        # DO NOT comment out shared MergeFix UI or global UI refs
-                        if "MERGE_FIX" in s_val or "MERGEFIX" in s_val:
-                            continue
-                        ws_ui.cell(src_r, 1, f"//{val}")
+                # ...and only when the source has actually ENDED (comment_src).
+                if comment_src:
+                    for src_r in src_rows:
+                        val = ws_ui.cell(src_r, 1).value
+                        if val and not str(val).startswith("//"):
+                            s_val = str(val).upper()
+                            # DO NOT comment out shared MergeFix UI or global UI refs
+                            if "MERGE_FIX" in s_val or "MERGEFIX" in s_val:
+                                continue
+                            ws_ui.cell(src_r, 1, f"//{val}")
                 modified = True
 
         if modified:

@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Event Automator (Standalone)</title>
-<link rel="stylesheet" href="style.css?v=8" />
+<link rel="stylesheet" href="style.css?v=13" />
 </head>
 <body>
 <div class="app-container">
@@ -78,6 +78,10 @@
       <button class="menu-btn chip-emerald" data-view="endless-treasure-view" data-rank="3" title="Endless Treasure">
         <span class="icon-chip chip-emerald"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="10" width="18" height="10" rx="1"/><path d="M3 10 5 4h14l2 6M9 14a3 3 0 0 0 6 0"/></svg></span>
         <span class="btn-text">Endless Treasure</span>
+      </button>
+      <button class="menu-btn chip-lime" data-view="chapter-view" data-rank="2" title="Chapter Update">
+        <span class="icon-chip chip-lime"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H19v18H6.5A2.5 2.5 0 0 0 4 22z"/><path d="M9 7h6M9 11h6"/></svg></span>
+        <span class="btn-text">Chapter Update</span>
       </button>
         </div>
       </div>
@@ -582,6 +586,80 @@
       </div>
     </section>
 
+    <!-- CHAPTER UPDATE VIEW -->
+    <section id="chapter-view" class="main-container view" data-accent="lime" aria-labelledby="chapter-heading">
+      <div class="header-section">
+        <span class="view-glyph" aria-hidden="true">♠</span>
+        <span class="view-eyebrow">Regular Update</span>
+        <h1 id="chapter-heading" class="header-title">Chapter Update (新章节)</h1>
+        <p class="header-subtitle">Rolls the newest PVE chapter forward by one — chest / item / store / notification, asset_ref / icon / pve_chapter, and the map + texture art folders. Chapter numbers are read from pve_chapter.xlsx, not typed.</p>
+      </div>
+
+      <details class="stacked-card info-disclosure as-card">
+        <summary>
+          <span class="info-disclosure-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>
+          <span>What this tab does — and what it deliberately doesn't</span>
+          <svg class="info-disclosure-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+        </summary>
+        <div class="info-disclosure-body">
+          <p class="settings-hint">
+            A chapter number lives in the workbooks in <strong>three</strong> forms and all three have to move together:
+            the internal map id (<code>88000 → 89000</code>), Chinese numerals in the Alias/PIC columns
+            (<code>七十八 → 七十九</code>), and the plain display number (<code>78 → 79</code>). Every new row is
+            <em>inserted directly after the previous chapter's block</em> rather than appended at the bottom of the
+            sheet, because the game's converters read these ranges positionally.
+          </p>
+          <p class="settings-hint">
+            The five steps below are pure workbook + file work, so they run on the bundled Python with no local install.
+            The remaining chapter steps — <strong>Magic Builder</strong> (needs pandas/numpy), <strong>Screenshots
+            upload</strong> (Unity + SVN), <strong>Map Builder</strong> (Unity scene), <strong>Import Config</strong>
+            (coder_convert.bat) and <strong>Simulation</strong> (RunCardEx2) — need Unity, SVN or a full system Python,
+            so they stay in the standalone <code>SkipBo_Chapter_Creator.exe</code>. Run those there, then come back here.
+          </p>
+          <p class="settings-hint">
+            Asset Config refuses to run twice: if the new chapter is already present in pve_chapter.xlsx it stops before
+            touching anything and tells you to <code>svn revert</code> first. A half-applied chapter is worse than none.
+          </p>
+        </div>
+      </details>
+
+      <div class="stacked-card">
+        <h2 class="card-title">Detected Chapter</h2>
+        <p class="settings-hint" style="margin:0 0 10px;">Read from <code>pve_chapter.xlsx</code> in the branch/workspace selected at the top of the window. The internal/display offset is derived from the sheet, so it can't drift out of sync.</p>
+        <div class="preview-grid four">
+          <div class="preview-cell"><span class="preview-label">Current</span><span id="chapter-cur" class="preview-value">...</span></div>
+          <div class="preview-cell"><span class="preview-label">New</span><span id="chapter-new" class="preview-value">...</span></div>
+          <div class="preview-cell"><span class="preview-label">New Map ID</span><span id="chapter-mapid" class="preview-value">...</span></div>
+          <div class="preview-cell"><span class="preview-label">Level Range</span><span id="chapter-range" class="preview-value">...</span></div>
+        </div>
+      </div>
+
+      <div class="stacked-card">
+        <h2 class="card-title">Steps to run</h2>
+        <div class="pass-picker" id="chapter-steps"></div>
+        <p class="settings-hint">They run in workflow order regardless of the order you tick them, and stop at the first failure — Asset Config reads the fruit numbering Reward Config writes, so a skipped earlier step corrupts the later one. Level Balancing only works after a simulation run exists.</p>
+        <p class="settings-hint"><strong>QA Validation</strong> runs last and only reads: it re-opens the saved workbooks and scores them against the <em>Chapter Creation &amp; Level Delivery – Review Checklist</em> — level IDs, objective counts, every Star Pass sheet, asset paths resolved on disk, fruit numbering, hands 4–7, star thresholds and the 1.2× score bar. It writes <code>qa_validation_chapter_NN.xlsx</code> beside the design files, with anything a human still has to eyeball marked MANUAL. Safe to re-run on its own any time.</p>
+      </div>
+
+      <div class="stacked-card">
+        <h2 class="card-title">Run</h2>
+        <div class="form-row">
+          <label class="form-label" for="chapter-sim-path">Simulation Folder (RunCardEx2)</label>
+          <input type="text" id="chapter-sim-path" class="text-input mono" placeholder="Not set" disabled />
+        </div>
+        <p class="settings-hint">Only used by Level Balancing, which reads <code>Output/Chapter_NN/</code>. Defaults to the active branch's own <code>develop/tools/RunCardEx2</code> — browse only if your simulation output lives elsewhere on this machine. Saved per-machine, like the other tool paths.</p>
+        <div class="execution-footer" style="justify-content:flex-start; margin-bottom:8px;">
+          <button id="chapter-sim-browse-btn" class="secondary-btn">Browse for RunCardEx2 folder</button>
+          <button id="chapter-sim-reset-btn" class="secondary-btn small">Use branch default</button>
+        </div>
+        <div class="board-divider"></div>
+        <div class="execution-footer" style="justify-content:space-between;">
+          <button id="chapter-refresh-btn" class="secondary-btn">Refresh</button>
+          <button id="chapter-run-btn" class="primary-btn">Run Chapter Update</button>
+        </div>
+      </div>
+    </section>
+
     <!-- SPRINT BOARD (landing) -->
     <section id="sprint-view" class="main-container view" data-accent="sprint" aria-labelledby="sprint-heading">
       <div class="header-section">
@@ -751,6 +829,17 @@
           <input type="text" id="unity-exe-input" class="text-input mono" placeholder="C:\Program Files\Unity\Hub\Editor\...\Unity.exe" readonly />
           <button class="secondary-btn" id="browse-unity-exe-btn">Browse</button>
         </div>
+        <div class="form-row">
+          <label class="form-label" for="chapter-lvlpy-input">Level Builder (Magic Builder) Py folder</label>
+          <input type="text" id="chapter-lvlpy-input" class="text-input mono" placeholder="(guessing &lt;repo&gt;/tools/Level_Builder3/Magic_Builder/Assets/Py)" readonly />
+          <button class="secondary-btn" id="browse-chapter-lvlpy-btn" type="button">Browse</button>
+        </div>
+        <div class="form-row">
+          <label class="form-label" for="chapter-mapbuilder-input">Map Builder project folder</label>
+          <input type="text" id="chapter-mapbuilder-input" class="text-input mono" placeholder="(guessing &lt;repo&gt;/tools/Map_Builder/Magic_Builder)" readonly />
+          <button class="secondary-btn" id="browse-chapter-mapbuilder-btn" type="button">Browse</button>
+        </div>
+        <p class="settings-hint">Used by the Chapter Update tab. <code>tools/</code> lives outside the branch checkout, so unlike the design and client folders these cannot be derived from the branch path — the app guesses the standard layout and falls back to whatever you browse to here.</p>
         <p class="settings-hint">Needed only for step 2 (ProtoToLua), run headlessly via <code>Unity.exe -batchmode -executeMethod ProtoTool.ProtoToLua</code> against the active branch's Unity project.</p>
       </div>
 
@@ -764,6 +853,17 @@
         </div>
         <p class="settings-hint" id="ideation-data-status"></p>
         <p class="settings-hint">Point this at a folder everyone syncs — e.g. inside <code>OneDrive - Liquidnitro Games Private Limited</code> — and the whole team shares one set of themes, feedback, and lessons. Leave it at the default to work solo. Feedback is stored as one file per entry, so two people reviewing at once can't overwrite each other.</p>
+      </div>
+
+      <div class="stacked-card">
+        <h2 class="card-title">Reference Images (ComfyUI)</h2>
+        <div class="form-row">
+          <label class="form-label" for="comfy-url-input">ComfyUI URL</label>
+          <input type="text" id="comfy-url-input" class="text-input mono" placeholder="https://skipbo.comfyui.liquidnitro.games" autocomplete="off" />
+          <button class="secondary-btn small" id="comfy-test-btn" type="button">Test Connection</button>
+        </div>
+        <p class="settings-hint" id="comfy-test-result"></p>
+        <p class="settings-hint">Renders one reference image per zone for Art Requirement documents, using the studio's approved Nano Banana workflow and the style reference in <code>ideationData/StyleReference</code>. Prompts and the attached style references are forwarded to Google by the ComfyUI host, so keep unannounced details out of them if that matters.</p>
       </div>
 
       <div class="stacked-card">

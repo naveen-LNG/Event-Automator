@@ -56,6 +56,11 @@ UPDATE_KEYWORDS = [
     ("weekly_gift",      ["weekly offer"]),
     ("full_screen_gift", ["full screen offer", "full-screen offer"]),
     ("endless_treasure", ["endless discount", "endless treasure"]),
+    # A compiled pattern rather than a substring: "Chapter 84 + Star Chest" is
+    # actionable, a bare mention of "chapter" is not, and claiming the latter
+    # would strand it in a tab that can never satisfy it instead of leaving it
+    # visible in the read-only list.
+    ("chapter",          [re.compile(r"chapter\s*\d")]),
 ]
 
 TAB_LABELS = {
@@ -68,6 +73,7 @@ TAB_LABELS = {
     "weekly_gift": "Weekly Gift",
     "full_screen_gift": "Full Screen Gift",
     "endless_treasure": "Endless Treasure",
+    "chapter": "Chapter Update",
 }
 
 # Where "is it configured?" is read from. Columns are 0-indexed and were
@@ -178,7 +184,8 @@ def _parse_liveops(block, year_hint):
         elif section == "update":
             key = None
             for k, words in UPDATE_KEYWORDS:
-                if any(w in low for w in words):
+                if any(w.search(low) if hasattr(w, "search") else w in low
+                       for w in words):
                     key = k
                     break
             updates.append({"text": text, "tab": key})
@@ -311,6 +318,60 @@ def _configured_rows(design_path, tab, win_start, win_end):
     return hits
 
 
+CHAPTER_RE = re.compile(r"chapter\s*(\d+)", re.I)
+
+
+def _planned_chapters(sprint):
+    """Display chapter numbers this sprint's roadmap lines ask for.
+
+    The roadmap writes them as "Chapter 84 + Star Chest", and that number is
+    the DISPLAY chapter (章节数字, col C of pve_chapter.xlsx) -- not the
+    internal map id, which runs 10 ahead (94000).
+    """
+    out = []
+    for u in sprint.get("updates", []):
+        if u.get("tab") != "chapter":
+            continue
+        m = CHAPTER_RE.search(u.get("text") or "")
+        if m:
+            out.append(int(m.group(1)))
+    return out
+
+
+def _chapter_rows(design_path, sprint):
+    """Chapter Update is the one tab checked by identity, not by date overlap.
+
+    Every other config carries a start/end column, so "is this sprint's work
+    done?" is a window question. A chapter has no dates at all -- but the
+    roadmap names the exact chapter, so the far stronger check is simply
+    whether that chapter number exists in pve_chapter.xlsx yet.
+    """
+    wanted = _planned_chapters(sprint)
+    if not wanted:
+        return []
+
+    have = {}
+    for r in _sheet_rows(design_path, "pve_chapter.xlsx", "chapter"):
+        if not r or len(r) < 3 or r[0] is None:
+            continue
+        try:
+            have[int(r[2])] = (int(r[0]), str(r[1] or ""))
+        except (TypeError, ValueError):
+            continue      # "//END" markers and other non-data rows
+
+    hits = []
+    for ch in wanted:
+        if ch in have:
+            map_id, alias = have[ch]
+            hits.append({
+                "name": f"章节{ch} · {alias}".strip(" ·"),
+                "start": None,          # a chapter is not a dated window
+                "end": None,
+                "switch": f"map {map_id}",
+            })
+    return hits
+
+
 def sprint_status(design_path, sprint):
     """Planned vs configured, per tool tab, for one sprint window."""
     if not sprint.get("start") or not sprint.get("end"):
@@ -322,7 +383,8 @@ def sprint_status(design_path, sprint):
 
     tabs = []
     for tab, label in TAB_LABELS.items():
-        rows = _configured_rows(design_path, tab, win_start, win_end)
+        rows = (_chapter_rows(design_path, sprint) if tab == "chapter"
+                else _configured_rows(design_path, tab, win_start, win_end))
         planned = tab in planned_tabs
         if rows is None:
             status = "manual"
@@ -340,7 +402,7 @@ def sprint_status(design_path, sprint):
             "rows": (rows or [])[:6],
         })
 
-    # Roadmap lines with no owning tab (Chapter/Star Chest, Event Pack theme,
+    # Roadmap lines with no owning tab (Star Chest on its own, Event Pack theme,
     # Webstore offers, Card Collection, surveys) - shown read-only so the
     # sprint's full scope is visible even though this tool can't action them.
     other = [u["text"] for u in sprint["updates"] if not u.get("tab")]

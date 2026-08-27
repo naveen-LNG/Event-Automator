@@ -9,6 +9,18 @@ const fs = require('fs'), path = require('path');
 const R = (f) => fs.readFileSync(path.join(__dirname, '..', 'renderer', f), 'utf-8');
 const js = R('app.js'), html = R('index.html'), css = R('style.css');
 
+// Backend .py files live in two places depending on checkout shape: the git
+// repo keeps a mirror at pybackend-src/, while the primary dev machine has the
+// authoritative copy in a sibling ../../EventAutomation/PythonBackend (shared
+// with the Unity tool). Resolve whichever exists so this test runs from a
+// plain clone as well as the dev tree.
+const BACKEND_DIR = [
+  path.join(__dirname, '..', 'pybackend-src'),
+  path.join(__dirname, '..', '..', 'EventAutomation', 'PythonBackend'),
+].find((d) => fs.existsSync(path.join(d, 'pybackend_cli.py')));
+if (!BACKEND_DIR) { console.error('FAIL: cannot locate the backend .py sources'); process.exit(1); }
+const backendFile = (name) => fs.readFileSync(path.join(BACKEND_DIR, name), 'utf-8');
+
 let failures = 0;
 function check(ok, msg, detail) {
   if (ok) { console.log('OK  ' + msg); }
@@ -38,11 +50,11 @@ const EXPECTED_NAV = [
   'sprint-view', 'ideation-view', 'main-events-view',
   'minigames-view', 'battlepass-view', 'holiday-bp-view', 'decoration-shop-view',
   'streak-challenge-view', 'weekly-gift-view', 'full-screen-gift-view',
-  'trivia-challenge-view', 'endless-treasure-view',
+  'trivia-challenge-view', 'endless-treasure-view', 'chapter-view',
   'profile-view', 'settings-view',
 ];
 check(JSON.stringify(navOrder) === JSON.stringify(EXPECTED_NAV),
-  `sidebar lists all 14 destinations in order (Sprint -> Ideation -> Main Events -> 9 regular -> Profile -> Settings)`,
+  `sidebar lists all 15 destinations in order (Sprint -> Ideation -> Main Events -> 10 regular -> Profile -> Settings)`,
   'got: ' + JSON.stringify(navOrder));
 
 // every data-view must have a matching <section class="... view">
@@ -68,10 +80,10 @@ check(/class="[^"]*\bnav-group-header\b/.test(html),
   '.nav-group-header exists (app.js binds the collapse click to it)');
 // the 9 regular-update buttons must live INSIDE the group container
 const groupBlock = html.slice(html.indexOf('id="nav-group-regular-items"'));
-const groupEnd = groupBlock.indexOf('</div>', groupBlock.indexOf('data-view="endless-treasure-view"'));
+const groupEnd = groupBlock.indexOf('</div>', groupBlock.indexOf('data-view="chapter-view"'));
 const inGroup = [...groupBlock.slice(0, groupEnd).matchAll(/data-view="([^"]+)"/g)].map(m => m[1]);
-check(inGroup.length === 9 && inGroup[0] === 'minigames-view' && inGroup[8] === 'endless-treasure-view',
-  'all 9 Regular Updates buttons nest inside the group container',
+check(inGroup.length === 10 && inGroup[0] === 'minigames-view' && inGroup[9] === 'chapter-view',
+  'all 10 Regular Updates buttons nest inside the group container',
   'found ' + inGroup.length + ': ' + inGroup.join(', '));
 
 // ---- 5. classes app.js emits must have styling ------------------------------
@@ -79,6 +91,7 @@ check(inGroup.length === 9 && inGroup[0] === 'minigames-view' && inGroup[8] === 
 const BEHAVIOUR_ONLY = new Set([
   'sp-go', 'ideation-select-btn', 'ideation-regen-btn',
   'artreq-select-btn', 'artreq-regen-btn', 'lesson-retract-btn',
+  'artreq-images-btn', 'zoneimg-regen-btn',
   'status-', 'three',
 ]);
 const used = new Set();
@@ -103,6 +116,88 @@ for (const cls of [...toggled].sort()) {
 // a !important display rule on .view
 check(!/\.view[^{]*\{[^}]*display[^;]*!important/.test(css),
   '.view has no !important display rule that would break switchView()');
+
+// ---- 6b. reference-image feature is wired end to end ------------------------
+// Four separate files have to agree for this to work at all, and a break in
+// any one of them is silent at build time.
+const mainJs = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf-8');
+const preloadJs = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf-8');
+
+for (const id of ['comfy-url-input', 'comfy-test-btn', 'comfy-test-result']) {
+  check(haveIds.has(id), `Settings exposes #${id}`);
+}
+const CHANNELS = [['comfy:check', 'comfyCheck'],
+                  ['artreq:images', 'artReqImages'],
+                  ['artreq:regenImage', 'artReqRegenImage']];
+for (const [channel, bridge] of CHANNELS) {
+  check(mainJs.includes(`ipcMain.handle('${channel}'`), `main.js handles '${channel}'`);
+  check(preloadJs.includes(`'${channel}'`) && preloadJs.includes(bridge + ':'),
+    `preload.js bridges '${channel}' as api.${bridge}`);
+  check(js.includes('window.api.' + bridge + '('), `app.js calls api.${bridge}()`);
+}
+check(/comfyUrl:/.test(mainJs), 'main.js gives comfyUrl a config default');
+// The per-image feedback box and the apply-to-all toggle are the whole point
+// of the feature; a refactor that drops either leaves it silently useless.
+check(/zoneimg-fb-\$\{idx\}-\$\{z\.zone_number\}/.test(js),
+  'each zone image gets its own feedback textarea');
+check(/zoneimg-all-\$\{idx\}-\$\{z\.zone_number\}/.test(js),
+  'each zone image gets an apply-to-all checkbox');
+check(/applyToAll/.test(js) && /apply_to_all/.test(mainJs),
+  'the apply-to-all flag reaches the backend payload');
+
+// ---- 6c. Chapter Update is wired end to end --------------------------------
+// Same four-file agreement as above, and just as silent when it breaks.
+for (const [channel, bridge] of [['chapter:get', 'chapterGet'], ['chapter:run', 'chapterRun']]) {
+  check(mainJs.includes(`ipcMain.handle('${channel}'`), `main.js handles '${channel}'`);
+  check(preloadJs.includes(`'${channel}'`) && preloadJs.includes(bridge + ':'),
+    `preload.js bridges '${channel}' as api.${bridge}`);
+  check(js.includes('window.api.' + bridge + '('), `app.js calls api.${bridge}()`);
+}
+// The dispatcher has to know both script ids or the spawn fails at runtime only.
+const cliPy = backendFile('pybackend_cli.py');
+for (const id of ['get_chapter_info', 'update_chapter']) {
+  check(cliPy.includes(`"${id}"`), `pybackend_cli.py dispatches '${id}'`);
+}
+// QA Validation is the sign-off gate: it must exist and must run last, after
+// every step whose output it audits.
+const chapterPy = backendFile('chapter_update.py');
+const stepKeys = [...chapterPy.matchAll(/\(\s*"(\w+)",\s*"[^"]+",\s*chapter_core\./g)].map(m => m[1]);
+check(stepKeys[stepKeys.length - 1] === 'qa',
+  'QA Validation is the last step in the chapter workflow',
+  'order: ' + stepKeys.join(' -> '));
+// Full 10-step parity with the standalone tool, in workflow order.
+const EXPECTED_STEPS = ['magic','upload','validate','reward','art','asset','map','import','sim','balance','qa'];
+check(JSON.stringify(stepKeys) === JSON.stringify(EXPECTED_STEPS),
+  'all 10 chapter steps + QA are registered in workflow order',
+  'got: ' + stepKeys.join(' -> '));
+// tools/ sits outside the branch checkout, so these must be configurable.
+for (const id of ['chapter-lvlpy-input', 'browse-chapter-lvlpy-btn',
+                  'chapter-mapbuilder-input', 'browse-chapter-mapbuilder-btn']) {
+  check(haveIds.has(id), `Settings exposes #${id}`);
+}
+for (const key of ['chapterLvlPyPath', 'chapterMapBuilderPath']) {
+  check(new RegExp(key + ':').test(mainJs), `main.js gives ${key} a config default`);
+  check(js.includes(key), `app.js reads/persists ${key}`);
+}
+check(/lvl_py:\s*cfg\.chapterLvlPyPath/.test(js) && /map_builder:\s*cfg\.chapterMapBuilderPath/.test(js),
+  'the run payload forwards both tool paths to the backend');
+check(/CHAPTER_STEP_DEFAULT\s*=\s*\[[^\]]*'qa'/.test(js),
+  'QA Validation is ticked by default in the UI');
+
+// The simulation folder is a machine-level tool path: browsable and persisted
+// like unityExePath / robotCalcPath, not retyped per run.
+for (const id of ['chapter-sim-path', 'chapter-sim-browse-btn', 'chapter-sim-reset-btn']) {
+  check(haveIds.has(id), `Chapter tab exposes #${id}`);
+}
+check(/chapterSimPath:/.test(mainJs), 'main.js gives chapterSimPath a config default');
+check(/saveConfig\(\{\s*chapterSimPath/.test(js), 'app.js persists the simulation folder');
+check(/sim_path:\s*cfg\.chapterSimPath/.test(js),
+  'the run payload sends the stored simulation folder, not a transient field');
+
+// Chapter numbers must stay DETECTED, never typed: a text input for them would
+// reintroduce exactly the internal-vs-display offset bug the backend removes.
+check(!/id="chapter-(old|new)-input"/.test(html),
+  'chapter numbers are read from the workbook, not entered by hand');
 
 // ---- 7. stylesheet is actually linked, and cache-busted ---------------------
 const link = /href="style\.css(\?v=(\d+))?"/.exec(html);

@@ -23,15 +23,25 @@ if (-not (Test-Path $liveDesktop) -or -not (Test-Path $liveBackend)) {
     exit 0
 }
 
-# Files/dirs that are EXPECTED to differ, with the reason why - don't flag these.
-# (build-pybackend.ps1 / sync-pybackend.ps1 resolve pybackend-src via a
-# repo-relative path here vs. a sibling-folder path in the live copy, because
-# the live copy sits inside the larger non-git SkipBo/Unity project tree and
-# this repo doesn't.)
-$expectedDiffs = @(
+# build-pybackend.ps1 / sync-pybackend.ps1 legitimately differ on exactly ONE
+# line: they resolve the backend source via a repo-relative path here vs. a
+# sibling-folder path in the live copy (the live copy sits inside the larger
+# non-git SkipBo/Unity tree; this repo does not).
+#
+# These used to be skipped wholesale, which hid every OTHER change to them -
+# that is how an added pip dependency (pypdf) sat unnoticed in the live build
+# script. Now only the backendSrc line is normalised away, so any real change
+# still gets flagged.
+$normalisedFiles = @(
     "scripts\build-pybackend.ps1",
     "scripts\sync-pybackend.ps1"
 )
+
+function Get-NormalisedText($path) {
+    (Get-Content $path) |
+        ForEach-Object { if ($_ -match '^\s*\$backendSrc\s*=') { '<BACKEND_SRC_PATH>' } else { $_ } } |
+        Out-String
+}
 
 $drift = @()
 
@@ -44,7 +54,12 @@ function Compare-File($relPath, $liveFull, $repoFull) {
     $liveHash = (Get-FileHash $liveFull -Algorithm SHA256).Hash
     $repoHash = (Get-FileHash $repoFull -Algorithm SHA256).Hash
     if ($liveHash -ne $repoHash) {
-        if ($expectedDiffs -contains $relPath) { return }
+        if ($normalisedFiles -contains $relPath) {
+            # differs only on the known path line? then it is fine
+            if ((Get-NormalisedText $liveFull) -eq (Get-NormalisedText $repoFull)) { return }
+            $script:drift += "OUT OF SYNC (beyond the expected path line): $relPath"
+            return
+        }
         $script:drift += "OUT OF SYNC: $relPath"
     }
 }
@@ -93,6 +108,24 @@ if (Test-Path $liveTemplates) {
     }
 }
 
+# --- .claude/ (project-local Claude Code skill for driving the app in tests) ---
+$liveClaude = Join-Path $liveDesktop ".claude"
+if (Test-Path $liveClaude) {
+    Get-ChildItem $liveClaude -File -Recurse | ForEach-Object {
+        $rel = ".claude\" + $_.FullName.Substring($liveClaude.Length + 1)
+        Compare-File $rel $_.FullName (Join-Path $repoRoot $rel)
+    }
+}
+
+# --- ideationData/StyleReference (art_reference.py reads these specs + images) ---
+$liveStyle = Join-Path $liveDesktop "ideationData\StyleReference"
+if (Test-Path $liveStyle) {
+    Get-ChildItem $liveStyle -File -Recurse | ForEach-Object {
+        $rel = "ideationData\StyleReference\" + $_.FullName.Substring($liveStyle.Length + 1)
+        Compare-File $rel $_.FullName (Join-Path $repoRoot $rel)
+    }
+}
+
 # --- Backend .py source (excludes Unity .meta/log/debug/cache artifacts) ---
 Get-ChildItem $liveBackend -Filter "*.py" | ForEach-Object {
     $rel = "pybackend-src\$($_.Name)"
@@ -123,7 +156,7 @@ $knownUntracked = @{
     "githooks"         = "repo-managed hooks"
     "pybackend-src"    = "mirror of the authoritative PythonBackend folder"
 }
-$classifiedTracked = @("main.js", "preload.js", "package.json", "renderer", "build", "scripts", "tests", "ideationData")
+$classifiedTracked = @("main.js", "preload.js", "package.json", "renderer", "build", "scripts", "tests", "ideationData", ".claude")
 Get-ChildItem $liveDesktop -Force | ForEach-Object {
     $n = $_.Name
     if ($classifiedTracked -contains $n) { return }
@@ -135,6 +168,7 @@ Get-ChildItem $liveDesktop -Force | ForEach-Object {
 $ideationKnown = @{
     "Events" = "only Events\TEMPLATES is tracked; per-event output is generated"
     "Roadmap" = "Feishu roadmap export - tracked (repo is private); compared below"
+    "StyleReference" = "art render specs + reference images read by art_reference.py; compared above"
 }
 $liveIdeation = Join-Path $liveDesktop "ideationData"
 if (Test-Path $liveIdeation) {
