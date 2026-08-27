@@ -74,6 +74,49 @@ def main():
             check("-m pip install" in msg, "error gives a runnable pip command")
             check(sys.executable in msg, "error names the exact interpreter, not 'python'")
 
+        # --- sibling imports must work on ANY interpreter -----------------
+        # Regression: the bundled interpreter's ._pth makes sys.path explicit
+        # and does NOT add the script's own folder, so running an external
+        # script with it broke every sibling import (conf_fill_ex.py importing
+        # lb_helper). PYTHONPATH is ignored too, so the launcher has to insert
+        # the folder itself.
+        proj = Path(d) / "proj"
+        proj.mkdir()
+        write(proj, "helper_mod.py", "MARK = 'helper ok'\n")
+        write(proj, "tool.py",
+              "import sys, helper_mod\n"
+              "print('args:', sys.argv[1:])\n"
+              "print(helper_mod.MARK)\n")
+        r = cc._run_project_script(sys.executable, proj / "tool.py", ["-c", "conf.json"], cwd=proj)
+        check(r.returncode == 0, "external script runs", (r.stderr or "")[:120])
+        check("helper ok" in (r.stdout or ""), "script can import its sibling module")
+        check("['-c', 'conf.json']" in (r.stdout or ""),
+              "arguments reach the script unchanged", (r.stdout or "").strip())
+
+        # --- a missing sibling is not reported as a pip problem -----------
+        class Res:
+            returncode = 1
+            stderr = "ModuleNotFoundError: No module named 'helper_mod'"
+
+        msg = str(cc._script_failure("tool.py", Res(), "X:/py.exe", proj / "tool.py"))
+        check("one of its own files" in msg,
+              "a sibling module that fails to import is called a path problem")
+        check("pip install" not in msg,
+              "no pip advice for a module that is part of the script itself")
+
+        class Res2:
+            returncode = 1
+            stderr = "ModuleNotFoundError: No module named 'scipy'"
+
+        msg = str(cc._script_failure("tool.py", Res2(), "X:/py.exe", proj / "tool.py"))
+        check("pip install scipy" in msg, "a real third-party gap still gets pip advice")
+
+        # --- sibling package directories count as local too ---------------
+        (proj / "pkg_dir").mkdir()
+        p = write(proj, "uses_pkg.py", "import pkg_dir\nimport pandas\n")
+        check(cc._script_imports(p) == {"pandas"},
+              "a sibling package directory is excluded from required packages")
+
         # --- preflight only inspects the scripts it actually runs ---
         lvl = Path(d) / "lvl"; lvl.mkdir()
         mp = Path(d) / "map"; mp.mkdir()

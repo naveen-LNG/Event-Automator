@@ -176,32 +176,45 @@ _NO_PYTHON_MSG = (
 _MISSING_MOD_RE = re.compile(r"ModuleNotFoundError: No module named ['\"]([^'\"]+)['\"]")
 
 
-def _script_failure(script_name, result, py_exe):
+def _script_failure(script_name, result, py_exe, script_path=None):
     """A RuntimeError that says what to actually do about it.
 
-    These are SkipBo Level Builder / Map Editor scripts, not ours, and they run
-    on a borrowed system Python (see _python_exe). When that interpreter is
-    missing one of their dependencies the child's traceback is the only clue,
-    and 'exited with code 1' buries it - so name the package and the exact
-    interpreter to install it into. PATH can resolve to a different Python than
-    the user assumes, which is why py_exe is spelled out rather than 'python'.
+    These are SkipBo Level Builder / Map Editor scripts, not ours. When the
+    interpreter running one is missing a dependency, the child's traceback is
+    the only clue and 'exited with code 1' buries it - so name the package and
+    the exact interpreter to install it into. PATH can resolve to a different
+    Python than the user assumes, which is why py_exe is spelled out.
     """
     stderr = result.stderr or ""
     m = _MISSING_MOD_RE.search(stderr)
-    if m:
-        mod = m.group(1)
-        return RuntimeError(
-            f"{script_name} needs the '{mod}' package, which is missing from the "
-            f"Python it was run with.\n\n"
-            f"Interpreter used: {py_exe}\n\n"
-            f"Install it there, then re-run this step:\n"
-            f'  "{py_exe}" -m pip install {mod}\n\n'
-            f"({script_name} is a SkipBo project script, not part of Event "
-            f"Automator. The app borrows a system Python for it because the "
-            f"bundled interpreter carries only the packages the app itself uses.)"
-        )
-    return RuntimeError(f"{script_name} exited with code {result.returncode}")
+    if not m:
+        return RuntimeError(f"{script_name} exited with code {result.returncode}")
+    mod = m.group(1)
 
+    # A module sitting next to the script is one of ITS OWN files, not
+    # something to pip install - telling the user otherwise sends them off to
+    # install an unrelated package off PyPI, or a nonexistent one.
+    if script_path:
+        d = Path(script_path).parent
+        if (d / f"{mod}.py").exists() or (d / mod).is_dir():
+            return RuntimeError(
+                f"{script_name} could not import '{mod}', which is one of its own "
+                f"files in:\n  {d}\n\n"
+                f"That is a path problem rather than a missing package - the "
+                f"script's own folder was not on sys.path. Report this as an "
+                f"Event Automator bug; it is not something to fix on your "
+                f"machine.\n\nInterpreter used: {py_exe}"
+            )
+    return RuntimeError(
+        f"{script_name} needs the '{mod}' package, which is missing from the "
+        f"Python it was run with.\n\n"
+        f"Interpreter used: {py_exe}\n\n"
+        f"Install it there, then re-run this step:\n"
+        f'  "{py_exe}" -m pip install {mod}\n\n'
+        f"({script_name} is a SkipBo project script, not part of Event "
+        f"Automator. The app runs it on its own bundled interpreter when that "
+        f"can satisfy the script, and borrows a system Python otherwise.)"
+    )
 
 def _bundled_python():
     """The interpreter this backend is running on (the app's bundled one)."""
@@ -241,7 +254,7 @@ def _script_imports(script_path):
     for r in roots:
         if not r or r in stdlib or r == "__future__":
             continue
-        if (script_dir / (r + ".py")).exists() or (script_dir / r / "__init__.py").exists():
+        if (script_dir / (r + ".py")).exists() or (script_dir / r).is_dir():
             continue  # sibling module, travels with the script
         out.add(r)
     return out
@@ -326,6 +339,35 @@ def _resolve_interpreter(script_path, log, label=None):
         lines.append("")
     lines.append("Install into whichever of those you maintain, then re-run.")
     raise RuntimeError("\n".join(lines))
+
+
+# Ordinary "python script.py" puts the script's own folder on sys.path, so
+# these project scripts can import their siblings (lb_helper next to
+# conf_fill_ex.py, for instance). The app's bundled interpreter does NOT: its
+# ._pth file makes sys.path fully explicit, PYTHONPATH is ignored, and
+# sys.path[0] ends up being python314.zip. Running an external script with it
+# directly therefore breaks every sibling import.
+#
+# So the script is launched through runpy with its folder inserted first, which
+# reproduces normal invocation semantics on any interpreter, bundled or system.
+_BOOTSTRAP = (
+    "import sys, os, runpy\n"
+    "script = sys.argv[1]\n"
+    "sys.argv = sys.argv[1:]\n"
+    "sys.path.insert(0, os.path.dirname(os.path.abspath(script)))\n"
+    "runpy.run_path(script, run_name='__main__')\n"
+)
+
+
+def _run_project_script(py_exe, script, args=(), cwd=None, timeout=None):
+    """Run one of the SkipBo project scripts the way a normal python would."""
+    cmd = [py_exe, "-c", _BOOTSTRAP, str(script), *[str(a) for a in args]]
+    return subprocess.run(
+        cmd,
+        cwd=str(cwd) if cwd else None,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=timeout,
+    )
 
 
 def preflight_project_scripts(cfg, log):
@@ -1720,15 +1762,12 @@ def run_step1_magic_builder(cfg: AppConfig, log):
     py_script = cfg.lvl_py / "conf_fill_ex.py"
     py_exe = _resolve_interpreter(py_script, log)
     log(f"\nRunning conf_fill_ex.py -c CondFilterConf.json …")
-    result = subprocess.run(
-        [py_exe, str(py_script), "-c", "CondFilterConf.json"],
-        cwd=str(cfg.lvl_py),
-        capture_output=True, text=True, encoding="utf-8", errors="replace"
-    )
+    result = _run_project_script(py_exe, py_script,
+                                 ["-c", "CondFilterConf.json"], cwd=cfg.lvl_py)
     if result.stdout: log(result.stdout.strip())
     if result.stderr: log(f"[STDERR] {result.stderr.strip()}")
     if result.returncode != 0:
-        raise _script_failure("conf_fill_ex.py", result, py_exe)
+        raise _script_failure("conf_fill_ex.py", result, py_exe, py_script)
     log("  ✓ Magic Builder completed successfully")
 
 def run_step2_upload(cfg: AppConfig, log):
@@ -1781,16 +1820,11 @@ def run_step2_upload(cfg: AppConfig, log):
             log(f"  ⚠  {script_name} not found — skipping", "WARN")
             continue
         py_exe = _resolve_interpreter(script, log)
-        r = subprocess.run(
-            [py_exe, str(script)],
-            cwd=str(py_dir),
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=60,
-        )
+        r = _run_project_script(py_exe, script, cwd=py_dir, timeout=60)
         if r.stdout.strip(): log(r.stdout.strip())
         if r.stderr.strip(): log(f"  [STDERR] {r.stderr.strip()}")
         if r.returncode != 0:
-            raise _script_failure(script_name, r, py_exe)
+            raise _script_failure(script_name, r, py_exe, script)
     log("  ✓ Index pages generated")
 
     # 3. SVN add new files
@@ -1976,16 +2010,14 @@ def run_step7_map_builder(cfg: AppConfig, scene_file: str, log):
 
     py_exe = _resolve_interpreter(save_py, log)
     log("Running save_map_data.py …")
-    result = subprocess.run(
-        [py_exe, str(save_py),
-         "map_data_temp.xlsx", level_data, fruit_id, fruit_pos, fruit_scale, dir_data, map_data],
-        cwd=str(cfg.map_py),
-        capture_output=True, text=True, encoding="utf-8", errors="replace"
-    )
+    result = _run_project_script(
+        py_exe, save_py,
+        ["map_data_temp.xlsx", level_data, fruit_id, fruit_pos, fruit_scale, dir_data, map_data],
+        cwd=cfg.map_py)
     if result.stdout: log(result.stdout.strip())
     if result.stderr: log(f"[STDERR] {result.stderr.strip()}")
     if result.returncode != 0:
-        raise _script_failure("save_map_data.py", result, py_exe)
+        raise _script_failure("save_map_data.py", result, py_exe, save_py)
     log(f"  ✓ map_data_temp.xlsx written to {cfg.map_output}")
 
     # Auto-copy columns from map_data_temp → pve_chapter.map sheet
