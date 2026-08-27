@@ -169,7 +169,7 @@ def run_main():
     # surface only when that step ran - step 4 failing leaves a half-applied
     # chapter needing an svn revert. Checking up front costs a few seconds and
     # fails while the design files are still untouched.
-    problems = chapter_core.preflight_project_scripts(cfg, log)
+    problems = chapter_core.preflight_project_scripts(cfg, log, requested)
     if problems:
         print("=== Dependency check ===", flush=True)
         for p in problems:

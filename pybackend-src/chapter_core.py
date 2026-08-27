@@ -525,25 +525,91 @@ def _run_project_script(py_exe, script, args=(), cwd=None, timeout=None,
             shutil.rmtree(tmp, ignore_errors=True)
 
 
-def preflight_project_scripts(cfg, log):
-    """Check every borrowed-interpreter script BEFORE the run starts.
+# Which design workbooks each step writes. Several carry svn:needs-lock, so
+# they sit read-only until locked - and a step that opens one late crashes with
+# a bare "[Errno 13] Permission denied" after earlier workbooks have already
+# been saved, leaving the chapter half-applied. Checking first costs nothing.
+# (magic writes pve_level/pve_layout too, but through the Level Builder, which
+# does its own writability check and says so clearly.)
+_STEP_WORKBOOKS = {
+    "validate": [],  # writes its own validation_chapter_NN.xlsx, not a design book
+    "reward":   ["chest.xlsx", "item.xlsx", "notification.xlsx", "store.xlsx"],
+    "asset":    ["asset_ref.xlsx", "icon.xlsx", "pve_chapter.xlsx"],
+    "map":      ["pve_chapter.xlsx"],
+    "qa":       [],  # read-only report
+}
 
-    These scripts sit at steps 1, 2 and 4 of Chapter Update, each mutating
-    design files. Discovering a missing dependency at step 4 leaves a
-    half-applied chapter needing an svn revert, so the dependency check is
-    hoisted to the top where failing costs nothing.
+
+def check_workbooks_writable(cfg, log, steps=None):
+    """Names every design workbook the selected steps must write but cannot.
+
+    Returns a problem string, or None when everything needed is writable.
+    """
+    wanted = set(steps) if steps is not None else set(_STEP_WORKBOOKS)
+    needed = []
+    for key, books in _STEP_WORKBOOKS.items():
+        if key in wanted:
+            needed.extend(books)
+    if not needed:
+        return None
+
+    # Defensive: a preflight must never be the thing that crashes the run.
+    try:
+        design = Path(cfg.design())
+    except Exception as e:
+        log(f"  ⚠  Could not resolve the design folder to check locks: {e}", "WARN")
+        return None
+    locked = []
+    for name in sorted(set(needed)):
+        p = design / name
+        if p.exists() and not os.access(str(p), os.W_OK):
+            locked.append(name)
+    if not locked:
+        return None
+
+    listing = "\n".join(f"  {n}" for n in locked)
+    return (
+        "These design workbooks are read-only, so this run would fail partway "
+        "through:\n" + listing + "\n\nin:\n  " + str(design) + "\n\n"
+        "They carry svn:needs-lock, which keeps them read-only until you take "
+        "a lock. Get a lock on them (SVN > Get Lock, or 'svn lock <file>'), "
+        "then run again.\n\n"
+        "Stopping now rather than partway leaves the chapter untouched - "
+        "otherwise the earlier workbooks would already have been written."
+    )
+
+
+def preflight_project_scripts(cfg, log, steps=None):
+    """Check what the SELECTED steps need, before any of them writes.
+
+    steps is the list of step keys about to run. Passing None checks
+    everything, which is only right when everything is running: the level
+    conflict matters solely to Magic Builder, and blocking a re-run of the
+    later steps because Magic Builder has already done its job made resuming
+    a part-finished chapter impossible.
 
     Returns a list of human-readable problems; empty means good to go.
     """
     problems = []
+
+    # step key -> the project scripts that step shells out to
+    step_scripts = {
+        "magic": ["conf_fill_ex.py"],
+        "upload": ["gen_captures.py", "gen_captures_others.py"],
+        "map": ["save_map_data.py"],
+    }
+    wanted = set(steps) if steps is not None else set(step_scripts)
+
     targets = []
     lvl = getattr(cfg, "lvl_py", None)
-    if lvl:
-        targets += [Path(lvl) / n for n in
-                    ("conf_fill_ex.py", "gen_captures.py", "gen_captures_others.py")]
     mp = getattr(cfg, "map_py", None)
-    if mp:
-        targets.append(Path(mp) / "save_map_data.py")
+    for key, names in step_scripts.items():
+        if key not in wanted:
+            continue
+        for n in names:
+            root = mp if n == "save_map_data.py" else lvl
+            if root:
+                targets.append(Path(root) / n)
 
     for t in targets:
         if not t.exists():
@@ -553,17 +619,20 @@ def preflight_project_scripts(cfg, log):
         except RuntimeError as e:
             problems.append(str(e))
 
-    # Same reasoning as the dependency checks: Magic Builder refuses to
-    # overwrite existing levels, and finding that out at step 1 means the
-    # design files have already been touched by then.
-    try:
-        check_level_conflicts(cfg, log)
-    except RuntimeError as e:
-        problems.append(str(e))
-    except Exception as e:
-        log(f"  ⚠  Could not pre-check level conflicts: {e}", "WARN")
-    return problems
+    lock_problem = check_workbooks_writable(cfg, log, steps)
+    if lock_problem:
+        problems.append(lock_problem)
 
+    # Only Magic Builder creates the new chapter's levels, so only it can be
+    # blocked by them already existing.
+    if steps is None or "magic" in wanted:
+        try:
+            check_level_conflicts(cfg, log)
+        except RuntimeError as e:
+            problems.append(str(e))
+        except Exception as e:
+            log(f"  ⚠  Could not pre-check level conflicts: {e}", "WARN")
+    return problems
 
 def _ch_sub(text, old_val, new_val):
     """Replace old_val with new_val only when not adjacent to other digits."""
@@ -2279,21 +2348,51 @@ def run_step7_map_builder(cfg: AppConfig, scene_file: str, log):
         wb_pvc = openpyxl.load_workbook(str(pvc_path))
         ws_map = wb_pvc["map"]
         map_rows = list(ws_map.iter_rows(min_row=2, values_only=True))
-        new_ch_rows = [i+2 for i, r in enumerate(map_rows)
-                       if r[0] and str(new_ch*1000) in str(r[0])]
+
+        # The map sheet is keyed on the DISPLAY chapter: step 6 adds rows
+        # 85001..85013 for chapter 85, while the internal map id (95000) only
+        # appears in the "chapter" sheet. This used to look for the internal id
+        # as a substring of column A, which can never match "85001" - so this
+        # stage silently pasted nothing every time (and before that it raised
+        # NameError, so it had never actually run).
+        lo = cfg.disp_new * 1000
+        hi = lo + 999
+
+        def _map_id(v):
+            try:
+                return int(str(v).strip())
+            except (TypeError, ValueError):
+                return None
+
+        new_ch_rows = [i + 2 for i, r in enumerate(map_rows)
+                       if r and r[0] is not None
+                       and (_map_id(r[0]) is not None)
+                       and lo <= _map_id(r[0]) <= hi]
+        pasted = 0
         if new_ch_rows:
             for i, row_num in enumerate(new_ch_rows):
-                if i < len(tmp_rows):
-                    tmp = tmp_rows[i]
-                    # E→G, F→F, G→H in pve_chapter map
-                    if len(tmp) > 4: ws_map.cell(row=row_num, column=7, value=tmp[4])  # E
-                    if len(tmp) > 5: ws_map.cell(row=row_num, column=6, value=tmp[5])  # F
-                    if len(tmp) > 6: ws_map.cell(row=row_num, column=8, value=tmp[6])  # G
-            log(f"  ✓ Pasted map positions into {len(new_ch_rows)} pve_chapter rows")
+                if i >= len(tmp_rows):
+                    break
+                tmp = tmp_rows[i]
+                # E→G, F→F, G→H in pve_chapter map
+                if len(tmp) > 4: ws_map.cell(row=row_num, column=7, value=tmp[4])  # E
+                if len(tmp) > 5: ws_map.cell(row=row_num, column=6, value=tmp[5])  # F
+                if len(tmp) > 6: ws_map.cell(row=row_num, column=8, value=tmp[6])  # G
+                pasted += 1
+            wb_pvc.save(str(pvc_path))
+            log(f"  ✓ Pasted map positions into {pasted} of {len(new_ch_rows)} "
+                f"chapter {cfg.disp_new} map rows")
+            if pasted < len(new_ch_rows):
+                log(f"  ⚠  The scene supplied {len(tmp_rows)} map block(s) but "
+                    f"chapter {cfg.disp_new} has {len(new_ch_rows)} map rows, so "
+                    f"{len(new_ch_rows) - pasted} row(s) were left as they were. "
+                    f"Check the scene is the one laid out for this chapter.",
+                    "WARN")
         else:
-            log("  ⚠ No new chapter rows found in pve_chapter.map to paste into")
-        wb_pvc.save(str(pvc_path))
-        log("  ✓ pve_chapter.xlsx map data updated")
+            # Deliberately not saving, and not claiming success: nothing changed.
+            log(f"  ⚠  No chapter {cfg.disp_new} rows (map ids {lo}-{hi}) found "
+                f"in the pve_chapter map sheet, so the map positions were NOT "
+                f"written. Run Asset Config first - it adds those rows.", "WARN")
 
 def run_step8_import_config(cfg: AppConfig, log):
     """Run the coder_convert batch script for the active workspace.

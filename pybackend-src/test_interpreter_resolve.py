@@ -411,6 +411,57 @@ def main():
                 check("coder_convert_not_pause.bat" in str(e),
                       "the missing-script error names what it looked for")
 
+        # --- preflight only checks what the selected steps need -------------
+        # Regression: the level-conflict check ran regardless of the steps
+        # chosen, so once Magic Builder had done its job you could no longer
+        # re-run the later steps - the normal way to resume a part-finished
+        # chapter.
+        pf = Path(d) / "pf"
+        (pf / "lvl").mkdir(parents=True)
+        (pf / "map").mkdir()
+        (pf / "design").mkdir()
+        write(pf / "lvl", "conf_fill_ex.py", "import os\n")
+        make_book(pf / "design" / "pve_level.xlsx", "level", range(95001, 95201))
+        make_book(pf / "design" / "pve_layout.xlsx", "layout", range(95001, 95201))
+
+        class PfCfg:
+            display_offset = 10
+            new_ch = 95
+            disp_new = 85
+            lvl_py = pf / "lvl"
+            map_py = pf / "map"
+
+            def design(self):
+                return pf / "design"
+
+        blocked = cc.preflight_project_scripts(PfCfg(), quiet, ["magic"])
+        check(any("already exist" in p for p in blocked),
+              "with magic selected, existing levels block the run")
+        later = cc.preflight_project_scripts(PfCfg(), quiet,
+                                             ["validate", "reward", "asset", "qa"])
+        check(later == [],
+              "without magic, existing levels do NOT block the later steps",
+              f"got {later}")
+
+        # --- workbooks that cannot be written are caught before any step -----
+        # Several design workbooks carry svn:needs-lock and sit read-only until
+        # locked. Reward Config used to crash with a bare Errno 13 after it had
+        # already saved chest.xlsx, leaving the chapter half-applied.
+        import stat as _stat
+        wbk = pf / "design" / "item.xlsx"
+        make_book(wbk, "item", [1, 2, 3])
+        os.chmod(wbk, _stat.S_IREAD)
+        try:
+            problem = cc.check_workbooks_writable(PfCfg(), quiet, ["reward"])
+            check(problem is not None and "item.xlsx" in problem,
+                  "a read-only workbook a step must write is reported up front")
+            check("svn:needs-lock" in (problem or ""),
+                  "the message explains why it is read-only and how to fix it")
+            check(cc.check_workbooks_writable(PfCfg(), quiet, ["validate"]) is None,
+                  "a step that does not write that workbook is not blocked by it")
+        finally:
+            os.chmod(wbk, _stat.S_IWRITE | _stat.S_IREAD)
+
         # --- preflight only inspects the scripts it actually runs ---
         lvl = Path(d) / "lvl"; lvl.mkdir()
         mp = Path(d) / "map"; mp.mkdir()
@@ -420,6 +471,9 @@ def main():
         class Cfg:
             lvl_py = lvl
             map_py = mp
+
+            def design(self):
+                return Path(d)
 
         check(cc.preflight_project_scripts(Cfg(), quiet) == [],
               "preflight ignores scripts the tool never runs")
