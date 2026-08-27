@@ -26,6 +26,7 @@ import json
 import os
 import re
 import shutil
+import threading
 import tempfile
 import subprocess
 import sys
@@ -2295,20 +2296,78 @@ def run_step7_map_builder(cfg: AppConfig, scene_file: str, log):
         log("  ✓ pve_chapter.xlsx map data updated")
 
 def run_step8_import_config(cfg: AppConfig, log):
-    """Run coder_convert.bat for the active workspace."""
-    bat = cfg.design_root() / "coder_convert.bat"
+    """Run the coder_convert batch script for the active workspace.
+
+    Uses coder_convert_not_pause.bat in preference to coder_convert.bat: the
+    latter ends with an unconditional "@pause", and while that exits straight
+    away when stdin is not a console (which it is not under this app), the
+    old Unity tool picked the not_pause variant and there is no reason to be
+    the fragile one. stdin is /dev/null and a watchdog kills the run after 30
+    minutes, so a wait for input can never leave the step hanging silently.
+
+    Output is streamed line by line rather than collected: this converts every
+    table in the workspace and takes minutes, so buffering it until the end
+    would leave the console pane empty and looking stuck for the whole run.
+    """
+    root = cfg.design_root()
+    bat = root / "coder_convert_not_pause.bat"
     if not bat.exists():
-        raise FileNotFoundError(f"coder_convert.bat not found: {bat}")
-    log(f"Running coder_convert.bat in {cfg.workspace} …")
-    result = subprocess.run(
-        str(bat), shell=True,
-        cwd=str(bat.parent),
-        capture_output=True, text=True, encoding="utf-8", errors="replace"
+        fallback = root / "coder_convert.bat"
+        if not fallback.exists():
+            raise FileNotFoundError(
+                f"No coder_convert script found in:\n  {root}\n\n"
+                f"Expected coder_convert_not_pause.bat (preferred) or "
+                f"coder_convert.bat."
+            )
+        bat = fallback
+        log("  ⚠  coder_convert_not_pause.bat not found; using "
+            "coder_convert.bat, which pauses at the end.", "WARN")
+
+    log(f"Running {bat.name} in {cfg.workspace} … (this converts every table, "
+        f"so it takes a while - output follows live)")
+
+    proc = subprocess.Popen(
+        str(bat), shell=True, cwd=str(bat.parent),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, encoding="utf-8", errors="replace", bufsize=1,
     )
-    if result.stdout: log(result.stdout.strip())
-    if result.stderr: log(f"[STDERR] {result.stderr.strip()}")
-    if result.returncode != 0:
-        raise RuntimeError(f"coder_convert.bat exited with code {result.returncode}")
+
+    # A watchdog rather than a deadline inside the read loop: if the script
+    # blocks without printing, the loop is parked in readline and would never
+    # get round to checking a deadline itself.
+    timed_out = {"hit": False}
+
+    def _kill():
+        timed_out["hit"] = True
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+    watchdog = threading.Timer(1800, _kill)
+    watchdog.daemon = True
+    watchdog.start()
+    try:
+        for raw in proc.stdout:
+            line = raw.rstrip()
+            if line:
+                log(f"  [convert] {line}")
+        rc = proc.wait()
+    finally:
+        watchdog.cancel()
+        if proc.poll() is None:
+            proc.kill()
+
+    if timed_out["hit"]:
+        raise RuntimeError(
+            f"{bat.name} was still running after 30 minutes and was stopped.\n\n"
+            f"It is slow by nature, but not this slow - it is most likely "
+            f"waiting for input that cannot be given. Run it by hand in:\n"
+            f"  {bat.parent}\nto see where it stops."
+        )
+    if rc != 0:
+        raise RuntimeError(f"{bat.name} exited with code {rc}")
     log("  ✓ Config import completed")
 
 def run_step9_simulation(cfg: AppConfig, log):

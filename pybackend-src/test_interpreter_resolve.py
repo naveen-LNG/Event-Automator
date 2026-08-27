@@ -353,6 +353,64 @@ def main():
             check("OnlyTemplate.unity" in str(e),
                   "the error lists the scenes it looked at")
 
+        # --- step 8 / coder_convert -----------------------------------------
+        if os.name == "nt":
+            conv = Path(d) / "conv"
+            conv.mkdir()
+
+            class ConvCfg:
+                workspace = "WorkSpcae_NE"
+
+                def design_root(self):
+                    return conv
+
+            def bat(name, body):
+                (conv / name).write_text(body, encoding="utf-8", newline="\r\n")
+
+            # Preferred variant wins, and each line is logged separately rather
+            # than as one blob at the end - the console pane is fed live.
+            bat("coder_convert_not_pause.bat",
+                "@echo off\necho start convert table\necho copy data\n")
+            bat("coder_convert.bat", "@echo off\necho WRONG SCRIPT\n")
+            msgs = []
+            cc.run_step8_import_config(ConvCfg(), lambda m, lvl=None: msgs.append(str(m)))
+            joined = "\n".join(msgs)
+            check("coder_convert_not_pause.bat" in joined,
+                  "the not_pause variant is preferred over coder_convert.bat")
+            check("WRONG SCRIPT" not in joined,
+                  "the pausing variant is not run when the other exists")
+            convert_lines = [m for m in msgs if "[convert]" in m]
+            check(len(convert_lines) >= 2,
+                  "each output line is logged on its own, not buffered into one",
+                  f"got {len(convert_lines)} convert lines")
+
+            # A trailing @pause must not stop the step completing.
+            bat("coder_convert_not_pause.bat",
+                "@echo off\necho converting\n@pause\n")
+            msgs = []
+            cc.run_step8_import_config(ConvCfg(), lambda m, lvl=None: msgs.append(str(m)))
+            check(any("Config import completed" in m for m in msgs),
+                  "a script ending in @pause still completes (stdin is /dev/null)")
+
+            # Failure is surfaced, naming the script that failed.
+            bat("coder_convert_not_pause.bat", "@echo off\necho nope\nexit /b 3\n")
+            try:
+                cc.run_step8_import_config(ConvCfg(), quiet)
+                check(False, "a failing convert script raises")
+            except RuntimeError as e:
+                check("exited with code 3" in str(e),
+                      "the convert script's exit code is reported")
+
+            # Neither script present -> a clear error, not a crash.
+            (conv / "coder_convert_not_pause.bat").unlink()
+            (conv / "coder_convert.bat").unlink()
+            try:
+                cc.run_step8_import_config(ConvCfg(), quiet)
+                check(False, "a missing convert script raises")
+            except FileNotFoundError as e:
+                check("coder_convert_not_pause.bat" in str(e),
+                      "the missing-script error names what it looked for")
+
         # --- preflight only inspects the scripts it actually runs ---
         lvl = Path(d) / "lvl"; lvl.mkdir()
         mp = Path(d) / "map"; mp.mkdir()
