@@ -172,6 +172,36 @@ _NO_PYTHON_MSG = (
 )
 
 
+_MISSING_MOD_RE = re.compile(r"ModuleNotFoundError: No module named ['\"]([^'\"]+)['\"]")
+
+
+def _script_failure(script_name, result, py_exe):
+    """A RuntimeError that says what to actually do about it.
+
+    These are SkipBo Level Builder / Map Editor scripts, not ours, and they run
+    on a borrowed system Python (see _python_exe). When that interpreter is
+    missing one of their dependencies the child's traceback is the only clue,
+    and 'exited with code 1' buries it - so name the package and the exact
+    interpreter to install it into. PATH can resolve to a different Python than
+    the user assumes, which is why py_exe is spelled out rather than 'python'.
+    """
+    stderr = result.stderr or ""
+    m = _MISSING_MOD_RE.search(stderr)
+    if m:
+        mod = m.group(1)
+        return RuntimeError(
+            f"{script_name} needs the '{mod}' package, which is missing from the "
+            f"Python it was run with.\n\n"
+            f"Interpreter used: {py_exe}\n\n"
+            f"Install it there, then re-run this step:\n"
+            f'  "{py_exe}" -m pip install {mod}\n\n'
+            f"({script_name} is a SkipBo project script, not part of Event "
+            f"Automator. The app borrows a system Python for it because the "
+            f"bundled interpreter carries only the packages the app itself uses.)"
+        )
+    return RuntimeError(f"{script_name} exited with code {result.returncode}")
+
+
 def _ch_sub(text, old_val, new_val):
     """Replace old_val with new_val only when not adjacent to other digits."""
     if text is None:
@@ -1535,6 +1565,10 @@ def run_step1_magic_builder(cfg: AppConfig, log):
     py_exe = _python_exe()
     if not py_exe:
         raise RuntimeError(_NO_PYTHON_MSG)
+    # Which interpreter got borrowed is the first thing you need when one of
+    # these scripts fails on a dependency - PATH may not resolve to the Python
+    # the user thinks it does.
+    log(f"  Using system Python: {py_exe}")
     log(f"\nRunning conf_fill_ex.py -c CondFilterConf.json …")
     result = subprocess.run(
         [py_exe, str(py_script), "-c", "CondFilterConf.json"],
@@ -1544,7 +1578,7 @@ def run_step1_magic_builder(cfg: AppConfig, log):
     if result.stdout: log(result.stdout.strip())
     if result.stderr: log(f"[STDERR] {result.stderr.strip()}")
     if result.returncode != 0:
-        raise RuntimeError(f"conf_fill_ex.py exited with code {result.returncode}")
+        raise _script_failure("conf_fill_ex.py", result, py_exe)
     log("  ✓ Magic Builder completed successfully")
 
 def run_step2_upload(cfg: AppConfig, log):
@@ -1594,6 +1628,10 @@ def run_step2_upload(cfg: AppConfig, log):
     py_exe = _python_exe()
     if not py_exe:
         raise RuntimeError(_NO_PYTHON_MSG)
+    # Which interpreter got borrowed is the first thing you need when one of
+    # these scripts fails on a dependency - PATH may not resolve to the Python
+    # the user thinks it does.
+    log(f"  Using system Python: {py_exe}")
     for script_name in ("gen_captures.py", "gen_captures_others.py"):
         script = py_dir / script_name
         if not script.exists():
@@ -1608,7 +1646,7 @@ def run_step2_upload(cfg: AppConfig, log):
         if r.stdout.strip(): log(r.stdout.strip())
         if r.stderr.strip(): log(f"  [STDERR] {r.stderr.strip()}")
         if r.returncode != 0:
-            raise RuntimeError(f"{script_name} exited with code {r.returncode}")
+            raise _script_failure(script_name, r, py_exe)
     log("  ✓ Index pages generated")
 
     # 3. SVN add new files
@@ -1795,6 +1833,10 @@ def run_step7_map_builder(cfg: AppConfig, scene_file: str, log):
     py_exe = _python_exe()
     if not py_exe:
         raise RuntimeError(_NO_PYTHON_MSG)
+    # Which interpreter got borrowed is the first thing you need when one of
+    # these scripts fails on a dependency - PATH may not resolve to the Python
+    # the user thinks it does.
+    log(f"  Using system Python: {py_exe}")
     log("Running save_map_data.py …")
     result = subprocess.run(
         [py_exe, str(save_py),
@@ -1805,7 +1847,7 @@ def run_step7_map_builder(cfg: AppConfig, scene_file: str, log):
     if result.stdout: log(result.stdout.strip())
     if result.stderr: log(f"[STDERR] {result.stderr.strip()}")
     if result.returncode != 0:
-        raise RuntimeError(f"save_map_data.py exited with code {result.returncode}")
+        raise _script_failure("save_map_data.py", result, py_exe)
     log(f"  ✓ map_data_temp.xlsx written to {cfg.map_output}")
 
     # Auto-copy columns from map_data_temp → pve_chapter.map sheet
