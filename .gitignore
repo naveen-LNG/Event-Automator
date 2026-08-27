@@ -4,6 +4,7 @@ pybackend_dist/
 pybackend-src/build/
 pybackend-src/__pycache__/
 *.log
+notes*.md
 .DS_Store
 
 # ideationData: Events/TEMPLATES, Roadmap and StyleReference are tracked;
