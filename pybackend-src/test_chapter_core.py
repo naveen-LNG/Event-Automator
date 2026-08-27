@@ -504,7 +504,7 @@ def main():
         check(len(qa) >= 40, f"QA: report covers the checklist ({len(qa)} rows)")
 
         # Break one rule from each family and confirm QA notices.
-        def qa_fail_names(mutate):
+        def qa_rows(mutate):
             import copy as _copy
             probe = tmp / "probe"
             if probe.exists():
@@ -515,10 +515,13 @@ def main():
             pcfg = Cfg(branch_root=probe, workspace="WS", old_ch=78, display_offset=0)
             p = chapter_core.run_qa_validation(pcfg, quiet)
             w = openpyxl.load_workbook(p)
-            out = [r[1].value for r in w["QA Validation"].iter_rows(min_row=2)
-                   if r[2].value == "FAIL"]
+            rows = [(r[1].value, r[2].value, r[3].value)
+                    for r in w["QA Validation"].iter_rows(min_row=2)]
             w.close()
-            return out
+            return rows
+
+        def qa_fail_names(mutate):
+            return [n for n, st, _ in qa_rows(mutate) if st == "FAIL"]
 
         def _break_hands(d):
             wb = openpyxl.load_workbook(d / "pve_level.xlsx")
@@ -555,12 +558,30 @@ def main():
         for label, mutate, expect in [
             ("hands outside 4-7", _break_hands, "col G hands"),
             ("max score != 1.2 x 3★", _break_maxscore, "col Q max score"),
-            ("collect-card objective unmet", _break_objective, "收集卡"),
             ("notification left switched off", _break_switch, "switch (col D) is True"),
         ]:
             names = qa_fail_names(mutate)
             check(any(expect in n for n in names),
                   f"QA catches: {label}", f"FAILs were {names}")
+
+        # The collect-card objective check is deliberately a WARNING, not a
+        # gate: chapters that already shipped carry the same condition in bulk
+        # (62 for internal chapter 93, 47 for 94), so failing on it blocked
+        # sign-off for every chapter ever built.
+        rows = qa_rows(_break_objective)
+        obj = [(st, det) for n, st, det in rows if n and "收集卡" in n]
+        check(len(obj) == 1, "the collect-card check appears exactly once",
+              f"found {len(obj)}")
+        if obj:
+            st, det = obj[0]
+            check(st == "WARN",
+                  "QA warns rather than fails on an unmet collect-card objective",
+                  f"status was {st}")
+            check("already shipped" in (det or "") or "not present to compare" in (det or ""),
+                  "the warning carries the previous chapter's count for context",
+                  str(det)[:120])
+        check(not any(st == "FAIL" and n and "收集卡" in n for n, st, _ in rows),
+              "the collect-card condition never blocks sign-off")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

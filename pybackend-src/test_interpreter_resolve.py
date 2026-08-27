@@ -462,6 +462,33 @@ def main():
         finally:
             os.chmod(wbk, _stat.S_IWRITE | _stat.S_IREAD)
 
+        # --- QA objective check is a warning, never a gate ------------------
+        # Shipped chapters carry this condition in bulk (62 for internal 93,
+        # 47 for 94), so failing on it blocked sign-off for every chapter ever
+        # built - and a gate that can never pass gets ignored.
+        st, det = cc.objective_check_status([], None, 84)
+        check(st == "PASS", "no mismatches still passes")
+
+        some = ["95004: need 1 got 0", "95005: need 1 got 0"]
+        st, det = cc.objective_check_status(some, ["94001: need 1 got 0"], 84)
+        check(st == "WARN", "mismatches warn rather than fail", f"got {st}")
+        check("chapter 84" in det and "has 1 by the same rule" in det,
+              "the previous chapter's count is included for context", det)
+        check("worse than last chapter" in det,
+              "more mismatches than last chapter is called out", det)
+
+        st, det = cc.objective_check_status(some, ["a", "b", "c"], 84)
+        check(st == "WARN" and "in line with previous chapters" in det,
+              "fewer than last chapter reads as in line", det)
+
+        st, det = cc.objective_check_status(some, None, 84)
+        check(st == "WARN" and "not present to compare" in det,
+              "a missing previous chapter is stated, not guessed at", det)
+
+        check(all(cc.objective_check_status(b, p, 84)[0] != "FAIL"
+                  for b in ([], some) for p in (None, [], ["x"])),
+              "this check can never produce a FAIL")
+
         # --- preflight only inspects the scripts it actually runs ---
         lvl = Path(d) / "lvl"; lvl.mkdir()
         mp = Path(d) / "map"; mp.mkdir()

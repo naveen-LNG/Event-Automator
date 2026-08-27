@@ -1530,6 +1530,33 @@ def _nums(v):
             re.findall(r"-?\d+(?:\.\d+)?", "" if v is None else str(v))]
 
 
+def objective_check_status(bad, prev_bad, disp_old):
+    """Status and detail for the 收集卡 / card":14 objective check.
+
+    Always a WARN rather than a FAIL when there are mismatches: chapters that
+    already shipped carry the same condition in bulk - measured at 62 for
+    internal chapter 93 and 47 for 94 - so failing on it would block sign-off
+    for every chapter ever built, and a gate that can never pass gets ignored.
+    The previous chapter's count travels with it so the number can be judged
+    rather than guessed at.
+
+    bad / prev_bad are the mismatch lists; prev_bad is None when the previous
+    chapter is not in the workbook to compare against.
+    """
+    if not bad:
+        return "PASS", ""
+    detail = f"{len(bad)} level(s), e.g. " + "; ".join(bad[:5])
+    if prev_bad is None:
+        detail += f" | chapter {disp_old} not present to compare against"
+    else:
+        detail += (f" | chapter {disp_old}, already shipped, has "
+                   f"{len(prev_bad)} by the same rule")
+        detail += (" - worse than last chapter, worth a look"
+                   if len(bad) > len(prev_bad)
+                   else " - in line with previous chapters")
+    return "WARN", detail
+
+
 def run_qa_validation(cfg: AppConfig, log):
     """Validate the finished chapter against the review checklist."""
     design = cfg.design()
@@ -1568,18 +1595,31 @@ def run_qa_validation(cfg: AppConfig, log):
     if lvl and lay:
         lmap = {r[0]: r[3] for r in lvl[1:] if isinstance(r[0], int) and len(r) > 3}
         ymap = {r[0]: r[2] for r in lay[1:] if isinstance(r[0], int) and len(r) > 2}
-        bad = []
-        for lid in sorted(set(new_lvl)):
-            need = str(lmap.get(lid) or "").count("收集卡:1")
-            if not need:
-                continue
-            got = str(ymap.get(lid) or "")
-            have = got.count('card":14,') + got.count('card": 14,')
-            if need != have:
-                bad.append(f"{lid}: need {need} got {have}")
-        rp.ok("3 Objective Validation",
-              "收集卡 count matches the card\":14 count in every layout",
-              not bad, f"{len(bad)} mismatch(es): " + "; ".join(bad[:5]))
+
+        def _objective_mismatches(ids):
+            out = []
+            for lid in sorted(ids):
+                need = str(lmap.get(lid) or "").count("收集卡:1")
+                if not need:
+                    continue
+                got = str(ymap.get(lid) or "")
+                have = got.count('card":14,') + got.count('card": 14,')
+                if need != have:
+                    out.append(f"{lid}: need {need} got {have}")
+            return out
+
+        bad = _objective_mismatches(set(new_lvl))
+
+        # Previous chapter's count for context; see objective_check_status.
+        prev_lo, prev_hi = cfg.old_ch * 1000 + 1, cfg.old_ch * 1000 + 200
+        prev_ids = {i for i in lmap
+                    if isinstance(i, int) and prev_lo <= i <= prev_hi}
+        prev_bad = _objective_mismatches(prev_ids) if prev_ids else None
+
+        check_name = "收集卡 count matches the card\":14 count in every layout"
+        status, detail = objective_check_status(bad, prev_bad, cfg.disp_old)
+        rp.add("3 Objective Validation", check_name, status, detail)
+
 
     # ── 4-7. Star Pass: chest / item / store / notification ──────────────────
     log("  [4-7] Star Pass config …")
