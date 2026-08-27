@@ -176,7 +176,45 @@ _NO_PYTHON_MSG = (
 _MISSING_MOD_RE = re.compile(r"ModuleNotFoundError: No module named ['\"]([^'\"]+)['\"]")
 
 
-def _script_failure(script_name, result, py_exe, script_path=None):
+# Errors these project scripts raise that mean something specific and
+# actionable. Their own messages are accurate but assume you know the tool's
+# internals, so they get translated rather than passed through raw.
+_REFILL_CONFLICT_RE = re.compile(r"refill level id conflict:\s*(\d+)")
+
+
+def _explain_script_error(script_name, stderr, script_path=None, cfg=None):
+    """Turn a known project-script error into next steps, or None."""
+    m = _REFILL_CONFLICT_RE.search(stderr or "")
+    if m:
+        lvl = int(m.group(1))
+        internal = lvl // 1000
+        # Level ids are built from the INTERNAL chapter number; the number
+        # everyone else says out loud is the display one, so give both rather
+        # than quoting a chapter the user has never heard of.
+        disp = internal - cfg.display_offset if cfg is not None else None
+        which = (f"chapter {disp} (internal {internal})" if disp is not None
+                 else f"internal chapter {internal}")
+        first, last = internal * 1000 + 1, internal * 1000 + 200
+        where = f"\n  {Path(script_path).parent}" if script_path else ""
+        return (
+            f"Magic Builder stopped: level {lvl} already exists in the Level "
+            f"Builder's own source data, so it will not overwrite it.\n\n"
+            f"That means {which} - levels {first}-{last} - has already been "
+            f"built there, at least partly. Event Automator's own pre-check "
+            f"looks at pve_level.xlsx / pve_layout.xlsx in the design folder "
+            f"and found nothing, so the leftover rows are on the Level Builder "
+            f"side:{where}\n\n"
+            f"Usually one of two things:\n"
+            f"  1. An earlier Chapter Update run got part-way through. Revert "
+            f"the Level Builder working copy (svn revert) and re-run.\n"
+            f"  2. {which} was genuinely already built - by someone else, or "
+            f"already committed. Check before deleting anything; if it is "
+            f"done, this chapter needs no run.\n\n"
+            f"Nothing was written to the design folder by this step."
+        )
+    return None
+
+def _script_failure(script_name, result, py_exe, script_path=None, cfg=None):
     """A RuntimeError that says what to actually do about it.
 
     These are SkipBo Level Builder / Map Editor scripts, not ours. When the
@@ -186,6 +224,9 @@ def _script_failure(script_name, result, py_exe, script_path=None):
     Python than the user assumes, which is why py_exe is spelled out.
     """
     stderr = result.stderr or ""
+    known = _explain_script_error(script_name, stderr, script_path, cfg)
+    if known:
+        return RuntimeError(known)
     m = _MISSING_MOD_RE.search(stderr)
     if not m:
         return RuntimeError(f"{script_name} exited with code {result.returncode}")
@@ -1767,7 +1808,7 @@ def run_step1_magic_builder(cfg: AppConfig, log):
     if result.stdout: log(result.stdout.strip())
     if result.stderr: log(f"[STDERR] {result.stderr.strip()}")
     if result.returncode != 0:
-        raise _script_failure("conf_fill_ex.py", result, py_exe, py_script)
+        raise _script_failure("conf_fill_ex.py", result, py_exe, py_script, cfg)
     log("  ✓ Magic Builder completed successfully")
 
 def run_step2_upload(cfg: AppConfig, log):

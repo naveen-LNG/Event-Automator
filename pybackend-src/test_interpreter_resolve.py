@@ -111,6 +111,29 @@ def main():
         msg = str(cc._script_failure("tool.py", Res2(), "X:/py.exe", proj / "tool.py"))
         check("pip install scipy" in msg, "a real third-party gap still gets pip advice")
 
+        # --- known project-script errors get translated ------------------
+        class Refill:
+            returncode = 1
+            stderr = ('  File "conf_fill_ex.py", line 252, in refill_spec\n'
+                      '    raise RuntimeError("refill level id conflict: " + str(levelid))\n'
+                      'RuntimeError: refill level id conflict: 95001\n')
+
+        class FakeCfg:
+            display_offset = 10
+
+        msg = str(cc._script_failure("conf_fill_ex.py", Refill(), "X:/py.exe",
+                                     proj / "tool.py", FakeCfg()))
+        check("chapter 85" in msg,
+              "refill conflict is reported as the DISPLAY chapter, not the internal one",
+              msg.split("\n")[2] if len(msg.split("\n")) > 2 else msg)
+        check("95001-95200" in msg, "refill conflict names the level range")
+        check("exited with code" not in msg,
+              "refill conflict replaces the bare exit-code message")
+        # Without cfg it must not guess a display number.
+        msg2 = str(cc._script_failure("conf_fill_ex.py", Refill(), "X:/py.exe"))
+        check("internal chapter 95" in msg2 and "chapter 85" not in msg2,
+              "without cfg it says internal chapter rather than inventing one")
+
         # --- sibling package directories count as local too ---------------
         (proj / "pkg_dir").mkdir()
         p = write(proj, "uses_pkg.py", "import pkg_dir\nimport pandas\n")
