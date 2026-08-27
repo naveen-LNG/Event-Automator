@@ -164,6 +164,20 @@ def run_main():
     print(f"Design:    {cfg.design()}")
     print("")
 
+    # Dependency preflight before anything is written. Steps 1, 2 and 4 shell
+    # out to Level Builder / Map Editor scripts, and a missing package used to
+    # surface only when that step ran - step 4 failing leaves a half-applied
+    # chapter needing an svn revert. Checking up front costs a few seconds and
+    # fails while the design files are still untouched.
+    problems = chapter_core.preflight_project_scripts(cfg, log)
+    if problems:
+        print("=== Dependency check ===", flush=True)
+        for p in problems:
+            print(p, flush=True)
+            print("", flush=True)
+        print("Nothing has been changed. Resolve the above and re-run.", flush=True)
+        sys.exit(1)
+
     failed = 0
     for key in [k for k, _, _ in STEPS if k in requested]:   # keep workflow order
         label, fn = STEP_MAP[key]

@@ -19,6 +19,7 @@ Chapter numbers appear in three forms and every one of them has to be replaced:
   * Chinese numerals  七十八 -> 七十九        (Alias / PIC columns)
   * display number    78 -> 79              (standalone digits only)
 """
+import ast
 import collections
 import glob
 import json
@@ -200,6 +201,161 @@ def _script_failure(script_name, result, py_exe):
             f"bundled interpreter carries only the packages the app itself uses.)"
         )
     return RuntimeError(f"{script_name} exited with code {result.returncode}")
+
+
+def _bundled_python():
+    """The interpreter this backend is running on (the app's bundled one)."""
+    return sys.executable
+
+
+def _script_imports(script_path):
+    """Third-party module names a project script needs, by reading its source.
+
+    The Level Builder / Map Editor scripts are not ours and their dependencies
+    change without notice, so the dependency list is discovered from the actual
+    file on this machine rather than hardcoded here. Stdlib and modules sitting
+    next to the script resolve on any interpreter, so both are dropped.
+
+    Returns None when the source cannot be read or parsed - callers then fall
+    back to trying interpreters rather than claiming to know what is needed.
+    """
+    try:
+        src = Path(script_path).read_text("utf-8", errors="replace")
+        tree = ast.parse(src)
+    except Exception:
+        return None
+
+    roots = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                roots.add(a.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom):
+            # level > 0 is an explicit relative import - always local
+            if node.level == 0 and node.module:
+                roots.add(node.module.split(".")[0])
+
+    script_dir = Path(script_path).parent
+    stdlib = getattr(sys, "stdlib_module_names", frozenset())
+    out = set()
+    for r in roots:
+        if not r or r in stdlib or r == "__future__":
+            continue
+        if (script_dir / (r + ".py")).exists() or (script_dir / r / "__init__.py").exists():
+            continue  # sibling module, travels with the script
+        out.add(r)
+    return out
+
+
+def _missing_modules(py_exe, modules):
+    """Which of `modules` the given interpreter cannot import.
+
+    Uses find_spec rather than a real import: some of these packages are slow
+    to import and we only need to know they are installed. Returns all of them
+    when the probe itself fails, so a broken interpreter is never treated as
+    satisfying anything.
+    """
+    if not modules:
+        return set()
+    # Built line-by-line with no escape sequences: an escaped newline inside
+    # this source got interpreted here rather than in the child, producing a
+    # probe that failed to parse - which read as "every module is missing".
+    probe = (
+        "import importlib.util, sys\n"
+        "for m in sys.argv[1:]:\n"
+        "    try:\n"
+        "        ok = importlib.util.find_spec(m) is not None\n"
+        "    except Exception:\n"
+        "        ok = False\n"
+        "    if not ok:\n"
+        "        print(m)\n"
+    )
+    try:
+        r = subprocess.run([py_exe, "-c", probe, *sorted(modules)],
+                           capture_output=True, text=True, timeout=120)
+    except Exception:
+        return set(modules)
+    if r.returncode != 0:
+        return set(modules)
+    return {l.strip() for l in r.stdout.splitlines() if l.strip()}
+
+
+def _resolve_interpreter(script_path, log, label=None):
+    """Pick an interpreter that can actually run this project script.
+
+    Prefers the app's own bundled interpreter, so a machine with no system
+    Python still works. Falls back to a system Python when the script needs
+    something the bundle does not carry - which is the honest default, because
+    these scripts belong to another tool and we cannot know their full
+    dependency set ahead of time.
+    """
+    name = label or Path(script_path).name
+    needed = _script_imports(script_path)
+
+    candidates = [("bundled", _bundled_python())]
+    sys_py = _python_exe()
+    if sys_py and Path(sys_py).resolve() != Path(_bundled_python()).resolve():
+        candidates.append(("system", sys_py))
+
+    shortfall = {}
+    for kind, exe in candidates:
+        if not exe:
+            continue
+        missing = _missing_modules(exe, needed) if needed is not None else set()
+        if not missing:
+            log(f"  {name}: using {kind} Python ({exe})")
+            return exe
+        shortfall[exe] = missing
+        log(f"  {name}: {kind} Python lacks {', '.join(sorted(missing))} - trying next", "WARN")
+
+    if not shortfall:
+        raise RuntimeError(_NO_PYTHON_MSG)
+
+    lines = [
+        f"{name} cannot run: no available Python has everything it needs.",
+        "",
+        f"{name} is a SkipBo project script (Level Builder / Map Editor), not "
+        "part of Event Automator, and it imports packages the app does not "
+        "bundle.",
+        "",
+    ]
+    for exe, missing in shortfall.items():
+        lines.append(f"{exe}")
+        lines.append(f"  missing: {', '.join(sorted(missing))}")
+        lines.append(f'  fix:     "{exe}" -m pip install {" ".join(sorted(missing))}')
+        lines.append("")
+    lines.append("Install into whichever of those you maintain, then re-run.")
+    raise RuntimeError("\n".join(lines))
+
+
+def preflight_project_scripts(cfg, log):
+    """Check every borrowed-interpreter script BEFORE the run starts.
+
+    These scripts sit at steps 1, 2 and 4 of Chapter Update, each mutating
+    design files. Discovering a missing dependency at step 4 leaves a
+    half-applied chapter needing an svn revert, so the dependency check is
+    hoisted to the top where failing costs nothing.
+
+    Returns a list of human-readable problems; empty means good to go.
+    """
+    problems = []
+    targets = []
+    lvl = getattr(cfg, "lvl_py", None)
+    if lvl:
+        targets += [Path(lvl) / n for n in
+                    ("conf_fill_ex.py", "gen_captures.py", "gen_captures_others.py")]
+    mp = getattr(cfg, "map_py", None)
+    if mp:
+        targets.append(Path(mp) / "save_map_data.py")
+
+    for t in targets:
+        if not t.exists():
+            continue  # absent scripts are skipped at run time too
+        try:
+            _resolve_interpreter(t, log)
+        except RuntimeError as e:
+            problems.append(str(e))
+    return problems
 
 
 def _ch_sub(text, old_val, new_val):
@@ -1562,13 +1718,7 @@ def run_step1_magic_builder(cfg: AppConfig, log):
 
     # Run the Python script
     py_script = cfg.lvl_py / "conf_fill_ex.py"
-    py_exe = _python_exe()
-    if not py_exe:
-        raise RuntimeError(_NO_PYTHON_MSG)
-    # Which interpreter got borrowed is the first thing you need when one of
-    # these scripts fails on a dependency - PATH may not resolve to the Python
-    # the user thinks it does.
-    log(f"  Using system Python: {py_exe}")
+    py_exe = _resolve_interpreter(py_script, log)
     log(f"\nRunning conf_fill_ex.py -c CondFilterConf.json …")
     result = subprocess.run(
         [py_exe, str(py_script), "-c", "CondFilterConf.json"],
@@ -1625,18 +1775,12 @@ def run_step2_upload(cfg: AppConfig, log):
 
     # 2. Generate HTML index pages from screenshots
     log("Step 2 / 4 — Generating capture index pages…")
-    py_exe = _python_exe()
-    if not py_exe:
-        raise RuntimeError(_NO_PYTHON_MSG)
-    # Which interpreter got borrowed is the first thing you need when one of
-    # these scripts fails on a dependency - PATH may not resolve to the Python
-    # the user thinks it does.
-    log(f"  Using system Python: {py_exe}")
     for script_name in ("gen_captures.py", "gen_captures_others.py"):
         script = py_dir / script_name
         if not script.exists():
             log(f"  ⚠  {script_name} not found — skipping", "WARN")
             continue
+        py_exe = _resolve_interpreter(script, log)
         r = subprocess.run(
             [py_exe, str(script)],
             cwd=str(py_dir),
@@ -1830,13 +1974,7 @@ def run_step7_map_builder(cfg: AppConfig, scene_file: str, log):
     if not save_py.exists():
         raise FileNotFoundError(f"save_map_data.py not found: {save_py}")
 
-    py_exe = _python_exe()
-    if not py_exe:
-        raise RuntimeError(_NO_PYTHON_MSG)
-    # Which interpreter got borrowed is the first thing you need when one of
-    # these scripts fails on a dependency - PATH may not resolve to the Python
-    # the user thinks it does.
-    log(f"  Using system Python: {py_exe}")
+    py_exe = _resolve_interpreter(save_py, log)
     log("Running save_map_data.py …")
     result = subprocess.run(
         [py_exe, str(save_py),

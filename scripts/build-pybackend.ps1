@@ -41,6 +41,17 @@ New-Item -ItemType Directory -Force -Path $pkgDir | Out-Null
 #   anthropic           - Ideation + Art Requirement generation
 #   pypdf               - reads finalized ideation/art-requirement PDFs
 #   pillow, numpy       - art reference + generated-image processing
+#   pandas              - NOT used by our code. Bundled so the Level Builder's
+#                         conf_fill_ex.py can run on the bundled interpreter
+#                         instead of requiring every machine to have a system
+#                         Python with pandas installed. chapter_core's
+#                         _resolve_interpreter prefers bundled and falls back
+#                         to system Python if a script needs something else.
+#                         PINNED <3 on purpose: conf_fill_ex.py is not our code
+#                         and predates pandas 3, whose breaking changes (default
+#                         copy-on-write, removed APIs) could change its output
+#                         silently. 2.3.x has a cp314 wheel, so the pin costs
+#                         nothing.
 #   rapidocr_onnxruntime- text_detect.py (catches baked-in text in generated art).
 #                         Pulls onnxruntime + opencv + shapely: ~90MB of wheels,
 #                         ~230MB installed. That is the bulk of the bundle size.
@@ -54,7 +65,7 @@ New-Item -ItemType Directory -Force -Path $pkgDir | Out-Null
 # writing (pydantic-core 2.46.4). If a future transitive dep drops win_amd64/py314
 # wheels, this download step fails loudly here rather than at runtime.
 Write-Host "Fetching backend dependencies (openpyxl, et_xmlfile, anthropic + tree, pypdf)..."
-python -m pip download --only-binary=:all: --python-version 314 --platform win_amd64 -d $pkgDir openpyxl et_xmlfile anthropic pypdf pillow numpy rapidocr_onnxruntime
+python -m pip download --only-binary=:all: --python-version 314 --platform win_amd64 -d $pkgDir openpyxl et_xmlfile anthropic pypdf pillow numpy "pandas<3" rapidocr_onnxruntime
 
 Get-ChildItem $pkgDir -Filter "*.whl" | ForEach-Object {
     $asZip = [System.IO.Path]::ChangeExtension($_.FullName, ".zip")
