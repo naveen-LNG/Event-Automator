@@ -176,6 +176,40 @@ _NO_PYTHON_MSG = (
 _MISSING_MOD_RE = re.compile(r"ModuleNotFoundError: No module named ['\"]([^'\"]+)['\"]")
 
 
+# conf_fill_ex.py hardcodes the design folder it operates on, resolved against
+# the CWD, and offers no way to override it. Read that literal out of the
+# script so this tool checks the same workbooks the script will, instead of
+# duplicating a path that could drift.
+_DESIGN_PATH_RE = re.compile(
+    r"""design_path\s*=\s*os\.path\.abspath\(\s*['"]([^'"]+)['"]""")
+
+
+def _same_dir(a, b):
+    """Whether two paths name the same folder, short/long form aside."""
+    try:
+        return Path(a).resolve() == Path(b).resolve()
+    except Exception:
+        return str(a).rstrip("\/").lower() == str(b).rstrip("\/").lower()
+
+
+def _script_design_path(script_path, cwd):
+    """The design folder a Level Builder script will actually read and write."""
+    try:
+        src = Path(script_path).read_text("utf-8", errors="replace")
+    except Exception:
+        return None
+    m = _DESIGN_PATH_RE.search(src)
+    if not m:
+        return None
+    # resolve() so this is comparable to cfg.design(): a path can arrive in
+    # 8.3 short form (NAVEEN~1) while the other side is long form, which would
+    # otherwise read as a workspace mismatch that is not real.
+    try:
+        return Path(os.path.join(str(cwd), m.group(1))).resolve()
+    except Exception:
+        return Path(os.path.abspath(os.path.join(str(cwd), m.group(1))))
+
+
 # Errors these project scripts raise that mean something specific and
 # actionable. Their own messages are accurate but assume you know the tool's
 # internals, so they get translated rather than passed through raw.
@@ -438,6 +472,16 @@ def preflight_project_scripts(cfg, log):
             _resolve_interpreter(t, log)
         except RuntimeError as e:
             problems.append(str(e))
+
+    # Same reasoning as the dependency checks: Magic Builder refuses to
+    # overwrite existing levels, and finding that out at step 1 means the
+    # design files have already been touched by then.
+    try:
+        check_level_conflicts(cfg, log)
+    except RuntimeError as e:
+        problems.append(str(e))
+    except Exception as e:
+        log(f"  ⚠  Could not pre-check level conflicts: {e}", "WARN")
     return problems
 
 
@@ -1742,40 +1786,85 @@ def run_qa_validation(cfg: AppConfig, log):
 # pandas/numpy, so it needs a real system Python (see _python_exe).
 
 
+def check_level_conflicts(cfg, log):
+    """Raise if the new chapter's level ids already exist.
+
+    Split out of run_step1_magic_builder so the preflight can run it
+    before any step writes anything, and so it can be tested without
+    driving the real Magic Builder against real project files.
+    """
+    # Pre-flight: do the new chapter's levels already exist?
+    #
+    # This used to look in cfg.design() - the workspace picked in the app - and
+    # so passed clean while conf_fill_ex.py itself raised "refill level id
+    # conflict". conf_fill_ex.py does NOT use the selected workspace: it hard
+    # codes a relative path to trunk/.../WorkSpcae3/design and resolves it
+    # against its own folder, with no override from args or config. The literal
+    # is read out of the script rather than copied here, so this follows along
+    # if the Level Builder ever changes it.
+    new_first = cfg.new_ch * 1000 + 1
+    new_last  = cfg.new_ch * 1000 + 200
+    target = _script_design_path(cfg.lvl_py / "conf_fill_ex.py", cfg.lvl_py)
+    if target is None:
+        target = cfg.design()
+        log("  ⚠  Could not read Magic Builder's design path; checking the "
+            "selected workspace instead.", "WARN")
+    elif not _same_dir(target, cfg.design()):
+        # Worth saying out loud: the levels land somewhere other than the
+        # workspace the user chose, and the QA step later validates the chosen
+        # one. See the notes in run_qa_validation.
+        log(f"  Magic Builder targets: {target}", "WARN")
+        log(f"  (not the selected workspace: {cfg.design()})", "WARN")
+    if not target.is_dir():
+        log(f"  ⚠  That folder does not exist - conf_fill_ex.py will fail on it: "
+            f"{target}", "WARN")
+
+    # Each workbook keeps its ids in its own sheet: pve_layout.xlsx has no
+    # 'level' sheet at all, so falling back to wb.active only happened to read
+    # the right one.
+    for name, sheet_name in (("pve_level.xlsx", "level"), ("pve_layout.xlsx", "layout")):
+        xlsx_path = target / name
+        if not xlsx_path.exists():
+            continue
+        try:
+            import openpyxl as _oxl
+            wb = _oxl.load_workbook(str(xlsx_path), read_only=True, data_only=True)
+            if sheet_name not in wb.sheetnames:
+                wb.close()
+                log(f"  ⚠  {name} has no '{sheet_name}' sheet - skipping pre-check "
+                    f"(sheets: {', '.join(wb.sheetnames)})", "WARN")
+                continue
+            sheet = wb[sheet_name]
+            keys = {row[0].value for row in sheet.iter_rows(min_row=2)
+                    if isinstance(row[0].value, int)}
+            wb.close()
+            conflict = keys & set(range(new_first, new_last + 1))
+            if conflict:
+                raise RuntimeError(
+                    f"Chapter {cfg.disp_new} (internal {cfg.new_ch}) levels "
+                    f"already exist in {name}.\n\n"
+                    f"Found {len(conflict)} conflicting level(s) "
+                    f"({min(conflict)}-{max(conflict)}) in:\n  {xlsx_path}\n\n"
+                    f"Magic Builder has already been run for this chapter. To "
+                    f"re-run it, first remove rows {new_first}-{new_last} from "
+                    f"the '{sheet_name}' sheet of pve_level.xlsx and "
+                    f"pve_layout.xlsx in:\n  {target}\n\n"
+                    f"If that chapter was genuinely already built, it needs no "
+                    f"run - check before deleting anything."
+                )
+        except RuntimeError:
+            raise
+        except Exception as e:
+            log(f"  ⚠  Could not pre-check {name}: {e}", "WARN")
+
+
 def run_step1_magic_builder(cfg: AppConfig, log):
     """Update CondFilterConf.json and run conf_fill_ex.py directly."""
     conf_path = cfg.lvl_py / "CondFilterConf.json"
     if not conf_path.exists():
         raise FileNotFoundError(f"CondFilterConf.json not found at:\n{conf_path}")
 
-    # Pre-flight: detect if new chapter levels already exist in pve_level.xlsx
-    new_first = cfg.new_ch * 1000 + 1
-    new_last  = cfg.new_ch * 1000 + 200
-    design_dir = cfg.design()
-    lvl_xlsx   = design_dir / "pve_level.xlsx"
-    lay_xlsx   = design_dir / "pve_layout.xlsx"
-    for xlsx_path in (lvl_xlsx, lay_xlsx):
-        if xlsx_path.exists():
-            try:
-                import openpyxl as _oxl
-                wb = _oxl.load_workbook(str(xlsx_path), read_only=True, data_only=True)
-                sheet = wb["level"] if "level" in wb.sheetnames else wb.active
-                keys = {row[0].value for row in sheet.iter_rows(min_row=2) if row[0].value is not None}
-                wb.close()
-                conflict = keys & set(range(new_first, new_last + 1))
-                if conflict:
-                    raise RuntimeError(
-                        f"Chapter {cfg.new_ch} levels already exist in {xlsx_path.name}.\n\n"
-                        f"Found {len(conflict)} conflicting level(s) "
-                        f"({min(conflict)}–{max(conflict)}).\n\n"
-                        f"Magic Builder has already been run for chapter {cfg.new_ch}.\n"
-                        f"To re-run it, first delete rows {new_first}–{new_last} "
-                        f"from pve_level.xlsx and pve_layout.xlsx in:\n{design_dir}"
-                    )
-            except RuntimeError:
-                raise
-            except Exception as e:
-                log(f"  ⚠  Could not pre-check {xlsx_path.name}: {e}", "WARN")
+    check_level_conflicts(cfg, log)
 
     log(f"Loading {conf_path.name}…")
     raw = conf_path.read_text("utf-8")

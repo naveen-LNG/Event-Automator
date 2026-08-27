@@ -140,6 +140,80 @@ def main():
         check(cc._script_imports(p) == {"pandas"},
               "a sibling package directory is excluded from required packages")
 
+        # --- the design folder is read from the script, not assumed ---------
+        # conf_fill_ex.py hardcodes ../../../../../trunk/.../WorkSpcae3/design
+        # and ignores the workspace chosen in the app, which is why checking
+        # cfg.design() passed clean while the script itself found a conflict.
+        lb = Path(d) / "lb" / "Py"
+        lb.mkdir(parents=True)
+        dsn = Path(d) / "lb" / "dsn"
+        dsn.mkdir()
+        write(lb, "conf_fill_ex.py",
+              'import os\ndesign_path = os.path.abspath("../dsn")\n')
+        got = cc._script_design_path(lb / "conf_fill_ex.py", lb)
+        check(cc._same_dir(got, dsn),
+              "design path is resolved from the script's own literal", f"got {got}")
+        check(cc._script_design_path(lb / "nope.py", lb) is None,
+              "an unreadable script yields no design path")
+        write(lb, "no_path.py", "x = 1\n")
+        check(cc._script_design_path(lb / "no_path.py", lb) is None,
+              "a script without the idiom yields no design path")
+
+        # --- level-conflict pre-check --------------------------------------
+        import openpyxl
+
+        def make_book(path, sheet, ids):
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = sheet
+            ws.append(["id"])
+            for i in ids:
+                ws.append([i])
+            wb.save(str(path))
+
+        make_book(dsn / "pve_level.xlsx", "level", range(94001, 94201))
+        make_book(dsn / "pve_layout.xlsx", "layout", range(94001, 94201))
+
+        class LvlCfg:
+            display_offset = 10
+            lvl_py = lb
+
+            def __init__(self, new):
+                self._n = new
+
+            @property
+            def new_ch(self):
+                return self._n
+
+            @property
+            def disp_new(self):
+                return self._n - self.display_offset
+
+            def design(self):
+                return dsn
+
+        cc.check_level_conflicts(LvlCfg(95), quiet)
+        check(True, "a chapter absent from the workbooks passes the pre-check")
+
+        try:
+            cc.check_level_conflicts(LvlCfg(94), quiet)
+            check(False, "an already-built chapter is blocked")
+        except RuntimeError as e:
+            msg = str(e)
+            check("Chapter 84 (internal 94)" in msg,
+                  "conflict names display and internal chapter", msg.splitlines()[0])
+            check("94001-94200" in msg, "conflict names the level range")
+
+        # pve_layout.xlsx has no 'level' sheet, so reading wb.active instead of
+        # the named sheet only ever worked by accident.
+        make_book(dsn / "pve_layout.xlsx", "layout_z", range(94001, 94201))
+        (dsn / "pve_level.xlsx").unlink()
+        warns = []
+        cc.check_level_conflicts(LvlCfg(94), lambda m, lvl=None: warns.append(str(m)))
+        check(any("no 'layout' sheet" in w for w in warns),
+              "a workbook missing the expected sheet warns instead of guessing",
+              "; ".join(warns)[:120])
+
         # --- preflight only inspects the scripts it actually runs ---
         lvl = Path(d) / "lvl"; lvl.mkdir()
         mp = Path(d) / "map"; mp.mkdir()
