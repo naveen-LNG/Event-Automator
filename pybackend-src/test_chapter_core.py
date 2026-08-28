@@ -21,7 +21,19 @@ import time
 import tempfile
 from pathlib import Path
 
+import json as _json_mod
+
 import openpyxl
+
+STUB_SAVE_MAP_DATA = '''import json, os, sys
+self_path = os.path.dirname(os.path.realpath(__file__))
+os.chdir(self_path)
+out = os.path.abspath("../../__Output")
+os.makedirs(out, exist_ok=True)
+with open(os.path.join(out, "argv.json"), "w", encoding="utf-8") as f:
+    json.dump(sys.argv[1:], f)
+'''
+
 
 import chapter_core
 from chapter_core import Cfg, _cn_num
@@ -631,6 +643,120 @@ def main():
             finally:
                 chapter_core._SIM_PUMP_GRACE_S = grace_before
                 shutil.rmtree(simd, ignore_errors=True)
+
+        # --- map blocks from another chapter must not be consumed -----------
+        # A Map Builder scene often still holds blocks from the previous
+        # chapter. They were parsed like any other, so their level ids ended up
+        # in the new chapter's map data - which is how another chapter's levels
+        # appear in the middle of the map. Block order also came from Unity's
+        # internal fileIDs rather than the block names, so even correct blocks
+        # could land on the wrong map row.
+        def _scene(path, blocks):
+            fid = [1000]
+            def nid():
+                fid[0] += 1
+                return fid[0]
+            out = []
+            def go(name, rt_id):
+                g = nid()
+                out.append(f"--- !u!1 &{g}\nGameObject:\n  m_Name: {name}\n"
+                           f"  component: {{fileID: {rt_id}}}\n")
+                return g
+            def rt(rt_id, go_id, parent, children):
+                kids = "".join(f"\n  - {{fileID: {c}}}" for c in children)
+                out.append(f"--- !u!224 &{rt_id}\nRectTransform:\n"
+                           f"  m_GameObject: {{fileID: {go_id}}}\n"
+                           f"  m_AnchoredPosition: {{x: 1, y: 2}}\n"
+                           f"  m_LocalScale: {{x: 1.5, y: 1.5, z: 1}}\n"
+                           f"  m_Children:{kids or ' []'}\n"
+                           f"  m_Father: {{fileID: {parent}}}\n")
+            for name, level_ids in blocks:
+                blk, fp, lp = nid(), nid(), nid()
+                lvl = []
+                for lid in level_ids:
+                    r = nid(); g = go(str(lid), r); rt(r, g, lp, []); lvl.append(r)
+                fr = nid(); fg = go("fruit322 (1)", fr); rt(fr, fg, fp, [])
+                gb = go(name, blk); gf = go("FruitPanel", fp); gl = go("LevelPanel", lp)
+                rt(fp, gf, blk, [fr]); rt(lp, gl, blk, lvl); rt(blk, gb, 0, [fp, lp])
+            Path(path).write_text("\n".join(out), encoding="utf-8")
+
+        mb = Path(tempfile.mkdtemp(prefix="mapblocks_test_"))
+        try:
+            (mb / "Magic_Builder" / "Assets" / "Py").mkdir(parents=True)
+            (mb / "Magic_Builder" / "__Output").mkdir()
+            (mb / "design").mkdir()
+            (mb / "scenes").mkdir()
+            # Stub rather than the real Map Builder script: it records the
+            # arguments, which is what proves block filtering and ordering,
+            # and keeps this test runnable without Map Builder installed.
+            (mb / "Magic_Builder" / "Assets" / "Py" / "save_map_data.py").write_text(
+                STUB_SAVE_MAP_DATA, encoding="utf-8")
+
+            class MapCfg:
+                display_offset = 10
+                old_ch = 94
+                map_builder = mb / "Magic_Builder"
+                map_scenes = mb / "scenes"
+
+                @property
+                def map_py(self):
+                    return self.map_builder / "Assets" / "Py"
+
+                @property
+                def map_output(self):
+                    return self.map_builder / "__Output"
+
+                @property
+                def new_ch(self):
+                    return self.old_ch + 1
+
+                @property
+                def disp_new(self):
+                    return self.new_ch - self.display_offset
+
+                def design(self):
+                    return mb / "design"
+
+            scene = mb / "scenes" / "s.unity"
+            # map8 first so fileID order differs from name order
+            _scene(scene, [("map8", [95068, 95069, 95070]),
+                           ("map3", [75084, 75085, 75086]),
+                           ("map1", [95010, 95011]),
+                           ("map2", [95020, 95021])])
+            seen = []
+            chapter_core.run_step7_map_builder(MapCfg(), str(scene),
+                                               lambda m, lvl=None: seen.append(str(m)))
+            joined = "\n".join(seen)
+            check("map3" in joined and "75084-75086" in joined,
+                  "a block from another chapter is named with its level range")
+            check("belongs to another chapter" in joined,
+                  "and is reported as such")
+            check("Extracted 3 map blocks" in joined,
+                  "only the current chapter's blocks are used",
+                  [m for m in seen if "Extracted" in m])
+
+            argv = _json_mod.loads(
+                (mb / "Magic_Builder" / "__Output" / "argv.json").read_text(encoding="utf-8"))
+            level_data = argv[1]        # "<n>#<count>|pos*pos#<count>|..."
+            counts = [int(part.split("|")[0]) for part in level_data.split("#")[1:]]
+            check(len(counts) == 3, "three blocks reach the output", f"got {counts}")
+            check(counts == [2, 2, 3],
+                  "blocks are ordered by name (map1, map2, map8), not by fileID",
+                  f"level counts were {counts}")
+            check(level_data.startswith("3#"),
+                  "the block count reflects only the blocks actually used")
+
+            # a scene with nothing for this chapter must stop, not write junk
+            scene2 = mb / "scenes" / "old.unity"
+            _scene(scene2, [("map1", [75001, 75002])])
+            try:
+                chapter_core.run_step7_map_builder(MapCfg(), str(scene2), quiet)
+                check(False, "a scene with no blocks for this chapter raises")
+            except ValueError as e:
+                check("has not been laid out for this chapter" in str(e),
+                      "the error says the scene is not prepared for this chapter")
+        finally:
+            shutil.rmtree(mb, ignore_errors=True)
 
         # --- every workbook we save must be loaded formula-safe -------------
         # openpyxl writes a formula back without its cached value, and

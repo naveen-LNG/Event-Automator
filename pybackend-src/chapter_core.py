@@ -2309,7 +2309,64 @@ def run_step7_map_builder(cfg: AppConfig, scene_file: str, log):
     dir_parts       = []
     map_parts       = []
 
-    for block_id, panels in sorted(parent_to_panels.items(), reverse=True):
+    # Which chapter does each block belong to? The level buttons under a
+    # LevelPanel are named with their level id, so a block left over from an
+    # earlier chapter is identifiable - and must not be used. Consuming one
+    # silently is how a map ends up with another chapter's levels sitting in
+    # the middle of it.
+    lo, hi = cfg.new_ch * 1000 + 1, cfg.new_ch * 1000 + 200
+
+    def _block_level_ids(lp_id):
+        ids = []
+        for btn_id in (get_children_named(lp_id) if lp_id else []):
+            nums = re.findall(r"\d+", rt_name.get(btn_id, ""))
+            if nums:
+                ids.append(int(nums[-1]))
+        return ids
+
+    def _block_order(item):
+        # Order by the block's own name (map0, map1, ... map12), not by Unity's
+        # internal fileID - that ordering is arbitrary and decides which map row
+        # each block's data lands on.
+        block_id = item[0]
+        name = rt_name.get(block_id, "")
+        m = re.search(r"(\d+)", name)
+        return (0, int(m.group(1))) if m else (1, 0)
+
+    usable, foreign, empty = [], [], []
+    for block_id, panels in parent_to_panels.items():
+        ids = _block_level_ids(panels.get("level"))
+        name = rt_name.get(block_id, f"<{block_id}>")
+        if not ids:
+            empty.append(name)
+            continue
+        if all(lo <= i <= hi for i in ids):
+            usable.append((block_id, panels))
+        else:
+            foreign.append((name, min(ids), max(ids)))
+
+    for name in empty:
+        log(f"  ⚠  {name}: no level buttons - skipped", "WARN")
+    for name, a, b in sorted(foreign):
+        log(f"  ⚠  {name}: levels {a}-{b} are not chapter {cfg.disp_new} "
+            f"({lo}-{hi}) - skipped, this block belongs to another chapter",
+            "WARN")
+
+    if not usable:
+        detail = "\n".join(f"  {n}: levels {a}-{b}" for n, a, b in sorted(foreign))
+        raise ValueError(
+            f"None of the {len(parent_to_panels)} map block(s) in "
+            f"{scene_path.name} hold chapter {cfg.disp_new} levels "
+            f"({lo}-{hi}).\n\n{detail}\n\n"
+            f"That scene has not been laid out for this chapter yet - open the "
+            f"Map Builder, build the chapter {cfg.disp_new} map, save the "
+            f"scene, then run this step again."
+        )
+    if foreign:
+        log(f"  Using {len(usable)} of {len(parent_to_panels)} block(s); the "
+            f"rest belong to other chapters and were left out.", "WARN")
+
+    for block_id, panels in sorted(usable, key=_block_order):
         fp_id = panels.get("fruit")
         lp_id = panels.get("level")
 
@@ -2361,7 +2418,7 @@ def run_step7_map_builder(cfg: AppConfig, scene_file: str, log):
                 dir_str += f"#2|{round(rt.get('ax',0))},{round(rt.get('ay',0))}"
         dir_parts.append(dir_str or "#")
 
-    n_blocks = len(parent_to_panels)
+    n_blocks = len(usable)
     level_data  = f"{n_blocks}#" + "#".join(level_pos_parts)
     fruit_id    = "#".join(fruit_id_parts)
     fruit_pos   = "#".join(fruit_pos_parts)
