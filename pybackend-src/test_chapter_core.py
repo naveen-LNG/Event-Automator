@@ -728,33 +728,40 @@ def main():
                                                lambda m, lvl=None: seen.append(str(m)))
             joined = "\n".join(seen)
             check("map3" in joined and "75084-75086" in joined,
-                  "a block from another chapter is named with its level range")
-            check("belongs to another chapter" in joined,
-                  "and is reported as such")
-            check("Extracted 3 map blocks" in joined,
-                  "only the current chapter's blocks are used",
+                  "a block whose levels look like another chapter's is named")
+            check("may be left over" in joined and "still being used" in joined,
+                  "it is reported as advisory, not silently dropped")
+            check("Extracted 4 map blocks" in joined,
+                  "every block is still used - the reading is not reliable "
+                  "enough to discard one",
                   [m for m in seen if "Extracted" in m])
 
             argv = _json_mod.loads(
                 (mb / "Magic_Builder" / "__Output" / "argv.json").read_text(encoding="utf-8"))
             level_data = argv[1]        # "<n>#<count>|pos*pos#<count>|..."
             counts = [int(part.split("|")[0]) for part in level_data.split("#")[1:]]
-            check(len(counts) == 3, "three blocks reach the output", f"got {counts}")
-            check(counts == [2, 2, 3],
-                  "blocks are ordered by name (map1, map2, map8), not by fileID",
+            check(len(counts) == 4, "all four blocks reach the output", f"got {counts}")
+            check(counts == [2, 2, 3, 3],
+                  "blocks are ordered by name (map1, map2, map3, map8), not by fileID",
                   f"level counts were {counts}")
-            check(level_data.startswith("3#"),
-                  "the block count reflects only the blocks actually used")
 
-            # a scene with nothing for this chapter must stop, not write junk
-            scene2 = mb / "scenes" / "old.unity"
-            _scene(scene2, [("map1", [75001, 75002])])
-            try:
-                chapter_core.run_step7_map_builder(MapCfg(), str(scene2), quiet)
-                check(False, "a scene with no blocks for this chapter raises")
-            except ValueError as e:
-                check("has not been laid out for this chapter" in str(e),
-                      "the error says the scene is not prepared for this chapter")
+            # Names are not always level ids: in some scenes a button is
+            # named "<prefab> (3)" and the trailing number is a sibling index.
+            # Treating those as another chapter's levels once skipped every
+            # block and broke the step outright, so a scene like this must
+            # still run.
+            scene2 = mb / "scenes" / "indices.unity"
+            _scene(scene2, [("map0", [1, 2, 3]), ("map1", [4, 5])])
+            seen2 = []
+            chapter_core.run_step7_map_builder(MapCfg(), str(scene2),
+                                               lambda m, lvl=None: seen2.append(str(m)))
+            j2 = chr(10).join(seen2)
+            check("Extracted 2 map blocks" in j2,
+                  "a scene whose button names are sibling indices still works",
+                  [m for m in seen2 if "Extracted" in m])
+            check("may be left over" not in j2,
+                  "and small numbers are not mistaken for another chapter's levels")
+
         finally:
             shutil.rmtree(mb, ignore_errors=True)
 
