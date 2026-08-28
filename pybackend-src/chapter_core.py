@@ -454,6 +454,16 @@ _BOOTSTRAP = (
 # elsewhere takes CondFilterConf.json and the __WorkSpace/__BackUp folder with
 # it. Instead a small launcher patches the source in memory and execs it with
 # __file__ still pointing at the original file.
+# A simulation run of 200 levels x 500 repeats takes ~10 minutes; this is
+# a backstop against one that never finishes, not a normal limit.
+_SIM_TIMEOUT_S = 7200
+
+# How long to keep draining output after the batch file has exited, before
+# giving up on helpers that still hold the pipe. Module level so tests can
+# shorten it.
+_SIM_PUMP_GRACE_S = 15
+
+
 _REDIRECT_LAUNCHER = '"""Run a Level Builder script with its hardcoded design_path redirected.\n\nWritten to a temp file and invoked as:\n    python <this> <design_dir> <script> [args...]\n\nThe scripts are NOT copied. They anchor everything on their own location -\n    self_path = os.path.dirname(os.path.realpath(__file__))\n    os.chdir(self_path)\n- so relocating them moves CondFilterConf.json and the __WorkSpace/__BackUp\nfolder with them. Instead the source is patched in memory and executed with\n__file__ still pointing at the original file, which keeps self_path, the chdir\nand every sibling path exactly as a normal run would have them.\n"""\nimport os\nimport re\nimport sys\nimport types\n\nASSIGN = re.compile(\n    r"""^(\\s*design_path\\s*=\\s*)os\\.path\\.abspath\\(\\s*[\'"][^\'"]*[\'"]\\s*\\)""",\n    re.MULTILINE)\n\nIMPORT_RE = re.compile(r"^\\s*(?:import|from)\\s+([A-Za-z_]\\w*)", re.MULTILINE)\n\n\ndef patch(src, design_dir):\n    return ASSIGN.subn(lambda m: m.group(1) + repr(design_dir), src)\n\n\ndef read(path):\n    with open(path, "r", encoding="utf-8", errors="replace") as f:\n        return f.read()\n\n\ndef main():\n    design_dir = sys.argv[1]\n    script = os.path.abspath(sys.argv[2])\n    args = sys.argv[3:]\n    script_dir = os.path.dirname(script)\n\n    sys.path.insert(0, script_dir)\n    sys.argv = [script] + args\n\n    entry_src = read(script)\n    entry_src, n = patch(entry_src, design_dir)\n    if not n:\n        sys.stderr.write(\n            "REDIRECT_FAILED: no \'design_path = os.path.abspath(...)\' in "\n            + os.path.basename(script) + "\\n")\n        sys.exit(3)\n\n    # Only siblings the entry actually imports, and only those that carry the\n    # same hardcoded assignment. Pre-loading anything else could run import\n    # side effects the real invocation never triggers.\n    patched = [os.path.basename(script)]\n    for name in sorted(set(IMPORT_RE.findall(entry_src))):\n        sib = os.path.join(script_dir, name + ".py")\n        if not os.path.exists(sib) or name in sys.modules:\n            continue\n        sib_src = read(sib)\n        sib_src, sn = patch(sib_src, design_dir)\n        if not sn:\n            continue\n        mod = types.ModuleType(name)\n        mod.__file__ = sib\n        sys.modules[name] = mod\n        try:\n            exec(compile(sib_src, sib, "exec"), mod.__dict__)\n        except Exception:\n            del sys.modules[name]\n            raise\n        patched.append(name + ".py")\n\n    sys.stderr.write("REDIRECT_OK: " + ", ".join(patched) + "\\n")\n    g = {"__name__": "__main__", "__file__": script, "__builtins__": __builtins__}\n    exec(compile(entry_src, script, "exec"), g)\n\n\nif __name__ == "__main__":\n    main()\n'
 
 
@@ -2540,11 +2550,47 @@ def run_step9_simulation(cfg: AppConfig, log):
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, encoding="utf-8", errors="replace"
     )
-    for line in proc.stdout:
-        stripped = line.rstrip()
-        if stripped:
-            log(stripped)
-    proc.wait()
-    if proc.returncode != 0:
-        raise RuntimeError(f"Simulation exited with code {proc.returncode}")
+
+    # The output is drained on a thread and the PROCESS is what we wait on.
+    #
+    # Reading to EOF and only then calling wait() looks equivalent but hangs:
+    # start_run_2.bat launches worker processes that inherit the same stdout
+    # pipe, so the pipe only reaches EOF once every one of them has gone. If
+    # any helper outlives the batch file - and one does - the read loop blocks
+    # forever after the simulation has already printed "done!", and the step
+    # never returns. That is exactly what left the UI stuck on "Running" with
+    # a finished simulation behind it.
+    def _pump():
+        try:
+            for line in proc.stdout:
+                stripped = line.rstrip()
+                if stripped:
+                    log(stripped)
+        except Exception:
+            pass
+
+    pump = threading.Thread(target=_pump, daemon=True)
+    pump.start()
+    try:
+        rc = proc.wait(timeout=_SIM_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        pump.join(timeout=5)
+        raise RuntimeError(
+            f"The simulation was still running after "
+            f"{_SIM_TIMEOUT_S // 60} minutes and was stopped.\n\n"
+            f"Check {sim_dir} - run start_run_2.bat by hand to see where it "
+            f"gets to. Lowering 'repeat' or raising 'processes' in the "
+            f"Simulation settings will also shorten it."
+        )
+
+    # The batch file has exited, so its exit code is the answer. Give the pump
+    # a moment to flush what is already buffered, but do not wait on helpers
+    # that are still holding the pipe open.
+    pump.join(timeout=_SIM_PUMP_GRACE_S)
+    if pump.is_alive():
+        log("  (simulation finished; a helper process is still holding the "
+            "output pipe, so the last few lines may be missing)", "WARN")
+    if rc != 0:
+        raise RuntimeError(f"Simulation exited with code {rc}")
     log("  ✓ Simulation completed")

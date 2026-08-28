@@ -15,7 +15,9 @@ was fixed:
     python test_chapter_core.py
 """
 import shutil
+import os
 import sys
+import time
 import tempfile
 from pathlib import Path
 
@@ -584,6 +586,51 @@ def main():
               "the collect-card condition never blocks sign-off")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+        # --- simulation must not hang on a pipe its helpers keep open -------
+        # start_run_2.bat launches workers that inherit its stdout pipe, so the
+        # pipe only reaches EOF once every one of them exits. Reading to EOF
+        # and only then calling wait() therefore blocked forever after the
+        # simulation had already printed "done!" - the UI sat on "Running"
+        # with a finished simulation behind it.
+        if os.name == "nt":
+            import json as _json
+            simd = Path(tempfile.mkdtemp(prefix="sim_pipe_test_"))
+            (simd / "run_conf_2.json").write_text(
+                _json.dumps({"levels": [], "dir_name": "", "repeat_num": 1,
+                             "p_num": 1, "tags": [""]}), encoding="utf-8")
+            # exits immediately, but leaves a helper holding the same stdout
+            (simd / "start_run_2.bat").write_text(
+                "@echo off\r\n"
+                "echo starting workers\r\n"
+                'start /b "" cmd /c "ping -n 20 127.0.0.1 >nul"\r\n'
+                "echo done! used time =  1.0\r\n",
+                encoding="utf-8")
+
+            class SimCfg:
+                new_ch = 95
+                sim_repeat = 1
+                sim_p_num = 1
+                sim_tag = ""
+                sim_path = simd
+
+            grace_before = chapter_core._SIM_PUMP_GRACE_S
+            chapter_core._SIM_PUMP_GRACE_S = 2      # keep the test quick
+            seen = []
+            t0 = time.monotonic()
+            try:
+                chapter_core.run_step9_simulation(SimCfg(), lambda m, lvl=None: seen.append(str(m)))
+                elapsed = time.monotonic() - t0
+                check(elapsed < 15,
+                      "simulation returns once the batch exits, not when helpers do",
+                      f"took {elapsed:.1f}s")
+                check(any("done!" in m for m in seen),
+                      "the simulator's own output still reaches the log")
+                check(any("Simulation completed" in m for m in seen),
+                      "the step reports completion")
+            finally:
+                chapter_core._SIM_PUMP_GRACE_S = grace_before
+                shutil.rmtree(simd, ignore_errors=True)
 
         # --- every workbook we save must be loaded formula-safe -------------
         # openpyxl writes a formula back without its cached value, and
