@@ -149,7 +149,7 @@ def run_main():
         lvl_py=payload.get("lvl_py") or None,
         map_builder=payload.get("map_builder") or None,
         sim_repeat=payload.get("sim_repeat", 500),
-        sim_p_num=payload.get("sim_p_num", 8),
+        sim_p_num=payload.get("sim_p_num"),   # unset = decide from the machine
         sim_tag=payload.get("sim_tag", ""),
     )
 

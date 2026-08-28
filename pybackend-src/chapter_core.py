@@ -40,6 +40,26 @@ from openpyxl.styles import PatternFill, Font
 from openpyxl.formatting.rule import CellIsRule
 
 
+# The simulation runs one worker PROCESS per p_num (they are separate lua
+# processes, not threads), so the useful number is the machine's core count -
+# a flat 8 oversubscribes a 4-core laptop and wastes most of a 22-core box.
+# One core is left for the machine itself: the run takes ~10 minutes and the
+# person is usually still working during it.
+_FALLBACK_WORKERS = 8
+
+
+def default_worker_count(cores=None):
+    """Workers to run the simulation with when nothing is configured."""
+    if cores is None:
+        try:
+            cores = os.cpu_count()
+        except Exception:
+            cores = None
+    if not cores or cores < 1:
+        return _FALLBACK_WORKERS      # unknown core count: keep the old default
+    return max(1, cores - 1)
+
+
 class Cfg:
     """The subset of the desktop app's AppConfig these steps actually read.
 
@@ -51,7 +71,7 @@ class Cfg:
 
     def __init__(self, branch_root, workspace, old_ch, display_offset=10,
                  sim_path=None, lvl_py=None, map_builder=None,
-                 sim_repeat=500, sim_p_num=8, sim_tag=""):
+                 sim_repeat=500, sim_p_num=None, sim_tag=""):
         self.branch_root = Path(branch_root)
         self.workspace = workspace
         self.old_ch = int(old_ch)
@@ -64,7 +84,8 @@ class Cfg:
         self._lvl_py = Path(lvl_py) if lvl_py else None
         self._map_builder = Path(map_builder) if map_builder else None
         self.sim_repeat = sim_repeat
-        self.sim_p_num = sim_p_num
+        # None/0/"" means "decide from this machine".
+        self.sim_p_num = int(sim_p_num) if sim_p_num else default_worker_count()
         self.sim_tag = sim_tag
 
     @property
@@ -2578,6 +2599,9 @@ def run_step9_simulation(cfg: AppConfig, log):
     conf_path.write_text(json.dumps(data, indent=4, ensure_ascii=False), "utf-8")
     log(f"  ✓ Levels set to [{cfg.new_ch*1000+1}, {cfg.new_ch*1000+200}]")
     log(f"  ✓ dir_name = Chapter_{cfg.new_ch}")
+    cores = os.cpu_count()
+    log(f"  ✓ {cfg.sim_p_num} worker process(es) x {cfg.sim_repeat} repeats"
+        + (f" (this machine has {cores} cores)" if cores else ""))
 
     bat = sim_dir / "start_run_2.bat"
     if not bat.exists():
@@ -2624,8 +2648,8 @@ def run_step9_simulation(cfg: AppConfig, log):
             f"The simulation was still running after "
             f"{_SIM_TIMEOUT_S // 60} minutes and was stopped.\n\n"
             f"Check {sim_dir} - run start_run_2.bat by hand to see where it "
-            f"gets to. Lowering 'repeat' or raising 'processes' in the "
-            f"Simulation settings will also shorten it."
+            f"gets to. It was run with {cfg.sim_p_num} worker process(es) and "
+            f"{cfg.sim_repeat} repeats per level."
         )
 
     # The batch file has exited, so its exit code is the answer. Give the pump

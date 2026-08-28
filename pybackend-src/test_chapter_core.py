@@ -800,6 +800,33 @@ def main():
         finally:
             shutil.rmtree(mb, ignore_errors=True)
 
+        # --- simulation parallelism follows the machine ---------------------
+        # The workers are separate processes, so a flat 8 oversubscribed a
+        # 4-core laptop and wasted most of a 22-core box.
+        check(chapter_core.default_worker_count(4) == 3,
+              "4 cores -> 3 workers (one left for the machine)")
+        check(chapter_core.default_worker_count(22) == 21,
+              "22 cores -> 21 workers")
+        check(chapter_core.default_worker_count(1) == 1,
+              "a single core still gets one worker")
+        check(chapter_core.default_worker_count(2) == 1,
+              "two cores still get one worker")
+        check(chapter_core.default_worker_count(0) == 8,
+              "an unknown core count falls back to the previous fixed default")
+        check(chapter_core.default_worker_count() >= 1,
+              "detecting from this machine yields at least one worker")
+
+        # An explicit value from the payload still wins over the machine.
+        cfg_auto = chapter_core.Cfg(branch_root=tempfile.gettempdir(),
+                                    workspace="WS", old_ch=94)
+        cfg_set = chapter_core.Cfg(branch_root=tempfile.gettempdir(),
+                                   workspace="WS", old_ch=94, sim_p_num=3)
+        check(cfg_set.sim_p_num == 3, "an explicit worker count is honoured",
+              f"got {cfg_set.sim_p_num}")
+        check(cfg_auto.sim_p_num == chapter_core.default_worker_count(),
+              "no setting means the machine decides",
+              f"got {cfg_auto.sim_p_num}")
+
         # --- every workbook we save must be loaded formula-safe -------------
         # openpyxl writes a formula back without its cached value, and
         # coder_convert reads cached values - so a plain load -> edit -> save
