@@ -806,7 +806,8 @@ def get_svn_log_revisions(file_path, limit=60):
     try:
         result = subprocess.run(
             ["svn", "log", "-q", "-l", str(limit), os.path.basename(file_path)],
-            cwd=os.path.dirname(file_path), shell=True, capture_output=True, text=True, timeout=60
+            cwd=os.path.dirname(file_path), shell=True, capture_output=True, text=True, timeout=60,
+            stdin=subprocess.DEVNULL
         )
     except Exception as e:
         log(f"svn log failed to run: {e}")
@@ -827,7 +828,7 @@ def svn_cat_revision(file_path, revision):
         result = subprocess.run(
             ["svn", "cat", "-r", str(revision), os.path.basename(file_path)],
             cwd=os.path.dirname(file_path), shell=True, capture_output=True, text=True,
-            timeout=30, encoding='utf-8', errors='ignore'
+            timeout=30, encoding='utf-8', errors='ignore', stdin=subprocess.DEVNULL
         )
     except Exception as e:
         log(f"svn cat -r {revision} failed to run: {e}")
@@ -847,7 +848,7 @@ def svn_cat_revision_bytes(file_path, revision):
         result = subprocess.run(
             ["svn", "cat", "-r", str(revision), os.path.basename(file_path)],
             cwd=os.path.dirname(file_path), shell=True, capture_output=True,
-            timeout=60
+            timeout=60, stdin=subprocess.DEVNULL
         )
     except Exception as e:
         log(f"svn cat -r {revision} (binary) failed to run: {e}")
@@ -885,7 +886,8 @@ def get_svn_revisions_in_date_range(file_path, center_date_str, days_before=45, 
     try:
         result = subprocess.run(
             ["svn", "log", "-q", "-r", f"{{{range_start}}}:{{{range_end}}}", os.path.basename(file_path)],
-            cwd=os.path.dirname(file_path), shell=True, capture_output=True, text=True, timeout=60
+            cwd=os.path.dirname(file_path), shell=True, capture_output=True, text=True, timeout=60,
+            stdin=subprocess.DEVNULL
         )
     except Exception as e:
         log(f"svn log (date range) failed to run: {e}")
@@ -1200,7 +1202,7 @@ def event_ever_registered_in_convert_json(icon_or_item_path, evt_lower, hint_dat
             result = subprocess.run(
                 ["svn", "cat", "-r", str(rev), os.path.basename(convert_json_path)],
                 cwd=os.path.dirname(convert_json_path), shell=True, capture_output=True, text=True,
-                timeout=30, encoding='utf-8', errors='ignore'
+                timeout=30, encoding='utf-8', errors='ignore', stdin=subprocess.DEVNULL
             )
         except Exception:
             return True

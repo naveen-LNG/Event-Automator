@@ -643,6 +643,41 @@ def main():
             finally:
                 chapter_core._SIM_PUMP_GRACE_S = grace_before
                 shutil.rmtree(simd, ignore_errors=True)
+            # A simulator batch that ends in "pause" must not stop the step.
+            # Under the app the backend's stdin is a pipe Electron holds open
+            # and never writes to, so "pause" waits for a keypress that can
+            # never arrive: the batch never exits and waiting on it blocks
+            # forever, even though the simulation has finished. Reproduced by
+            # handing the child an open pipe; DEVNULL is what fixes it.
+            simd2 = Path(tempfile.mkdtemp(prefix="sim_pause_test_"))
+            try:
+                (simd2 / "run_conf_2.json").write_text(
+                    _json_mod.dumps({"levels": [], "dir_name": "", "repeat_num": 1,
+                                     "p_num": 1, "tags": [""]}), encoding="utf-8")
+                (simd2 / "start_run_2.bat").write_text(
+                    "@echo off\r\necho done! used time =  1.0\r\n@pause\r\n",
+                    encoding="utf-8")
+
+                class PauseCfg:
+                    new_ch = 95
+                    sim_repeat = 1
+                    sim_p_num = 1
+                    sim_tag = ""
+                    sim_path = simd2
+
+                seen3 = []
+                t1 = time.monotonic()
+                chapter_core.run_step9_simulation(
+                    PauseCfg(), lambda m, lvl=None: seen3.append(str(m)))
+                took = time.monotonic() - t1
+                check(took < 30,
+                      "a simulator batch ending in pause does not block the step",
+                      f"took {took:.1f}s")
+                check(any("Simulation completed" in m for m in seen3),
+                      "and the step still reports completion")
+            finally:
+                shutil.rmtree(simd2, ignore_errors=True)
+
 
         # --- map blocks from another chapter must not be consumed -----------
         # A Map Builder scene often still holds blocks from the previous

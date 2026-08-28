@@ -2124,6 +2124,7 @@ def run_step2_upload(cfg: AppConfig, log):
         cmd = ["svn"] + args
         log(f"  svn {' '.join(args[:2])}…")
         r = subprocess.run(cmd, capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL,
                            encoding="utf-8", errors="replace", timeout=60)
         if r.stdout.strip(): log(r.stdout.strip())
         if r.stderr.strip(): log(f"  [svn] {r.stderr.strip()}")
@@ -2584,6 +2585,12 @@ def run_step9_simulation(cfg: AppConfig, log):
     log("Launching simulation (this may take several minutes) …")
     proc = subprocess.Popen(
         str(bat), shell=True, cwd=str(sim_dir),
+        # stdin MUST be pinned. Under the app the backend's own stdin is a pipe
+        # Electron holds open and never writes to, so a batch file ending in
+        # "pause" waits for a keypress that can never arrive - the batch never
+        # exits, and waiting on the process blocks forever even though the
+        # simulation itself has finished and printed "done!".
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, encoding="utf-8", errors="replace"
     )
