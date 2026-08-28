@@ -18,6 +18,7 @@ import shutil
 import os
 import sys
 import time
+import types as _types
 import tempfile
 from pathlib import Path
 
@@ -852,6 +853,49 @@ def main():
               "; ".join(offenders[:3]))
         check("from xlsx_safe import load_workbook_frozen" in src,
               "chapter_core imports the formula-safe loader")
+
+    # ── Step 10 reads the CSV the simulator actually writes ─────────────────
+    # merge_data.merge() emits summary_analysis_<dir>.csv. Step 10 globbed for
+    # *.xlsx and so failed on every real run with "No xlsx files in ...".
+    print("\n--- step 10: level balancing reads merge_data's CSV ---")
+    with tempfile.TemporaryDirectory() as td:
+        sim = Path(td)
+        out = sim / "Output"
+        for n in ("Chapter_95_20260828_101010_0",
+                  "Chapter_95_20260828_151817_0",
+                  "Chapter_950_20260828_999999_0"):   # must not match Chapter_95
+            (out / n).mkdir(parents=True)
+        run = out / "Chapter_95_20260828_151817_0"
+        hdr = "关卡ID,机器人ID,局数,平均回合,平均时长,通关率,平均星级,一星率,三星率\n"
+        body = ("95001,1001,500,12.4,88.1,0.86,2.1,0.10,0.42\n"
+                "95002,1001,500,15.0,99.0,0.04,1.2,0.60,0.05\n"
+                "\n")                                  # merge_data's trailing newline
+        (run / "summary_analysis_Chapter_95_20260828_151817_0.csv").write_text(
+            hdr + body, encoding="utf-8-sig")
+        # sorts first alphabetically, and must still be skipped
+        (run / "summary_analysis_extra_Chapter_95_20260828_151817_0.csv").write_text(
+            hdr + "95001,1001,0,0,0,0,0,0,0\n", encoding="utf-8-sig")
+
+        msgs = []
+        cfg10 = _types.SimpleNamespace(sim_path=sim, new_ch=95)
+        bal = chapter_core.run_step10_level_balancing(
+            cfg10, lambda m, lvl="INFO": msgs.append(m))
+        joined = "\n".join(msgs)
+        check("Chapter_95_20260828_151817_0" in joined and "Chapter_950" not in joined,
+              "step 10 picks the newest Chapter_95 run, not Chapter_950", joined)
+        check("summary_analysis_extra" not in joined,
+              "step 10 skips the _extra summary file", joined)
+        wsb = openpyxl.load_workbook(bal).active
+        got = [[c.value for c in r] for r in wsb.iter_rows(min_row=2, max_row=3)]
+        check(got[0][0] == 95001 and isinstance(got[0][0], int),
+              "level id stays an int (not 95001.0)", repr(got[0][0]))
+        check(got[0][1] == 0.42 and got[0][2] == 0.86,
+              "3-star and win rate are read as numbers from the right columns",
+              repr(got[0]))
+        check(got[1][1] == 0.05 and got[1][2] == 0.04,
+              "second row reads correctly too", repr(got[1]))
+        check("2 levels processed" in joined,
+              "the blank trailing CSV line is not counted as a level", joined)
 
     print("")
     if FAILS:

@@ -22,6 +22,7 @@ Chapter numbers appear in three forms and every one of them has to be replaced:
 import ast
 import collections
 import glob
+import csv
 import json
 import os
 import re
@@ -1397,32 +1398,59 @@ def run_step6_asset_config(cfg: AppConfig, log):
     log("  ✓ icon.xlsx saved")
     log("  ✓ All asset config completed")
 
+def _csv_numbers(row):
+    """CSV cells arrive as strings; the balance sheet needs real numbers so the
+    percentage format and the =B/C column mean anything. Anything that is not a
+    number (or is an empty cell) is passed through untouched."""
+    out = []
+    for cell in row:
+        t = (cell or "").strip()
+        try:
+            out.append(float(t[:-1]) / 100 if t.endswith("%") else float(t))
+        except ValueError:
+            out.append(t or None)
+    return out
+
+
 def run_step10_level_balancing(cfg: AppConfig, log):
     """Build level balancing workbook from simulation output."""
     out_dir = cfg.sim_path / "Output"
     if not out_dir.exists():
         raise FileNotFoundError(f"Output dir not found: {out_dir}")
 
+    # The folder is "<dir_name>_<YYYYmmdd>_<HHMMSS>_<mode>" (run_card_2.py), so a
+    # reverse sort is newest-first. Anchor on the "_" after the chapter number so
+    # Chapter_95 does not also match a Chapter_950 run.
     ch_name = f"Chapter_{cfg.new_ch}"
-    ch_folders = sorted([d for d in out_dir.iterdir() if d.is_dir() and ch_name in d.name], reverse=True)
+    ch_folders = sorted([d for d in out_dir.iterdir()
+                         if d.is_dir() and d.name.startswith(ch_name + "_")], reverse=True)
     if not ch_folders:
         raise FileNotFoundError(f"No {ch_name} output folder found in {out_dir}")
     run_folder = ch_folders[0]
     log(f"Reading from: {run_folder.name}")
 
-    # Find summary analysis file
-    summary_files = list(run_folder.glob("summary_analysis*.xlsx")) + list(run_folder.glob("*.xlsx"))
+    # merge_data.merge() writes summary_analysis_<dir_name>.csv - a CSV, never an
+    # xlsx. This used to glob for *.xlsx and so failed on every real run with
+    # "No xlsx files in ...". merge_extra() writes a second file alongside it
+    # (per-level extras, no win/3-star columns); that one is not what we want.
+    summary_files = [f for f in sorted(run_folder.glob("summary_analysis_*.csv"))
+                     if "summary_analysis_extra" not in f.name]
     if not summary_files:
-        raise FileNotFoundError(f"No xlsx files in {run_folder}")
+        raise FileNotFoundError(
+            f"No summary_analysis_*.csv in {run_folder}\n\n"
+            f"The simulation writes that file at the very end (merge_data.merge). "
+            f"If it is missing, the run produced no per-level analysis2 output - "
+            f"check {run_folder} for level subfolders and error logs."
+        )
     src_path = summary_files[0]
     log(f"Source file: {src_path.name}")
 
-    wb_src = openpyxl.load_workbook(str(src_path), read_only=True, data_only=True)
-    ws_src = wb_src.active
-    all_rows = list(ws_src.iter_rows(values_only=True))
-    wb_src.close()
-    src_head = [str(h or "") for h in (all_rows[0] if all_rows else [])]
-    src_data = all_rows[1:]
+    # utf-8-sig: merge_data writes the BOM, and it would otherwise glue itself to
+    # the first header cell and break the 关卡ID match below.
+    with open(src_path, newline="", encoding="utf-8-sig") as fh:
+        all_rows = list(csv.reader(fh))
+    src_head = [str(h or "").strip() for h in (all_rows[0] if all_rows else [])]
+    src_data = [_csv_numbers(r) for r in all_rows[1:]]
 
     # summary_analysis columns are "关卡ID,机器人ID," + the simulator's own
     # analysis2 header, i.e. E=通关率 (win rate) and H=三星率 (3-star rate).
@@ -1455,9 +1483,11 @@ def run_step10_level_balancing(cfg: AppConfig, log):
 
     n_rows = 0
     for row in src_data:
-        if row[0] is None:
+        if not row or row[0] is None:      # merge_data leaves a trailing newline
             continue
-        level_id = row[0]
+        # _csv_numbers floats everything; a level id must stay an int or it
+        # renders as 95001.0 and stops matching anything downstream.
+        level_id = int(row[0]) if isinstance(row[0], float) and row[0].is_integer() else row[0]
         star3_raw = row[i_star3] if len(row) > i_star3 else None
         win_rate  = row[i_win] if len(row) > i_win else None
         ws.cell(row=n_rows + 2, column=1, value=level_id)
