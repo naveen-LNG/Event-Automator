@@ -34,6 +34,8 @@ from datetime import datetime as _datetime, timedelta as _timedelta
 from pathlib import Path
 
 import openpyxl
+
+from xlsx_safe import load_workbook_frozen
 from openpyxl.styles import PatternFill, Font
 from openpyxl.formatting.rule import CellIsRule
 
@@ -875,7 +877,7 @@ def run_step4_reward_config(cfg: AppConfig, log):
     if not chest_path.exists():
         raise FileNotFoundError(f"chest.xlsx not found: {chest_path}")
     log(f"Opening chest.xlsx …")
-    wb = openpyxl.load_workbook(str(chest_path))
+    wb = load_workbook_frozen(str(chest_path))
 
     ws_cond = wb["chest_conditions"]
     n = _insert_rows_by_prefix(
@@ -927,7 +929,7 @@ def run_step4_reward_config(cfg: AppConfig, log):
             last_item_vals_ro = [c.value for c in row]
     wb2_ro.close()
 
-    wb2 = openpyxl.load_workbook(str(item_path))
+    wb2 = load_workbook_frozen(str(item_path))
     ws_item = wb2["item"]
     if last_item_vals_ro is not None:
         new_item = [_cell_replace(v, old_ch, new_ch, old_d, new_d) for v in last_item_vals_ro]
@@ -944,7 +946,7 @@ def run_step4_reward_config(cfg: AppConfig, log):
     if not store_path.exists():
         raise FileNotFoundError(f"store.xlsx not found: {store_path}")
     log("Opening store.xlsx …")
-    wb3 = openpyxl.load_workbook(str(store_path))
+    wb3 = load_workbook_frozen(str(store_path))
 
     for sheet_name in ["store_recharge", "store_package"]:
         ws_s = wb3[sheet_name]
@@ -977,7 +979,7 @@ def run_step4_reward_config(cfg: AppConfig, log):
     if not noti_path.exists():
         raise FileNotFoundError(f"notification.xlsx not found: {noti_path}")
     log("Opening notification.xlsx …")
-    wb4 = openpyxl.load_workbook(str(noti_path))
+    wb4 = load_workbook_frozen(str(noti_path))
     ws_noti = wb4["server_notification"]
 
     # Keep row numbers: the previous chapter's switch has to be turned off in
@@ -1135,7 +1137,7 @@ def run_step6_asset_config(cfg: AppConfig, log):
     if not pvc_path.exists():
         raise FileNotFoundError(f"pve_chapter.xlsx not found: {pvc_path}")
     log("Opening pve_chapter.xlsx …")
-    wb3 = openpyxl.load_workbook(str(pvc_path))
+    wb3 = load_workbook_frozen(str(pvc_path))
 
     # Guard: refuse to run if the new chapter already exists (partial prior run).
     # Detect by the internal map id in col A (set even by the old broken code) or
@@ -1282,7 +1284,7 @@ def run_step6_asset_config(cfg: AppConfig, log):
     if not ar_path.exists():
         raise FileNotFoundError(f"asset_ref.xlsx not found: {ar_path}")
     log("Opening asset_ref.xlsx (key_asset sheet) …")
-    wb = openpyxl.load_workbook(str(ar_path))
+    wb = load_workbook_frozen(str(ar_path))
     ws = wb["key_asset"]
     ka = rows_of(ws, 3)
 
@@ -1334,7 +1336,7 @@ def run_step6_asset_config(cfg: AppConfig, log):
     if not icon_path.exists():
         raise FileNotFoundError(f"icon.xlsx not found: {icon_path}")
     log("Opening icon.xlsx (icon_chapter sheet) …")
-    wb2 = openpyxl.load_workbook(str(icon_path))
+    wb2 = load_workbook_frozen(str(icon_path))
     ws_icon = wb2["icon_chapter"]
     ic = rows_of(ws_icon, 5)
     if any(v[1] and ("场景" + cn_new) in str(v[1]) for rn, v in ic):
@@ -2385,7 +2387,7 @@ def run_step7_map_builder(cfg: AppConfig, scene_file: str, log):
         tmp_rows = list(wb_tmp["map_data"].iter_rows(min_row=2, values_only=True))
         wb_tmp.close()
 
-        wb_pvc = openpyxl.load_workbook(str(pvc_path))
+        wb_pvc = load_workbook_frozen(str(pvc_path))
         ws_map = wb_pvc["map"]
         map_rows = list(ws_map.iter_rows(min_row=2, values_only=True))
 

@@ -585,6 +585,32 @@ def main():
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
+        # --- every workbook we save must be loaded formula-safe -------------
+        # openpyxl writes a formula back without its cached value, and
+        # coder_convert reads cached values - so a plain load -> edit -> save
+        # blanks every formula cell. That is what wiped 96 aliases from
+        # chest_conditions and made conversion fail with a check-ref error
+        # pointing at 章节2星165, a row nothing to do with the chapter.
+        # xlsx_safe.load_workbook_frozen exists for this; this guards against
+        # a raw load_workbook creeping back into a save path.
+        import re as _re
+        src = Path(chapter_core.__file__).read_text(encoding="utf-8")
+        src_lines = src.split("\n")
+        offenders = []
+        for i, line in enumerate(src_lines):
+            m = _re.search(r"(\w+)\s*=\s*openpyxl\.load_workbook\(", line)
+            if not m:
+                continue
+            var = m.group(1)
+            window = src_lines[i:i + 160]
+            if any(f"{var}.save(" in w for w in window):
+                offenders.append(f"line {i+1}: {line.strip()[:70]}")
+        check(not offenders,
+              "no workbook is loaded with raw openpyxl and then saved",
+              "; ".join(offenders[:3]))
+        check("from xlsx_safe import load_workbook_frozen" in src,
+              "chapter_core imports the formula-safe loader")
+
     print("")
     if FAILS:
         print(f"{len(FAILS)} CHECK(S) FAILED")
