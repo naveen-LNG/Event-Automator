@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -846,22 +846,36 @@ app.on('before-quit', () => {
   } catch { /* never block the quit */ }
 });
 
+// What counts as a One-Pager, and how a name clash is resolved, both live in
+// lib/onepager.js - the upload starts with a native dialog no driver can click,
+// so the rules downstream of it were only checkable by reading them. Moved out
+// so tests/onepager_test.js can call them directly.
+const onePager = require('./lib/onepager');
+
 // Every One-Pager already sitting in the shared folder for this event type,
 // whichever machine wrote it. This is what lets someone who ALREADY has a
 // signed-off One-Pager go straight to the Art Requirement step instead of being
 // forced to generate throwaway themes first — including a One-Pager a colleague
 // finalized, since the folder is shared.
 //
-// .md is what this tool writes; .txt is accepted because hand-written briefs
-// turn up as text. A .pdf is listed but flagged unreadable — the real shipped
-// One-Pagers are PDFs and the user should see them here rather than wonder why
-// their event is missing, even though we cannot pass one to the model.
+// All four formats are usable. .md and .txt are read directly; .docx and .pdf
+// are converted to Markdown on first use. That matters because the real shipped
+// One-Pagers ARE PDFs — listing them as unusable was the wrong answer to the
+// right observation that they belong in this list.
+//
+// A converted sibling is hidden rather than listed: "Merge2608 One-Pager.pdf"
+// and its generated "Merge2608 One-Pager.md" are one document, and showing both
+// invites picking the stale one after the original has been edited.
 ipcMain.handle('ideation:listOnePagers', async (evt, { eventType }) => {
   try {
     const dir = path.join(ideationEventsRoot(), eventType, 'One-Pager Ideation');
     if (!fs.existsSync(dir)) return { success: true, docs: [] };
-    const docs = fs.readdirSync(dir)
-      .filter(n => /\.(md|txt|pdf)$/i.test(n))
+    const all = fs.readdirSync(dir);
+    const generated = new Set(
+      all.filter(n => onePager.kindOf(n).convertible)
+         .map(n => path.basename(onePager.markdownSiblingOf(n))));
+    const docs = all
+      .filter(n => onePager.kindOf(n).storable && !generated.has(n))
       .map(n => {
         const p = path.join(dir, n);
         let st; try { st = fs.statSync(p); } catch { return null; }
@@ -871,12 +885,79 @@ ipcMain.handle('ideation:listOnePagers', async (evt, { eventType }) => {
           path: p,
           modified: st.mtimeMs,
           bytes: st.size,
-          readable: !/\.pdf$/i.test(n),
+          ...onePager.kindOf(n),
         };
       })
       .filter(Boolean)
       .sort((a, b) => b.modified - a.modified);
     return { success: true, docs };
+  } catch (e) {
+    return { success: false, output: e.message };
+  }
+});
+
+// Copy a One-Pager the designer already has into the shared folder for this
+// event type. Listing only what was already filed left an obvious hole: a
+// One-Pager that arrived by email, or sits on a desktop, had to be moved by hand
+// into a path most people would have to be told - and being told a path is the
+// step where it lands in the wrong folder.
+//
+// Word and PDF are accepted on equal terms with Markdown: doc_convert.py turns
+// either into Markdown on first use, so what the designer has is what they can
+// upload. Only the conversion is deferred - see ideation:readOnePager.
+ipcMain.handle('ideation:uploadOnePager', async (evt, { eventType }) => {
+  try {
+    if (!eventType) return { success: false, output: 'Pick an event type first.' };
+    const win = BrowserWindow.getFocusedWindow();
+    const result = await dialog.showOpenDialog(win, {
+      title: `Choose the ${eventType} One-Pager`,
+      properties: ['openFile'],
+      filters: [
+        { name: 'One-Pager (Word, PDF, Markdown, text)', extensions: onePager.STORABLE },
+        { name: 'All files', extensions: ['*'] },
+      ],
+    });
+    if (result.canceled || !result.filePaths.length) return { success: false, canceled: true };
+
+    const src = result.filePaths[0];
+    const kind = onePager.kindOf(src);
+    if (!kind.storable) {
+      return { success: false, output: `A .${kind.ext} file cannot be used as a One-Pager. Choose a Word, PDF, Markdown or text file.` };
+    }
+    const ext = kind.ext;
+
+    const dir = path.join(ideationEventsRoot(), eventType, 'One-Pager Ideation');
+    fs.mkdirSync(dir, { recursive: true });
+    let dest = path.join(dir, path.basename(src));
+
+    // Never overwrite a colleague's One-Pager without being told to. The folder
+    // is shared, so the file already there may not be one this machine put there.
+    if (fs.existsSync(dest)) {
+      const ans = await dialog.showMessageBox(win, {
+        type: 'question',
+        buttons: ['Replace', 'Keep both', 'Cancel'],
+        defaultId: 1,
+        cancelId: 2,
+        title: 'A One-Pager with that name is already filed',
+        message: `"${path.basename(src)}" already exists in the ${eventType} One-Pager folder.`,
+        detail: 'The folder is shared, so this may be a colleague\'s. "Keep both" files yours alongside it.',
+      });
+      if (ans.response === 2) return { success: false, canceled: true };
+      if (ans.response === 1) {
+        const free = onePager.nextFreeName(
+          path.basename(src, path.extname(src)), ext,
+          (n) => fs.existsSync(path.join(dir, n)));
+        dest = path.join(dir, free);
+      }
+    }
+
+    fs.copyFileSync(src, dest);
+    // Conversion is left to the read step rather than done here, so there is one
+    // conversion path instead of two and a PDF already filed by someone else
+    // behaves exactly like one just uploaded.
+    return { success: true, name: path.basename(dest), path: dest,
+             readable: kind.readable, convertible: kind.convertible,
+             usable: kind.usable, ext };
   } catch (e) {
     return { success: false, output: e.message };
   }
@@ -891,12 +972,57 @@ ipcMain.handle('ideation:readOnePager', async (evt, { docPath }) => {
     if (!resolved.startsWith(path.resolve(root) + path.sep)) {
       return { success: false, output: 'That file is outside the ideation data folder.' };
     }
-    if (/\.pdf$/i.test(resolved)) {
-      return { success: false, output: 'PDF One-Pagers cannot be read by this tool yet. Save or export it as Markdown or text first.' };
+    const kind = onePager.kindOf(resolved);
+    if (!kind.usable) {
+      return { success: false, output: `A .${kind.ext} file is not a One-Pager format. `
+        + 'Use Markdown, text, Word or PDF.' };
     }
-    const text = fs.readFileSync(resolved, 'utf8');
+
+    // A .docx or .pdf is converted to Markdown first, beside the original. The
+    // result is cached: converting again only happens when the source has been
+    // edited since, which is what makes re-uploading a corrected brief work
+    // without anyone having to know a cache exists.
+    let toRead = resolved;
+    let converted = null;
+    let convertStats = null;
+    if (kind.convertible) {
+      const md = onePager.markdownSiblingOf(resolved);
+      const fresh = fs.existsSync(md)
+        && fs.statSync(md).mtimeMs >= fs.statSync(resolved).mtimeMs;
+      if (!fresh) {
+        const tmp = tempJsonFile('doc_convert');
+        fs.writeFileSync(tmp, JSON.stringify({ src: resolved, dest: md }), 'utf-8');
+        const res = await runPythonAndScrub('doc_convert', tmp);
+        if (!res.success) return { success: false, output: res.output };
+        try {
+          const parsed = JSON.parse(res.stdout);
+          if (parsed.error) return { success: false, output: parsed.error };
+          // What happened to the images, so the renderer can say so. A brief
+          // whose content sits in pictures is the case this whole path exists
+          // for, and silence about it is what the first version got wrong.
+          convertStats = {
+            images: parsed.images || 0,
+            ocrImages: parsed.ocr_images || 0,
+            ocrLines: parsed.ocr_lines || 0,
+            skipped: parsed.skipped || 0,
+          };
+        } catch { /* a non-JSON line is fine as long as the file landed */ }
+        if (!fs.existsSync(md)) {
+          return { success: false, output: `Converting ${path.basename(resolved)} produced nothing.` };
+        }
+        converted = path.basename(md);
+      }
+      toRead = md;
+    }
+
+    const text = fs.readFileSync(toRead, 'utf8');
     if (!text.trim()) return { success: false, output: 'That One-Pager is empty.' };
-    return { success: true, text, name: path.basename(resolved) };
+    // `converted` is the .md just written, so the renderer can say what happened
+    // rather than leaving a Word file to look as if it were read directly.
+    // docPath is the file actually READ - the generated .md for a Word or PDF
+    // brief - because that is where its extracted images live.
+    return { success: true, text, name: path.basename(resolved), docPath: toRead,
+             converted, convertStats };
   } catch (e) {
     return { success: false, output: e.message };
   }
@@ -995,7 +1121,7 @@ Generated by the Event Automator Ideation tab (Claude API). Treat as a first dra
 // same real-template-verified structure backs drafts, regenerations, and
 // the final save — no second markdown template to keep in sync in JS. ----
 
-ipcMain.handle('artreq:generate', async (evt, { eventType, ideationTheme, ideationDocText, ideationDocName, variationCount }) => {
+ipcMain.handle('artreq:generate', async (evt, { eventType, ideationTheme, ideationDocText, ideationDocName, ideationDocPath, variationCount }) => {
   const cfg = loadConfig();
   const { provider } = resolveIdeationProvider(cfg);
   if (!provider) {
@@ -1010,6 +1136,8 @@ ipcMain.handle('artreq:generate', async (evt, { eventType, ideationTheme, ideati
     // The backend takes either.
     ideation_doc_text: ideationDocText || '',
     ideation_doc_name: ideationDocName || '',
+    // Lets the backend find the brief's extracted reference art and attach it.
+    ideation_doc_path: ideationDocPath || '',
     variation_count: count,
     provider,
     author_id: cfg.authorId,
@@ -1064,6 +1192,131 @@ ipcMain.handle('artreq:saveFinal', async (evt, { eventType, refName, variation }
   } catch (e) {
     return { success: false, output: `Could not parse save result: ${e.message}` };
   }
+});
+
+// Renders the variation through the same Python writer the draft and final
+// files use, so what a reviewer reads on screen is the document that lands on
+// disk - not a second, drifting reimplementation of it in the renderer.
+ipcMain.handle('artreq:preview', async (evt, { eventType, variation, isFinal }) => {
+  const cfg = loadConfig();
+  const tmp = tempJsonFile('artreq_preview');
+  fs.writeFileSync(tmp, JSON.stringify({
+    event_type: eventType,
+    variation,
+    is_final: !!isFinal,
+    author_name: cfg.authorName,
+    events_root: ideationEventsRoot()
+  }), 'utf-8');
+  return parseJsonResult(await runPythonAndScrub('artreq_preview', tmp), 'document preview');
+});
+
+// ---- IPC: Art Requirement documents already on disk ----
+// The tab used to show only what the current session generated, which meant a
+// document finalised yesterday - or one written straight into the shared folder,
+// or filed there by a colleague on another machine - was invisible to everyone,
+// including the person who put it there. Listing the folder is what makes this a
+// view of the event's art requirements rather than a view of this session's
+// scratch work.
+//
+// Drafts are listed alongside finals, labelled, because "which of these is the
+// current one" is answered by the label and the date, not by the reader
+// remembering which subfolder means what.
+
+const ARTREQ_DOC_EXT = ['.md', '.docx', '.pdf'];
+
+function artReqDirs(eventType) {
+  const base = path.join(ideationEventsRoot(), eventType, 'Art Requirements');
+  return [{ dir: base, folder: '' }, { dir: path.join(base, 'Drafts'), folder: 'Drafts' }];
+}
+
+// A path arriving from the renderer is not a licence to touch anywhere on disk,
+// the same rule ideation:readOnePager follows. Resolve first, then check, so
+// '..' segments cannot walk out of the folder.
+function insideArtReq(docPath, eventType) {
+  if (!docPath || !eventType) return null;
+  const base = path.resolve(path.join(ideationEventsRoot(), eventType, 'Art Requirements'));
+  const resolved = path.resolve(docPath);
+  return resolved.startsWith(base + path.sep) ? resolved : null;
+}
+
+ipcMain.handle('artreq:listDocs', async (evt, { eventType }) => {
+  try {
+    if (!eventType) return { success: true, docs: [] };
+    const docs = [];
+    for (const { dir, folder } of artReqDirs(eventType)) {
+      if (!fs.existsSync(dir)) continue;
+      for (const name of fs.readdirSync(dir)) {
+        const ext = path.extname(name).toLowerCase();
+        if (!ARTREQ_DOC_EXT.includes(ext)) continue;
+        const p = path.join(dir, name);
+        let st;
+        try { st = fs.statSync(p); } catch { continue; }
+        if (!st.isFile()) continue;
+        const isMd = ext === '.md';
+        docs.push({
+          name, path: p, folder, ext: ext.slice(1),
+          modified: st.mtimeMs, bytes: st.size,
+          // Only Markdown can be reopened or exported. A .docx or .pdf here is
+          // a finished artefact - very likely one the production team produced -
+          // so it is listed for context and otherwise left alone.
+          readable: isMd,
+          docxPath: isMd && fs.existsSync(p.slice(0, -3) + '.docx')
+            ? p.slice(0, -3) + '.docx' : null,
+        });
+      }
+    }
+    docs.sort((a, b) => b.modified - a.modified);
+    return { success: true, docs };
+  } catch (e) {
+    return { success: false, output: e.message };
+  }
+});
+
+ipcMain.handle('artreq:readDoc', async (evt, { eventType, docPath }) => {
+  try {
+    const resolved = insideArtReq(docPath, eventType);
+    if (!resolved) return { success: false, output: 'That file is outside the Art Requirements folder.' };
+    if (path.extname(resolved).toLowerCase() !== '.md') {
+      return { success: false, output: 'Only a Markdown document can be opened here.' };
+    }
+    return { success: true, data: { markdown: fs.readFileSync(resolved, 'utf-8') } };
+  } catch (e) {
+    return { success: false, output: e.message };
+  }
+});
+
+// Word export. The production team marks these up and sends them back, and they
+// do that in Word - so a document that only exists as Markdown is a document
+// they cannot review. doc_convert.markdown_to_docx builds the .docx from the
+// file on disk, which means what gets exported is exactly what was saved, not a
+// second rendering of the variation held in the renderer.
+ipcMain.handle('artreq:exportDocx', async (evt, { eventType, docPath }) => {
+  try {
+    const resolved = insideArtReq(docPath, eventType);
+    if (!resolved) return { success: false, output: 'That file is outside the Art Requirements folder.' };
+    if (path.extname(resolved).toLowerCase() !== '.md') {
+      return { success: false, output: 'Only a Markdown document can be exported to Word.' };
+    }
+    if (!fs.existsSync(resolved)) {
+      return { success: false, output: 'That document is no longer on disk. Save it first.' };
+    }
+    const tmp = tempJsonFile('md_to_docx');
+    fs.writeFileSync(tmp, JSON.stringify({ src: resolved }), 'utf-8');
+    return parseJsonResult(await runPythonAndScrub('md_to_docx', tmp), 'Word export');
+  } catch (e) {
+    return { success: false, output: e.message };
+  }
+});
+
+// Reveal the exported file in Explorer. Telling someone a path and leaving them
+// to find it is where a shared network folder turns into "I can't see it".
+ipcMain.handle('artreq:revealDoc', async (evt, { eventType, docPath }) => {
+  const resolved = insideArtReq(docPath, eventType);
+  if (!resolved || !fs.existsSync(resolved)) {
+    return { success: false, output: 'That file is not in the Art Requirements folder.' };
+  }
+  shell.showItemInFolder(resolved);
+  return { success: true };
 });
 
 // ---- IPC: shared feedback thread + lesson management ----

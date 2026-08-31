@@ -448,8 +448,25 @@ def _client(api_key):
     return anthropic.Anthropic(api_key=api_key)
 
 
-def _call_claude(api_key, system_prompt, user_message, schema, max_tokens):
+def _call_claude(api_key, system_prompt, user_message, schema, max_tokens, images=None):
+    """`images` is doc_convert.reference_images() output, or None.
+
+    Attached BEFORE the text, which is what Anthropic's own guidance asks for:
+    the model reads the pictures and then the instruction about them, rather than
+    being told to consider images it has not seen yet. Passing None keeps the
+    plain-string message shape the theme generator has always used, so that path
+    is untouched by this.
+    """
     client = _client(api_key)
+    if images:
+        content = [{"type": "image",
+                    "source": {"type": "base64",
+                               "media_type": im["media_type"],
+                               "data": im["data"]}}
+                   for im in images]
+        content.append({"type": "text", "text": user_message})
+    else:
+        content = user_message
     # Streamed internally (still one buffered JSON line on our own stdout -
     # no change to the Electron side): theme_count is now user-controlled,
     # so max_tokens can run well past the ~16K non-streaming SDK guard.
@@ -457,14 +474,55 @@ def _call_claude(api_key, system_prompt, user_message, schema, max_tokens):
         model=MODEL,
         max_tokens=max_tokens,
         system=system_prompt,
-        messages=[{"role": "user", "content": user_message}],
+        messages=[{"role": "user", "content": content}],
         output_config={"format": {"type": "json_schema", "schema": schema}},
     ) as stream:
         response = stream.get_final_message()
     return _extract_json(response)
 
 
-def _call_ollama(base_url, model, system_prompt, user_message, schema):
+def _ollama_supports_vision(base_url, model):
+    """Ollama hard-rejects the whole request with HTTP 400 ("Multimodal data
+    provided, but model does not support multimodal requests") when `images`
+    is attached to a message for a model without vision support - verified
+    against a real server. It does NOT silently ignore them the way the
+    original comment on _call_ollama assumed. Check /api/tags capabilities
+    before ever attaching images, so a caller can drop them (and the prompt
+    text that references them) up front instead of finding out from a
+    failed generation. Fails closed (returns False) on any lookup problem -
+    better to silently skip images than crash a generation over a
+    reachability check."""
+    import urllib.request
+
+    if not base_url:
+        return False
+    try:
+        with urllib.request.urlopen(base_url.rstrip("/") + "/api/tags", timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return False
+    for m in data.get("models", []):
+        if model in (m.get("name"), m.get("model")):
+            return "vision" in (m.get("capabilities") or [])
+    return False
+
+
+# Pessimistic on purpose: the studio box measures 10.4 generated tokens/sec on
+# qwen3:32b, so budgeting 6 leaves room for a server someone else is also using.
+OLLAMA_TOKENS_PER_SEC = 6.0
+OLLAMA_TIMEOUT_FLOOR = 600          # what it was fixed at, kept as the minimum
+OLLAMA_TIMEOUT_CEILING = 3600
+OLLAMA_PROMPT_ALLOWANCE = 300       # prompt evaluation and queueing
+
+
+def ollama_timeout_for(expected_output_tokens):
+    """Seconds to allow for a request expected to emit this many tokens."""
+    budget = expected_output_tokens / OLLAMA_TOKENS_PER_SEC + OLLAMA_PROMPT_ALLOWANCE
+    return int(max(OLLAMA_TIMEOUT_FLOOR, min(OLLAMA_TIMEOUT_CEILING, budget)))
+
+
+def _call_ollama(base_url, model, system_prompt, user_message, schema, images=None,
+                 timeout=OLLAMA_TIMEOUT_FLOOR):
     """Local fallback for when no Anthropic key is configured - a shared
     Ollama server (e.g. on the office LAN) running a model like qwen3:32b.
     Raw HTTP via stdlib: Ollama's API is a single unauthenticated JSON POST,
@@ -472,7 +530,13 @@ def _call_ollama(base_url, model, system_prompt, user_message, schema):
     to keep working on the embeddable interpreter) buys nothing over that.
     Ollama's `format` field accepts the same JSON Schema Claude's
     output_config.format does, so the schemas are shared as-is between the
-    two providers - no fallback-specific schema to maintain."""
+    two providers - no fallback-specific schema to maintain.
+
+    Callers passing `images` MUST check _ollama_supports_vision() first (and
+    drop any image-referencing prompt text to match) - this function does not
+    check for them, since by the time `user_message` arrives here it may
+    already contain text referencing the attached images, and dropping them
+    at this layer would leave that text pointing at nothing."""
     import urllib.request
     import urllib.error
 
@@ -480,11 +544,18 @@ def _call_ollama(base_url, model, system_prompt, user_message, schema):
         raise RuntimeError("No Ollama Base URL configured. Add one in Settings.")
 
     url = base_url.rstrip("/") + "/api/chat"
+    user_msg = {"role": "user", "content": user_message}
+    if images:
+        # Ollama takes base64 images on the message itself. Only a vision model
+        # does anything with them, and the configured fallback is usually a text
+        # model like qwen3:32b - which ignores them rather than failing, so this
+        # is safe to send and the caller reports what was actually attached.
+        user_msg["images"] = [im["data"] for im in images]
     body = json.dumps({
         "model": model,
         "messages": [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message},
+            user_msg,
         ],
         "format": schema,
         "stream": False,
@@ -493,13 +564,34 @@ def _call_ollama(base_url, model, system_prompt, user_message, schema):
 
     try:
         # Local network call, not billed per token - a generous timeout costs
-        # nothing and a 32B model on modest hardware can genuinely take minutes.
-        with urllib.request.urlopen(req, timeout=600) as resp:
+        # nothing and a 32B model on modest hardware genuinely takes tens of
+        # minutes for a document this size. See ollama_timeout_for: this is
+        # derived from the expected token count, not a fixed guess, because the
+        # fixed 600s could not succeed for an Art Requirement at any speed this
+        # hardware reaches.
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        # HTTPError is a URLError subclass - must be caught first. e.reason on
+        # a 400 is just the generic "Bad Request" phrase; the actual body is
+        # where Ollama explains *why* (most often: it couldn't compile the
+        # JSON Schema passed in `format` into a constrained-decoding grammar -
+        # e.g. numeric/array-size constraints or a keyword its schema-to-
+        # grammar step doesn't support). Surface that instead of the phrase.
+        try:
+            detail = e.read().decode("utf-8", errors="replace").strip()
+        except Exception:
+            detail = ""
+        raise RuntimeError(f"Ollama at {base_url} rejected the request (HTTP {e.code}): {detail or e.reason}")
     except urllib.error.URLError as e:
         raise RuntimeError(f"Could not reach Ollama at {base_url}: {e.reason if hasattr(e, 'reason') else e}")
     except TimeoutError:
-        raise RuntimeError(f"Ollama at {base_url} timed out (10 min). The model may be overloaded or too slow on this hardware.")
+        raise RuntimeError(
+            f"Ollama at {base_url} timed out after {timeout // 60} min. "
+            f"A 32B model generates roughly 10 tokens/sec, so a full Art "
+            f"Requirement takes 20-40 minutes; if this keeps happening the "
+            f"server is busy or the model is too large for it. Configure an "
+            f"Anthropic API key in Settings for a faster path.")
 
     content = (data.get("message") or {}).get("content", "")
     if not content:

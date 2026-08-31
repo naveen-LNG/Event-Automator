@@ -743,10 +743,11 @@
 
       <div class="stacked-card" id="ideation-existing-card" style="display:none;">
         <h2 class="card-title">Pick the One-Pager</h2>
-        <p class="settings-hint">Everything in this event type's <code>One-Pager Ideation</code> folder, newest first — including One-Pagers a colleague finalized, since the folder is shared. The Art Requirement is written from the document as it stands on disk, so any edits made after it was saved are carried through.</p>
+        <p class="settings-hint">Everything in this event type's <code>One-Pager Ideation</code> folder, newest first — including One-Pagers a colleague finalized, since the folder is shared. The Art Requirement is written from the document as it stands on disk, so any edits made after it was saved are carried through. If yours isn't filed here yet, upload it — Word, PDF, Markdown and text are all accepted. A Word or PDF brief is converted to Markdown on first use and the converted file is saved beside the original, so you can see exactly what the model was given and correct it by editing text.</p>
         <div id="ideation-onepager-list" class="onepager-list"></div>
         <div class="board-divider"></div>
-        <div class="execution-footer" style="justify-content:flex-end;">
+        <div class="execution-footer" style="justify-content:space-between;">
+          <button id="ideation-upload-onepager-btn" class="primary-btn" type="button">Upload a One-Pager…</button>
           <button id="ideation-refresh-onepagers-btn" class="secondary-btn small" type="button">Refresh list</button>
         </div>
       </div>
@@ -755,9 +756,20 @@
 
       <div id="ideation-results"></div>
 
+      <div id="artreq-docs-card" class="stacked-card" style="display:none;">
+        <h2 class="card-title">Art Requirement documents on file</h2>
+        <p class="settings-hint">Everything in this event type's <code>Art Requirements</code> folder, newest first — finals, drafts, and anything a colleague filed from another machine, since the folder is shared. Open one to read it here, or export it to Word so the production team can mark it up and send it back. Word and PDF files already in the folder are listed for context and left exactly as they are.</p>
+        <div id="artreq-docs-list" class="onepager-list"></div>
+        <div id="artreq-doc-view"></div>
+        <div class="board-divider"></div>
+        <div class="execution-footer" style="justify-content:flex-end;">
+          <button id="artreq-refresh-docs-btn" class="secondary-btn small" type="button">Refresh list</button>
+        </div>
+      </div>
+
       <div id="artreq-trigger-card" class="stacked-card" style="display:none;">
         <h2 class="card-title">Art Requirement</h2>
-        <p class="settings-hint">Once an Ideation theme is finalized above, generate Art Requirement variations from it — the real per-scene/character handoff spec the Art team builds from, following the studio's actual document structure (verified against real Merge/Dessert/Blocks/Sim examples). Sort has a real example in ideationData too, but it's still unread (exceeds this tool's 20MB PDF limit) — Sort variations carry an explicit inferred-content warning until that's resolved.</p>
+        <p class="settings-hint">Once an Ideation theme is finalized above, generate Art Requirement variations from it — the real per-scene/character handoff spec the Art team builds from, following the studio's actual document structure, verified against the real shipped Merge, Dessert, Blocks, Sim and Sort examples. Each event type is held to its own mechanics: a Blocks document gets construction steps and material icons, a Merge one gets buildings with upgrade stages, and neither can borrow the other's.</p>
         <div class="form-row">
           <label class="form-label" for="artreq-variation-count">Number of Variations</label>
           <input type="number" id="artreq-variation-count" class="text-input" min="1" max="10" value="3" />

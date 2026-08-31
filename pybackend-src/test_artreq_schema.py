@@ -40,8 +40,11 @@ tmp = tempfile.mkdtemp()
 try:
     md = arg._render_markdown(OLD_DOC, "Sort", "Draft", "Tester", md_dir=tmp)
     ok("Cat Room" in md, "a draft written before this change still renders")
-    ok("Construction/Reveal Steps" in md,
-       "and its construction_steps still appear")
+    # The label gained spaces when the document moved to the production team's
+    # template ("Construction / Reveal Steps"), so this asserts the STEPS survive
+    # rather than one spelling of the heading.
+    ok("Reveal Steps" in md and "1. a" in md and "2. b" in md,
+       "and its construction_steps still appear, numbered")
     ok("Buildings (" not in md and "Producers (" not in md,
        "with no empty buildings or producers section bolted on",
        "absent data must render as nothing, not as an empty table")
@@ -602,6 +605,99 @@ ok("No dark rim, no inked contour" in gp,
 ok("lineless" not in gp.lower(), "so the floor rule does not leak into the icon")
 
 print("")
+
+# ---- no event type may render or accept another type's mechanics -------------
+# A Blocks Art Requirement shipped with Merge's mechanics in it: every zone
+# carried a buildings table with 1-3 upgrade levels and an A/B/C area column,
+# none of which Blocks has. Three layers had to agree for that to happen, so all
+# three are checked here - what the schema ACCEPTS, what the prompt ASKS for, and
+# what the renderer PRINTS.
+#
+# The document below is deliberately stuffed with EVERY mechanic. The question is
+# not "does Blocks look right when handed Blocks data" - it is "does Blocks stay
+# Blocks when handed Merge's", which is the case that actually failed.
+
+EVERY_MECHANIC = {
+    "title": "[Artistic Requirement] X2610 Kitchen Sink",
+    "gameplay_overview": {"theme": "t", "duration_summary": "14 days",
+                          "narrative_packaging": "n", "loop_summary": "l",
+                          "resource_planning": "r", "major_changes": "None."},
+    "zones": [{
+        "zone_number": 1, "zone_theme": "The Test Zone", "palette_or_mood": "warm",
+        "main_tone": "WARM", "scene_material": "timber", "before_state": "bare",
+        "construction_steps": ["step one", "step two"],
+        "buildings": [{"building_number": 1, "name": "Test Hall", "area": "A",
+                       "silhouette": "a shape", "key_features": ["f1", "f2"],
+                       "max_level": 3, "signage": ["SIGN"]}],
+        "goods": [{"name": "Jar", "silhouette": "round", "palette": "amber"}],
+        "reference_notes": "notes",
+    }],
+    "producers": [], "recipes": [], "ingredients": [],
+    "construction_materials": [{"name": "Beam", "description": "d", "palette": "brown"}],
+    "characters": [], "event_motif": "a motif",
+    "art_direction_guidance": {"lean_into": ["x"], "avoid": ["y"]},
+    "event_extras": {}, "gameplay_specific_content": "content",
+    "ui_icon_refresh_notes": "notes", "notes": "notes",
+}
+
+MERGE_ONLY_MARKERS = {
+    "levels": ("| Levels |", "upgrade stages"),
+    "buildings": ("Room / Building / Workshop Breakdown",),
+    "areas": ("spread across areas A/B/C",),
+}
+
+for etype in ("Merge", "Dessert", "Blocks", "Sort", "Sim", "Hunt"):
+    shape = arg.zone_shape(etype)
+    md = arg._render_markdown(dict(EVERY_MECHANIC), etype, "Draft")
+    for key, marks in MERGE_ONLY_MARKERS.items():
+        present = any(m in md for m in marks)
+        ok(present == shape[key],
+           "%s renders %s only if its shape has them" % (etype, key),
+           "rendered=%s shape=%s" % (present, shape[key]))
+
+    s = arg.schema_for(etype)
+    zp = s["properties"]["zones"]["items"]["properties"]
+    ok((zp["buildings"].get("maxItems") != 0) == shape["buildings"],
+       "%s's schema accepts buildings only if it has them" % etype)
+    bi = zp["buildings"].get("items", {}).get("properties", {})
+    ok(shape["levels"] or "max_level" not in bi,
+       "%s's schema does not even offer max_level" % etype)
+    for coll in arg.ALL_COLLECTIONS:
+        allowed = coll in arg.TYPE_COLLECTIONS.get(etype, set())
+        ok((s["properties"][coll].get("maxItems") != 0) == allowed,
+           "%s may fill %s: %s" % (etype, coll, allowed))
+
+# An unknown type must inherit nothing. The failure mode for a type nobody has
+# calibrated should be a thin document that says so, not a confident Merge one.
+unknown = arg.zone_shape("SomeNewMode")
+ok(not unknown["buildings"] and not unknown["levels"] and not unknown["verified"],
+   "an unrecognised event type inherits no mechanics at all")
+
+# The item schema goes with the field. Leaving it in would keep shipping Merge's
+# building vocabulary - "Merge2608 ships 45 stages across 25 buildings" - inside
+# every Blocks prompt, which is the pressure that caused this in the first place.
+blocks_schema = json.dumps(arg.schema_for("Blocks"))
+ok("max_level" not in blocks_schema and "45 stages" not in blocks_schema,
+   "a Blocks schema carries no trace of Merge's building vocabulary")
+ok(len(blocks_schema) < len(json.dumps(arg.schema_for("Merge"))),
+   "and is smaller than Merge's as a result, not merely differently worded")
+
+# The hints have to agree with the table, or the prompt argues with the schema.
+for etype, shape in arg.ZONE_SHAPES.items():
+    hint = arg.TYPE_GAMEPLAY_HINTS[etype]
+    if not shape["buildings"]:
+        ok("NO buildings" in hint,
+           "the %s hint says outright that it has no buildings" % etype)
+    if not shape["levels"]:
+        ok("upgrade level" in hint.lower() or "levels" in hint.lower(),
+           "the %s hint addresses upgrade levels rather than leaving them open" % etype)
+
+# Regeneration is bound by the same shape as the first draft - feedback on a
+# Blocks document must not be able to hand back Merge buildings.
+regen = arg._regenerate_schema("Blocks")
+ok(regen["properties"]["variation"]["properties"]["zones"]["items"]
+       ["properties"]["buildings"].get("maxItems") == 0,
+   "a Blocks regeneration cannot reintroduce buildings either")
 if fails:
     print("%d CHECK(S) FAILED" % len(fails)); sys.exit(1)
 print("ALL ARTREQ SCHEMA TESTS PASSED")

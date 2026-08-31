@@ -100,6 +100,12 @@ def main():
     elif script == "profiles_read":
         import ideation_generator
         ideation_generator.profiles_read_main()
+    elif script == "doc_convert":
+        import doc_convert
+        doc_convert.convert_main()
+    elif script == "md_to_docx":
+        import doc_convert
+        doc_convert.docx_main()
     elif script == "artreq_generate":
         import art_requirement_generator
         art_requirement_generator.generate_main()
@@ -109,6 +115,15 @@ def main():
     elif script == "artreq_save_final":
         import art_requirement_generator
         art_requirement_generator.save_final_main()
+    elif script == "artreq_mcp_save":
+        import art_requirement_generator
+        art_requirement_generator.mcp_save_main()
+    elif script == "artreq_schemas":
+        import art_requirement_generator
+        art_requirement_generator.schemas_main()
+    elif script == "artreq_preview":
+        import art_requirement_generator
+        art_requirement_generator.preview_main()
     elif script == "artreq_images":
         import artreq_images
         artreq_images.images_main()

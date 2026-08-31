@@ -94,6 +94,11 @@ const BEHAVIOUR_ONLY = new Set([
   'sp-go', 'ideation-select-btn', 'ideation-regen-btn',
   'artreq-select-btn', 'artreq-regen-btn', 'lesson-retract-btn',
   'artreq-images-btn', 'zoneimg-regen-btn',
+  'artreq-open-btn', 'artreq-docx-btn', 'artreq-reveal-btn',
+  // Pre-existing gap, not introduced with the Word export: these two mark which
+  // headings are feedback sections and which disclosure is the document body.
+  // Both are read by JS and neither carries, or wants, a visual rule.
+  'artreq-doc-disclosure', 'artreq-doc-section',
   'status-', 'three',
 ]);
 const used = new Set();
@@ -239,6 +244,97 @@ check(js.includes('ideationPickedOnePager = null;') && js.includes('applyIdeatio
 check(js.includes('const usingDoc = !!ideationPickedOnePager;'),
   'the generate handler picks its source explicitly rather than by fallback');
 
+// ---- 6b2. uploading a One-Pager you already have ---------------------------
+// Listing only what was already filed left a hole: a One-Pager that arrived by
+// email or sits on a desktop had to be hand-copied into a path most people
+// would have to be told, which is the step where it lands in the wrong folder.
+check(/id="ideation-upload-onepager-btn"/.test(html), 'the picker card has an upload button');
+check(main.includes("ipcMain.handle('ideation:uploadOnePager'"), 'main.js handles the upload');
+check(/ideationUploadOnePager/.test(preload), 'preload exposes it');
+
+// One list of extensions, shared by the picker, the reader and the upload, so
+// they cannot disagree about what is usable.
+// The rules live in lib/onepager.js so tests/onepager_test.js can reach them -
+// the upload starts with a native dialog no driver can click, so anything
+// downstream of it was previously only checkable by reading it.
+check(main.includes("require('./lib/onepager')"),
+  'the format rules come from the shared module, not a second copy in main.js');
+
+// Word and PDF are converted rather than refused. The shipped One-Pagers ARE
+// PDFs, so refusing them was the wrong answer to the right observation that
+// they belong in the list.
+check(main.includes('kind.convertible'),
+  'reading a One-Pager converts a Word or PDF first rather than refusing it');
+check(main.includes("runPythonAndScrub('doc_convert'"),
+  'via the doc_convert backend, not a second parser in JS');
+check(main.includes('mtimeMs >= fs.statSync(resolved).mtimeMs'),
+  'and the conversion is cached until the original is edited, so re-uploading a '
+  + 'corrected brief reconverts without anyone knowing a cache exists');
+check(main.includes('generated.has(n)'),
+  'a generated .md is hidden from the picker - it and its original are one '
+  + 'document, and listing both invites picking the stale one');
+const cli = backendFile('pybackend_cli.py');
+check(cli.includes("script == \"doc_convert\""), 'the CLI exposes doc_convert');
+const dc = backendFile('doc_convert.py');
+check(dc.includes('import zipfile') && dc.includes('xml.etree'),
+  '.docx is read with stdlib zipfile + ElementTree - no new dependency');
+check(dc.includes('from pypdf import PdfReader'),
+  '.pdf goes through pypdf, already vendored for reading shipped requirement PDFs');
+check(dc.includes('No text layer in this PDF'),
+  'a scanned PDF is reported rather than passed on as an empty brief');
+
+// Images were dropped by the first version. In the shipped Merge2608 brief the
+// actual zone contents exist ONLY inside mood-board pictures, so that default
+// lost real content with no sign it had happened.
+check(dc.includes('_write_images') && dc.includes('.assets'),
+  'images are extracted into a folder beside the Markdown, not dropped');
+check(dc.includes('OCR_SKIP_IF_REPEATED_OVER'),
+  'and page furniture is not OCR-ed - the watermark would otherwise forward an '
+  + 'email address to the model along with the brief');
+check(dc.includes('import text_detect'),
+  'OCR reuses the engine already vendored for checking generated art');
+check(dc.includes('Text read from this image'),
+  'text found inside an image is labelled as such, so it can be weighed differently');
+check(dc.includes('appears %d times'),
+  'a repeated image is referenced once with a count rather than once per occurrence');
+check(main.includes('convertStats'), 'main.js forwards what happened to the images');
+check(js.includes('image${st.images === 1'),
+  'and the renderer reports it - silence about a picture-borne brief is the bug '
+  + 'this path exists to fix');
+check(dc.includes('_heading_level'), 'Word heading styles become Markdown levels');
+check(dc.includes('_table_md'), 'and Word tables become pipe tables, not flattened prose');
+check(main.includes('onePager.nextFreeName('),
+  'and so does the name-clash rule, which is the one that could overwrite a colleague');
+const opLib = fs.readFileSync(path.join(__dirname, '..', 'lib', 'onepager.js'), 'utf-8');
+check(/READABLE = \['md', 'txt'\]/.test(opLib), 'readable formats are named once, in that module');
+check(/CONVERTIBLE = \['docx', 'pdf'\]/.test(opLib),
+  'and the convertible ones beside them, so STORABLE is derived rather than restated');
+check(/STORABLE = READABLE\.concat\(CONVERTIBLE\)/.test(opLib),
+  'STORABLE is the union of the two - a format cannot be accepted without saying '
+  + 'which way it is handled');
+const readerUses = main.includes('onePager.kindOf(resolved)');
+const listUses = main.includes('onePager.kindOf(n).storable');
+check(readerUses && listUses,
+  'the reader and the picker both go through kindOf rather than their own regex',
+  'reader ' + readerUses + ', list ' + listUses);
+check(!/\.\(md\|txt\|pdf\)/.test(main),
+  'and the old hardcoded extension regex is gone');
+
+// A shared folder means the file already there may be a colleague's.
+check(main.includes('showMessageBox') && main.includes("'Replace', 'Keep both', 'Cancel'"),
+  'a name clash asks before overwriting - the folder is shared, so it may not be yours');
+check(main.includes('Keep both'), 'and offers to file yours alongside instead');
+
+// There is no "filed but useless" outcome any more, so uploading always selects.
+check(!js.includes('if (!res.readable)'),
+  'the filed-but-unusable branch is gone - every accepted format converts');
+check(js.includes("doc.convertible ? 'Converting"),
+  'a conversion says so on the button rather than leaving it dead for a few seconds');
+check(js.includes('if (res.converted)'),
+  'and names the .md it produced, which is the file the model was actually given');
+check(js.includes('await pickOnePager(idx)'),
+  'a usable upload is selected straight away - uploading is already an act of choosing');
+
 // ---- 6c. presence: who else has this event open ----------------------------
 // Two designers on the same shared folder could both work an event and neither
 // would know. Advisory only - nothing blocks, nothing has to be released.
@@ -277,11 +373,85 @@ check(/viewId === 'ideation-view'\) startPresence\(\); else stopPresence\(\)/.te
 check(/presenceAnnouncedType !== e\.target\.value/.test(js),
   'switching event type checks out of the old one first');
 
+
+// ---- Art Requirement documents on disk, and Word export ----------------------
+// The tab used to show only what the current session generated, so a document
+// finalised yesterday - or filed by a colleague - was invisible. This checks the
+// listing exists end to end, because the failure mode is silent: a renamed
+// channel leaves a button that looks fine and does nothing.
+check(/id="artreq-docs-card"/.test(html) && /id="artreq-docs-list"/.test(html),
+  'the Art Requirement tab has a card listing documents already on disk');
+check(main.includes("ipcMain.handle('artreq:listDocs'")
+   && main.includes("ipcMain.handle('artreq:readDoc'")
+   && main.includes("ipcMain.handle('artreq:exportDocx'")
+   && main.includes("ipcMain.handle('artreq:revealDoc'"),
+  'main.js handles list, read, Word export and reveal');
+check(/artReqListDocs/.test(preload) && /artReqReadDoc/.test(preload)
+   && /artReqExportDocx/.test(preload) && /artReqRevealDoc/.test(preload),
+  'preload exposes all four');
+check(/artReqListDocs/.test(js) && /artReqExportDocx/.test(js),
+  'and the renderer actually calls them');
+
+// Every path the renderer hands to the main process is resolved and checked
+// against the configured folder first. A path arriving from the renderer is not
+// a licence to read, convert or reveal anything on disk.
+check(/function insideArtReq/.test(main)
+   && /startsWith\(base \+ path\.sep\)/.test(main),
+  'those paths are confined to the Art Requirements folder before use');
+
+// The export is a Python call, so the channel needs a dispatch entry - without
+// it the button reports a bare non-zero exit and nobody can tell why.
+check(backendFile('pybackend_cli.py').includes('md_to_docx')
+   && backendFile('pybackend_cli.py').includes('doc_convert.docx_main()'),
+  'pybackend_cli dispatches md_to_docx to the converter');
+
+// Exporting off the file on disk rather than the variation held in memory is
+// what makes what a reviewer opens in Word identical to what was saved.
+check(/artReqSavedPath\) \|\| artReqDraftPaths\[idx\]/.test(js),
+  'a generated variation exports the document already written to disk');
 // ---- 7. stylesheet is actually linked, and cache-busted ---------------------
 const link = /href="style\.css(\?v=(\d+))?"/.exec(html);
 check(!!link, 'index.html links style.css');
 check(!!(link && link[2]), 'stylesheet link carries a ?v= cache-buster',
   'Electron caches aggressively; bump ?v= when style.css changes');
+
+
+// ---- 8. every local module main.js pulls in is actually PACKAGED -----------
+// lib/onepager.js was required at the TOP of main.js while build.files listed
+// only main.js, preload.js and renderer/** - so it would have been absent from
+// the asar and the packaged app could not have started at all. Every test
+// passed the whole time, because tests run against the source tree where the
+// file is sitting right there. This checks the build manifest, not the disk.
+{
+  const appRoot = path.join(__dirname, '..');
+  const pkg = JSON.parse(fs.readFileSync(path.join(appRoot, 'package.json'), 'utf-8'));
+  const globs = ((pkg.build && pkg.build.files) || []).filter(g => !g.startsWith('!'));
+  // Globs here are simple (main.js, renderer/**/*, lib/**/*), so match by
+  // literal segments around the wildcards rather than building a regex - the
+  // escaping that needs is more of a hazard than the matching is worth.
+  const covered = (rel) => globs.some(g => {
+    const parts = g.split(/\*+\/?\*?/);
+    if (parts.length === 1) return g === rel;
+    if (!rel.startsWith(parts[0])) return false;
+    let at = parts[0].length;
+    for (const part of parts.slice(1)) {
+      if (!part) continue;
+      const found = rel.indexOf(part, at);
+      if (found < 0) return false;
+      at = found + part.length;
+    }
+    return true;
+  });
+  for (const entry of ['main.js', 'preload.js']) {
+    const src = fs.readFileSync(path.join(appRoot, entry), 'utf-8');
+    for (const m of src.matchAll(/require\(['"](\.\/[^'"]+)['"]\)/g)) {
+      let rel = m[1].slice(2);
+      if (!/\.[a-z]+$/i.test(rel)) rel += '.js';
+      check(covered(rel), `${entry} requires ${m[1]}, and build.files packages it`,
+        `add a glob covering "${rel}" to build.files - without it the packaged app cannot load`);
+    }
+  }
+}
 
 console.log('');
 if (failures) { console.error(`${failures} CONTRACT CHECK(S) FAILED`); process.exit(1); }

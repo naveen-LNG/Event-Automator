@@ -43,6 +43,7 @@ contextBridge.exposeInMainWorld('api', {
   ideationSaveFinal: (params) => ipcRenderer.invoke('ideation:saveFinal', params),
   ideationListOnePagers: (params) => ipcRenderer.invoke('ideation:listOnePagers', params),
   ideationReadOnePager: (params) => ipcRenderer.invoke('ideation:readOnePager', params),
+  ideationUploadOnePager: (params) => ipcRenderer.invoke('ideation:uploadOnePager', params),
 
   presenceAnnounce: (params) => ipcRenderer.invoke('presence:announce', params),
   presenceList: (params) => ipcRenderer.invoke('presence:list', params),
@@ -52,6 +53,11 @@ contextBridge.exposeInMainWorld('api', {
   artReqGenerate: (params) => ipcRenderer.invoke('artreq:generate', params),
   artReqRegenerate: (params) => ipcRenderer.invoke('artreq:regenerate', params),
   artReqSaveFinal: (params) => ipcRenderer.invoke('artreq:saveFinal', params),
+  artReqPreview: (params) => ipcRenderer.invoke('artreq:preview', params),
+  artReqListDocs: (params) => ipcRenderer.invoke('artreq:listDocs', params),
+  artReqReadDoc: (params) => ipcRenderer.invoke('artreq:readDoc', params),
+  artReqExportDocx: (params) => ipcRenderer.invoke('artreq:exportDocx', params),
+  artReqRevealDoc: (params) => ipcRenderer.invoke('artreq:revealDoc', params),
 
   ideationEntries: (params) => ipcRenderer.invoke('ideation:entries', params),
   ideationRetract: (params) => ipcRenderer.invoke('ideation:retract', params),

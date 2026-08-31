@@ -99,6 +99,17 @@ if (Test-Path $liveTests) {
     }
 }
 
+# --- lib/ and mcp/ (main.js requires lib/onepager at load; mcp/ is the
+# stdio MCP server, dev-run via `npm run mcp` and not packaged) ---
+foreach ($d in @("lib", "mcp")) {
+    $liveDir = Join-Path $liveDesktop $d
+    if (-not (Test-Path $liveDir)) { continue }
+    Get-ChildItem $liveDir -File -Recurse | ForEach-Object {
+        $rel = "$d\" + $_.FullName.Substring($liveDir.Length + 1)
+        Compare-File $rel $_.FullName (Join-Path $repoRoot $rel)
+    }
+}
+
 # --- ideationData/Events/TEMPLATES (the only tracked part of ideationData) ---
 $liveTemplates = Join-Path $liveDesktop "ideationData\Events\TEMPLATES"
 if (Test-Path $liveTemplates) {
@@ -156,7 +167,7 @@ $knownUntracked = @{
     "githooks"         = "repo-managed hooks"
     "pybackend-src"    = "mirror of the authoritative PythonBackend folder"
 }
-$classifiedTracked = @("main.js", "preload.js", "package.json", "renderer", "build", "scripts", "tests", "ideationData", ".claude")
+$classifiedTracked = @("main.js", "preload.js", "package.json", "renderer", "build", "scripts", "tests", "ideationData", ".claude", "lib", "mcp")
 Get-ChildItem $liveDesktop -Force | ForEach-Object {
     $n = $_.Name
     if ($classifiedTracked -contains $n) { return }

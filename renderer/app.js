@@ -19,6 +19,9 @@
   let ideationSavedPath = '';
   let artReqVariations = null;
   let artReqDraftPaths = [];
+  // Per-variation rendered Markdown from the backend. undefined = not fetched
+  // yet (card shows "Loading…"), null = the render failed.
+  let artReqPreviews = [];
   let artReqSelectedIndex = -1;
   let artReqSavedPath = '';
   // A One-Pager the user already had, picked off disk instead of generated here.
@@ -2029,6 +2032,7 @@
       $('#artreq-trigger-card').style.display = 'block';
       artReqVariations = null;
       artReqDraftPaths = [];
+      artReqPreviews = [];
       artReqSelectedIndex = -1;
       artReqSavedPath = '';
       $('#artreq-results').innerHTML = '';
@@ -2060,6 +2064,7 @@
     // not still be armed after switching to Blocks.
     clearPickedOnePager();
     if (ideationMode() === 'existing') await loadOnePagers();
+    await loadArtReqDocs();
     // Check out of the type just left before checking in to the new one, or the
     // old record lingers for its full timeout saying you are still on Merge.
     if (presenceAnnouncedType && presenceAnnouncedType !== e.target.value) {
@@ -2161,6 +2166,7 @@
     ideationSavedPath = '';
     artReqVariations = null;
     artReqDraftPaths = [];
+    artReqPreviews = [];
     artReqSelectedIndex = -1;
     artReqSavedPath = '';
     ideationPickedOnePager = null;
@@ -2172,6 +2178,29 @@
     r.addEventListener('change', applyIdeationMode);
   });
   $('#ideation-refresh-onepagers-btn').addEventListener('click', () => loadOnePagers());
+  $('#ideation-upload-onepager-btn').addEventListener('click', uploadOnePager);
+
+  async function uploadOnePager() {
+    const eventType = $('#ideation-event-type').value;
+    const btn = $('#ideation-upload-onepager-btn');
+    btn.disabled = true;
+    const res = await window.api.ideationUploadOnePager({ eventType });
+    btn.disabled = false;
+    if (res.canceled) return;
+    if (!res.success) {
+      log(`Upload failed: ${res.output}`, 'console-log-error');
+      toast(res.output, 'error');
+      return;
+    }
+    await loadOnePagers();
+    log(`Filed "${res.name}" into ${eventType}/One-Pager Ideation.`, 'console-log-success');
+    // Every accepted format is usable - Word and PDF are converted on the way
+    // through - so uploading always selects. There is no "filed but useless"
+    // outcome to report any more.
+    const idx = ideationOnePagers.findIndex(d => d.path === res.path);
+    if (idx >= 0) await pickOnePager(idx);
+    else toast('Filed — pick it from the list below.', 'success');
+  }
 
   async function loadOnePagers() {
     const eventType = $('#ideation-event-type').value;
@@ -2202,9 +2231,13 @@
       const when = new Date(d.modified).toLocaleString();
       const cls = ['onepager-row', picked ? 'is-picked' : '', d.readable ? '' : 'is-unreadable']
         .filter(Boolean).join(' ');
-      const action = d.readable
-        ? `<button class="secondary-btn small onepager-pick-btn" data-idx="${i}">${picked ? 'Picked' : 'Use this'}</button>`
-        : `<span class="onepager-meta">PDF — export as .md to use</span>`;
+      // Every format is usable now; a Word or PDF brief is converted to Markdown
+      // on first use. The label says so, because "Use this" on a PDF looks like
+      // a bug until you know the conversion happens.
+      const ext = (d.name.split('.').pop() || '').toUpperCase();
+      const label = picked ? 'Picked' : (d.convertible ? `Convert & use` : 'Use this');
+      const note = d.convertible ? `<span class="onepager-meta">${escapeHtml(ext)}</span>` : '';
+      const action = `${note}<button class="secondary-btn small onepager-pick-btn" data-idx="${i}">${label}</button>`;
       return `<div class="${cls}">
           <span class="onepager-name">${escapeHtml(d.name)}</span>
           <span class="onepager-meta">${escapeHtml(when)}</span>
@@ -2219,22 +2252,54 @@
   async function pickOnePager(idx) {
     const doc = ideationOnePagers[idx];
     if (!doc) return;
+    // A Word or PDF brief is converted on the way through, which spawns Python
+    // and takes a moment - so say what is happening rather than leaving a dead
+    // button. Conversion is cached beside the original, so this is once per edit.
+    const btn = document.querySelector(`.onepager-pick-btn[data-idx="${idx}"]`);
+    if (btn) { btn.disabled = true; btn.textContent = doc.convertible ? 'Converting…' : 'Reading…'; }
+    if (doc.convertible) log(`Converting ${doc.name} to Markdown…`);
+
     const res = await window.api.ideationReadOnePager({ docPath: doc.path });
     if (!res.success) {
-      log(`Could not read ${doc.name}: ${res.output}`, 'console-log-error');
+      renderOnePagerList();                 // restore the button
+      log(`Could not use ${doc.name}: ${res.output}`, 'console-log-error');
       toast(res.output, 'error');
       return;
     }
-    ideationPickedOnePager = { name: doc.name, path: doc.path, text: res.text };
+    ideationPickedOnePager = { name: doc.name, path: doc.path, text: res.text,
+                               // the .md actually read - a converted brief's
+                               // reference art sits beside it
+                               docPath: res.docPath || doc.path };
     renderOnePagerList();
     $('#artreq-trigger-card').style.display = 'block';
     artReqVariations = null;
     artReqDraftPaths = [];
+    artReqPreviews = [];
     artReqSelectedIndex = -1;
     artReqSavedPath = '';
     $('#artreq-results').innerHTML = '';
-    log(`Using "${doc.name}" as the approved One-Pager.`, 'console-log-success');
-    toast('One-Pager selected — generate Art Requirement variations below.', 'success');
+    if (res.converted) {
+      // Naming the .md matters: it is the file the model was actually given, and
+      // it is editable if the conversion got something wrong.
+      const st = res.convertStats || {};
+      let imgNote = '';
+      if (st.images) {
+        // The images are the part worth reporting. In the shipped Merge2608
+        // brief the zone contents exist only inside mood-board pictures, so
+        // "read text from N of them" is the line that says whether the brief
+        // actually made it through.
+        imgNote = `, ${st.images} image${st.images === 1 ? '' : 's'} extracted`;
+        if (st.ocrLines) imgNote += ` (read text from ${st.ocrImages} of them)`;
+      }
+      log(`Converted to ${res.converted} — ${res.text.length.toLocaleString()} characters`
+        + `${imgNote}. That file is what the model is given, so edit it if the `
+        + `conversion missed something.`, 'console-log-success');
+      toast(`Converted ${doc.name} to Markdown${st.images ? ` + ${st.images} images` : ''} `
+        + `— generate variations below.`, 'success');
+    } else {
+      log(`Using "${doc.name}" as the approved One-Pager.`, 'console-log-success');
+      toast('One-Pager selected — generate Art Requirement variations below.', 'success');
+    }
   }
 
   $('#ideation-generate-btn').addEventListener('click', async () => {
@@ -2268,6 +2333,7 @@
       $('#artreq-results').innerHTML = '';
       artReqVariations = null;
       artReqDraftPaths = [];
+      artReqPreviews = [];
       artReqSelectedIndex = -1;
       artReqSavedPath = '';
       renderIdeationResults();
@@ -2323,27 +2389,43 @@
   // the studio's real pipeline.
   function renderArtReqCard(v, idx) {
     const selected = idx === artReqSelectedIndex;
-    const go = v.gameplay_overview || {};
-    const zonesHtml = (v.zones || []).map(z => {
-      const steps = (z.construction_steps || []).map(s => `<li>${escapeHtml(s)}</li>`).join('');
-      return `
-        <details class="info-disclosure">
-          <summary>
-            <span class="info-disclosure-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>
-            <span>Zone ${escapeHtml(z.zone_number)} — ${escapeHtml(z.zone_theme)}</span>
-            <svg class="info-disclosure-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
-          </summary>
-          <div class="info-disclosure-body">
-            <p class="settings-hint"><strong>Palette/Mood:</strong> ${escapeHtml(z.palette_or_mood)}</p>
-            <p class="settings-hint"><strong>Construction/Reveal Steps:</strong></p>
-            <ol class="ideation-list">${steps}</ol>
-            <p class="settings-hint"><strong>Reference Notes:</strong> ${escapeHtml(z.reference_notes)}</p>
-          </div>
-        </details>`;
-    }).join('');
-    const charsRows = (v.characters || []).map(c =>
-      `<tr><td>${escapeHtml(c.name)}</td><td>${escapeHtml(c.role)}</td><td>${escapeHtml(c.design_notes)}</td><td>${escapeHtml((c.scene_actions || []).join(', '))}</td></tr>`
-    ).join('');
+
+    // The real document, straight from the Python writer (fetched into
+    // artReqPreviews by loadArtReqPreview). Until it arrives, say so rather
+    // than falling back to a second hand-built rendering of the same doc -
+    // that divergence is exactly what this replaced.
+    const md = artReqPreviews[idx];
+    let docHtml, sections = [];
+    if (md === undefined) {
+      docHtml = `<p class="settings-hint">Loading the document…</p>`;
+    } else if (md === null) {
+      docHtml = `<p class="settings-hint">Could not render this document — see the log.</p>`;
+    } else {
+      const rendered = renderMarkdownDoc(md, idx);
+      docHtml = rendered.html;
+      sections = rendered.sections;
+    }
+
+    const sectionFeedbackHtml = sections.length ? `
+      <details class="info-disclosure" open>
+        <summary>
+          <span class="info-disclosure-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
+          <span>Feedback by section</span>
+          <svg class="info-disclosure-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+        </summary>
+        <div class="info-disclosure-body">
+          <p class="settings-hint">A note here is tagged with its section, so the rewrite knows exactly what it refers to. Leave the rest blank.</p>
+          ${sections.map(s => `
+            <div class="artreq-section-fb-row">
+              <label class="artreq-section-fb-label" for="artreq-sfb-${idx}-${escapeHtml(s.id)}">
+                <a href="#${escapeHtml(s.id)}" class="artreq-section-jump">${escapeHtml(s.title)}</a>
+              </label>
+              <textarea id="artreq-sfb-${idx}-${escapeHtml(s.id)}" class="text-input ideation-feedback artreq-section-fb"
+                data-idx="${idx}" data-section="${escapeHtml(s.title)}" rows="1"
+                placeholder="Notes on this section…"></textarea>
+            </div>`).join('')}
+        </div>
+      </details>` : '';
 
     return `
       <div class="stacked-card ideation-card${selected ? ' ideation-selected' : ''}" data-idx="${idx}">
@@ -2353,59 +2435,26 @@
         </div>
         ${artReqDraftPaths[idx] ? `<p class="settings-hint ideation-saved-path"><strong>Draft document:</strong> <span class="mono">${escapeHtml(artReqDraftPaths[idx])}</span></p>` : ''}
         ${selected && artReqSavedPath ? `<p class="settings-hint ideation-saved-path"><strong>Saved as final:</strong> <span class="mono">${escapeHtml(artReqSavedPath)}</span></p>` : ''}
+        ${artReqExportRow(idx, selected)}
 
-        <div class="preview-grid three">
-          <div class="preview-cell"><span class="preview-label">Duration</span><span class="preview-value">${escapeHtml(go.duration_summary)}</span></div>
-          <div class="preview-cell"><span class="preview-label">Core Loop</span><span class="preview-value">${escapeHtml(go.loop_summary)}</span></div>
-          <div class="preview-cell"><span class="preview-label">Resource Planning</span><span class="preview-value">${escapeHtml(go.resource_planning)}</span></div>
-        </div>
-        <p class="settings-hint">${escapeHtml(go.narrative_packaging)}</p>
-
-        ${zonesHtml}
-
-        <details class="info-disclosure">
+        <details class="info-disclosure artreq-doc-disclosure" open>
           <summary>
-            <span class="info-disclosure-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>
-            <span>Gameplay-specific art requirement</span>
-            <svg class="info-disclosure-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
-          </summary>
-          <div class="info-disclosure-body"><p class="settings-hint">${escapeHtml(v.gameplay_specific_content)}</p></div>
-        </details>
-
-        <details class="info-disclosure">
-          <summary>
-            <span class="info-disclosure-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>
-            <span>Character requirements</span>
+            <span class="info-disclosure-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h8"/></svg></span>
+            <span>Document preview — exactly what gets written to the .md</span>
             <svg class="info-disclosure-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
           </summary>
           <div class="info-disclosure-body">
-            <table class="mg-preview-table">
-              <thead><tr><th>Name</th><th>Role</th><th>Design Notes</th><th>Scene Actions</th></tr></thead>
-              <tbody>${charsRows}</tbody>
-            </table>
+            <div class="artreq-doc">${docHtml}</div>
           </div>
         </details>
 
-        <details class="info-disclosure">
-          <summary>
-            <span class="info-disclosure-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>
-            <span>Art direction &amp; UI icon refresh</span>
-            <svg class="info-disclosure-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
-          </summary>
-          <div class="info-disclosure-body">
-            <p class="settings-hint"><strong>Lean into:</strong></p>
-            <ul class="ideation-list">${((v.art_direction_guidance || {}).lean_into || []).map(x => `<li>${escapeHtml(x)}</li>`).join('')}</ul>
-            <p class="settings-hint"><strong>Avoid:</strong></p>
-            <ul class="ideation-list">${((v.art_direction_guidance || {}).avoid || []).map(x => `<li>${escapeHtml(x)}</li>`).join('')}</ul>
-            <p class="settings-hint"><strong>UI icon refresh:</strong> ${escapeHtml(v.ui_icon_refresh_notes)}</p>
-          </div>
-        </details>
+        ${sectionFeedbackHtml}
 
         ${threadHtml('artreq', artReqRefName())}
 
         <div class="board-divider"></div>
         <h3 class="card-title">Reference Images</h3>
-        ${renderZoneImages(v, idx)}
+        ${selected ? renderZoneImages(v, idx) : `<p class="settings-hint">Select this variation as final before generating reference images — avoids spending render time on a draft that might still change.</p>`}
 
         <div class="board-divider"></div>
         <div class="form-row">
@@ -2417,6 +2466,93 @@
         </div>
       </div>
     `;
+  }
+
+  // ---- Document preview (the real .md, rendered) ----
+  // Deliberately a small renderer for exactly what _render_markdown emits -
+  // ATX headings, pipe tables, -/1. lists, bold/italic, inline images and
+  // code - rather than a general Markdown engine. Everything is escaped
+  // before any markup is added, so document text can never inject HTML.
+  function mdInline(s) {
+    return escapeHtml(s)
+      .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (m, alt, src) =>
+        `<img class="artreq-doc-img" src="${fileUrl(decodeURIComponent(src))}" alt="${alt}" />`)
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/(^|[^*])\*([^*]+)\*/g, '$1<em>$2</em>')
+      .replace(/_([^_]+)_/g, '<em>$1</em>')
+      .replace(/`([^`]+)`/g, '<code>$1</code>');
+  }
+
+  function mdTableRow(line) {
+    const cells = line.trim().replace(/^\||\|$/g, '').split('|');
+    return cells.map(c => c.trim().replace(/\\\|/g, '|'));
+  }
+
+  // Returns { html, sections:[{id,title}] } - the section list drives the
+  // per-section feedback controls, so they always match the document's real
+  // headings instead of a hardcoded list that can fall out of step with it.
+  function renderMarkdownDoc(md, idx) {
+    const lines = String(md || '').split('\n');
+    const out = [];
+    const sections = [];
+    let i = 0;
+    let listOpen = null;
+
+    const closeList = () => { if (listOpen) { out.push(`</${listOpen}>`); listOpen = null; } };
+
+    while (i < lines.length) {
+      const line = lines[i];
+
+      const isTable = /^\s*\|/.test(line) && /^\s*\|?[\s:-]*-[\s:|-]*$/.test(lines[i + 1] || '');
+      if (isTable) {
+        closeList();
+        const headers = mdTableRow(line);
+        i += 2;
+        const body = [];
+        while (i < lines.length && /^\s*\|/.test(lines[i])) { body.push(mdTableRow(lines[i])); i++; }
+        out.push(`<div class="artreq-doc-tablewrap"><table class="mg-preview-table"><thead><tr>${
+          headers.map(h => `<th>${mdInline(h)}</th>`).join('')}</tr></thead><tbody>${
+          body.map(r => `<tr>${r.map(c => `<td>${mdInline(c)}</td>`).join('')}</tr>`).join('')
+        }</tbody></table></div>`);
+        continue;
+      }
+
+      const h = /^(#{1,6})\s+(.*)$/.exec(line);
+      if (h) {
+        closeList();
+        const level = h[1].length;
+        const text = h[2].trim();
+        // Only the numbered template sections get a feedback control; the
+        // title and deeper sub-headings would just add noise.
+        const isSection = level === 2;
+        if (isSection) {
+          const id = `artreq-sec-${idx}-${sections.length}`;
+          sections.push({ id, title: text });
+          out.push(`<h${level} class="artreq-doc-h artreq-doc-section" id="${id}">${mdInline(text)}</h${level}>`);
+        } else {
+          out.push(`<h${level} class="artreq-doc-h">${mdInline(text)}</h${level}>`);
+        }
+        i++; continue;
+      }
+
+      const li = /^\s*([-*]|\d+\.)\s+(.*)$/.exec(line);
+      if (li) {
+        const want = /^\d/.test(li[1]) ? 'ol' : 'ul';
+        if (listOpen !== want) { closeList(); out.push(`<${want} class="artreq-doc-list">`); listOpen = want; }
+        out.push(`<li>${mdInline(li[2])}</li>`);
+        i++; continue;
+      }
+
+      if (/^\s*---+\s*$/.test(line)) { closeList(); out.push('<hr class="artreq-doc-hr" />'); i++; continue; }
+
+      if (!line.trim()) { closeList(); i++; continue; }
+
+      closeList();
+      out.push(`<p class="artreq-doc-p">${mdInline(line)}</p>`);
+      i++;
+    }
+    closeList();
+    return { html: out.join('\n'), sections };
   }
 
   // Reference images live under each variation. Image feedback is deliberately
@@ -2559,6 +2695,29 @@
     el.textContent = `${total} render(s) — roughly ${mins} minute${mins === 1 ? '' : 's'}.`;
   }
 
+  // Images now only ever run on the already-finalized variation (the
+  // Reference Images section is hidden until Select as Final), so every
+  // successful render/regeneration needs to update the .md that was already
+  // written to disk - save_final_main() just re-renders whatever variation
+  // object it's given, so calling it again with the image-populated
+  // variation is exactly how an already-finalized doc picks up its images.
+  async function resaveArtReqFinal(idx) {
+    const refName = artReqRefName();
+    if (!refName) return;
+    const res = await window.api.artReqSaveFinal({
+      eventType: $('#ideation-event-type').value,
+      refName,
+      variation: artReqVariations[idx]
+    });
+    if (res.success) {
+      artReqSavedPath = res.output;
+      log(`Final document updated with the new image(s): ${res.output}`, 'console-log-success');
+    } else {
+      log(`Images were generated, but updating the saved final document failed: ${res.output}`, 'console-log-error');
+      toast('Images saved, but the final document could not be updated — see the log.', 'error');
+    }
+  }
+
   async function generateZoneImages(idx) {
     const btn = $(`.artreq-images-btn[data-idx="${idx}"]`);
     if (btn) { btn.disabled = true; btn.textContent = 'Rendering…'; }
@@ -2599,7 +2758,9 @@
       });
       log(`Rendered ${parsed.generated}/${parsed.requested} image(s).`, 'console-log-success');
       toast(`Rendered ${parsed.generated} reference image(s).`, 'success');
+      await resaveArtReqFinal(idx);
       renderArtReqResults();
+      loadArtReqPreview(idx);
     } catch (e) {
       log(`Could not parse the image response: ${e.message}`, 'console-log-error');
       toast('Could not parse the image response.', 'error');
@@ -2640,7 +2801,9 @@
       reportImageReview(parsed.review);
       await refreshIdeationEntries($('#ideation-event-type').value);
       renderLessonsPanel();
+      await resaveArtReqFinal(idx);
       renderArtReqResults();
+      loadArtReqPreview(idx);
       log(`Revised ${parsed.regenerated} image(s). The note is stored and will condition future renders.`,
           'console-log-success');
       toast(`Revised ${parsed.regenerated} image(s) — note stored for next time.`, 'success');
@@ -2661,15 +2824,208 @@
     if (review.ok === false) toast('Image review found problems — see the log.', 'error');
   }
 
+  // Fetch (or re-fetch) the rendered document for one variation, then repaint.
+  // Called after anything that changes the doc - generation, regeneration,
+  // images, select-as-final (which changes the status line in the header).
+  async function loadArtReqPreview(idx) {
+    const res = await window.api.artReqPreview({
+      eventType: $('#ideation-event-type').value,
+      variation: artReqVariations[idx],
+      isFinal: idx === artReqSelectedIndex
+    });
+    if (res.success && res.data && res.data.markdown !== undefined) {
+      artReqPreviews[idx] = res.data.markdown;
+    } else {
+      artReqPreviews[idx] = null;
+      log(`Could not render the document preview for variation ${idx + 1}: ${res.output}`, 'console-log-error');
+    }
+    renderArtReqResults();
+  }
+
+  function loadAllArtReqPreviews() {
+    if (!artReqVariations) return;
+    artReqVariations.forEach((_, i) => { loadArtReqPreview(i); });
+  }
+
+  // Cards are rebuilt wholesale on every render, which destroys any feedback
+  // the reviewer has typed but not yet submitted. Previews arrive
+  // asynchronously and re-render, so without this a note typed while a
+  // preview was still loading would silently vanish mid-sentence. Capture
+  // and restore around the rebuild, keyed by variation + section.
+  function captureArtReqFeedbackDrafts() {
+    const drafts = {};
+    $$('.artreq-section-fb').forEach(el => {
+      if (el.value.trim()) drafts[`${el.dataset.idx}::${el.dataset.section}`] = el.value;
+    });
+    (artReqVariations || []).forEach((_, i) => {
+      const g = $(`#artreq-feedback-${i}`);
+      if (g && g.value.trim()) drafts[`${i}::__general__`] = g.value;
+    });
+    return drafts;
+  }
+
+  function restoreArtReqFeedbackDrafts(drafts) {
+    $$('.artreq-section-fb').forEach(el => {
+      const v = drafts[`${el.dataset.idx}::${el.dataset.section}`];
+      if (v !== undefined) el.value = v;
+    });
+    (artReqVariations || []).forEach((_, i) => {
+      const v = drafts[`${i}::__general__`];
+      const g = $(`#artreq-feedback-${i}`);
+      if (g && v !== undefined) g.value = v;
+    });
+  }
+
+
+  // ---- Art Requirement documents already on disk ---------------------------
+  // Until this existed the tab could only show what the current session had
+  // generated. A document finalised yesterday, or one a colleague filed from
+  // another machine, or one written straight into the shared folder, was
+  // invisible - so the honest answer to "is there already an Art Requirement for
+  // this event?" was "open Explorer and look". This is that answer, in the tab.
+  let artReqDocs = [];
+  let artReqOpenedDocPath = '';
+
+  async function loadArtReqDocs() {
+    const eventType = $('#ideation-event-type').value;
+    const card = $('#artreq-docs-card');
+    if (!card) return;
+    if (!eventType) { card.style.display = 'none'; return; }
+    const res = await window.api.artReqListDocs({ eventType });
+    if (!res || !res.success) {
+      card.style.display = 'none';
+      log(`Could not list Art Requirement documents: ${res && res.output}`, 'console-log-error');
+      return;
+    }
+    artReqDocs = res.docs || [];
+    card.style.display = artReqDocs.length ? '' : 'none';
+    renderArtReqDocList();
+  }
+
+  function renderArtReqDocList() {
+    const box = $('#artreq-docs-list');
+    if (!box) return;
+    box.innerHTML = artReqDocs.map((d, i) => {
+      const when = new Date(d.modified).toLocaleString();
+      const size = d.bytes < 1024 * 1024
+        ? `${Math.round(d.bytes / 1024)} KB`
+        : `${(d.bytes / 1024 / 1024).toFixed(1)} MB`;
+      const opened = artReqOpenedDocPath === d.path;
+      const cls = ['onepager-row', opened ? 'is-picked' : '', d.readable ? '' : 'is-unreadable']
+        .filter(Boolean).join(' ');
+      // A draft and a final can carry near-identical names, so the folder a
+      // document came from is shown rather than left to be inferred.
+      const where = d.folder ? `<span class="onepager-meta">${escapeHtml(d.folder)}</span>` : '';
+      const type = `<span class="onepager-meta">${escapeHtml(d.ext.toUpperCase())}</span>`;
+      let actions;
+      if (d.readable) {
+        actions = `<button class="secondary-btn small artreq-open-btn" data-idx="${i}">${opened ? 'Close' : 'Open'}</button>`
+          + `<button class="secondary-btn small artreq-docx-btn" data-path="${escapeHtml(d.path)}">`
+          + `${d.docxPath ? 'Re-export Word' : 'Export to Word'}</button>`
+          + (d.docxPath
+            ? `<button class="secondary-btn small artreq-reveal-btn" data-path="${escapeHtml(d.docxPath)}">Show .docx</button>`
+            : '');
+      } else {
+        actions = `<button class="secondary-btn small artreq-reveal-btn" data-path="${escapeHtml(d.path)}">Show in folder</button>`;
+      }
+      return `<div class="${cls}">
+          <span class="onepager-name">${escapeHtml(d.name)}</span>
+          ${where}${type}
+          <span class="onepager-meta">${escapeHtml(size)}</span>
+          <span class="onepager-meta">${escapeHtml(when)}</span>
+          ${actions}
+        </div>`;
+    }).join('');
+    // Scoped to this list on purpose. A generated variation card carries an
+    // .artreq-docx-btn of its own, and a document-wide query here would bind
+    // those a second time - one click, two exports.
+    box.querySelectorAll('.artreq-open-btn').forEach(b =>
+      b.addEventListener('click', () => toggleArtReqDoc(Number(b.dataset.idx))));
+    box.querySelectorAll('.artreq-docx-btn').forEach(b =>
+      b.addEventListener('click', () => exportArtReqDocx(b.dataset.path, b)));
+    box.querySelectorAll('.artreq-reveal-btn').forEach(b =>
+      b.addEventListener('click', () => revealArtReqDoc(b.dataset.path)));
+  }
+
+  async function toggleArtReqDoc(i) {
+    const doc = artReqDocs[i];
+    const view = $('#artreq-doc-view');
+    if (!doc || !view) return;
+    if (artReqOpenedDocPath === doc.path) {
+      artReqOpenedDocPath = '';
+      view.innerHTML = '';
+      renderArtReqDocList();
+      return;
+    }
+    const eventType = $('#ideation-event-type').value;
+    view.innerHTML = `<p class="settings-hint">Opening ${escapeHtml(doc.name)}…</p>`;
+    const res = await window.api.artReqReadDoc({ eventType, docPath: doc.path });
+    if (!res || !res.success) {
+      view.innerHTML = '';
+      toast('Could not open that document: ' + (res && res.output), 'error');
+      return;
+    }
+    artReqOpenedDocPath = doc.path;
+    // The same markdown renderer the generated variations use, so a document
+    // written last month reads exactly like one written a minute ago. The index
+    // is negative so its section anchors cannot collide with a generated card's,
+    // which are keyed by variation index from zero.
+    view.innerHTML = renderMarkdownDoc(res.data.markdown, -1 - i).html;
+    renderArtReqDocList();
+  }
+
+  // The Word export on a generated variation works off the file already written
+  // to disk - the draft, or the final once it has been saved - never off the
+  // variation held in memory, so what lands in Word is exactly the document a
+  // reviewer would open from the folder.
+  function artReqExportRow(idx, selected) {
+    const p = (selected && artReqSavedPath) || artReqDraftPaths[idx] || '';
+    if (!p) return '';
+    return `<div class="execution-footer" style="justify-content:flex-start;">
+          <button class="secondary-btn small artreq-docx-btn" data-path="${escapeHtml(p)}">Export to Word</button>
+        </div>`;
+  }
+
+  async function exportArtReqDocx(docPath, btn) {
+    if (!docPath) return;
+    const eventType = $('#ideation-event-type').value;
+    const label = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Exporting…'; }
+    const res = await window.api.artReqExportDocx({ eventType, docPath });
+    if (btn) { btn.disabled = false; btn.textContent = label; }
+    if (!res || !res.success) {
+      log(`Word export failed: ${res && res.output}`, 'console-log-error');
+      toast('Word export failed: ' + (res && res.output), 'error');
+      return;
+    }
+    log(`Exported to ${res.data.docx_path}`, 'console-log-success');
+    toast('Exported to Word — it is beside the Markdown in the same folder.', 'success');
+    await loadArtReqDocs();
+  }
+
+  async function revealArtReqDoc(docPath) {
+    if (!docPath) return;
+    const eventType = $('#ideation-event-type').value;
+    const res = await window.api.artReqRevealDoc({ eventType, docPath });
+    if (!res || !res.success) toast((res && res.output) || 'Could not show that file.', 'error');
+  }
+
+  $('#artreq-refresh-docs-btn').addEventListener('click', () => loadArtReqDocs());
+  // The select defaults to a real event type, so list its folder on load
+  // rather than waiting for someone to touch the dropdown.
+  loadArtReqDocs();
   function renderArtReqResults() {
     const container = $('#artreq-results');
     if (!artReqVariations || !artReqVariations.length) { container.innerHTML = ''; return; }
+    const drafts = captureArtReqFeedbackDrafts();
     container.innerHTML = artReqVariations.map((v, i) => renderArtReqCard(v, i)).join('');
     $$('.artreq-select-btn').forEach(btn => btn.addEventListener('click', () => selectArtReqVariation(Number(btn.dataset.idx))));
+    container.querySelectorAll('.artreq-docx-btn').forEach(btn => btn.addEventListener('click', () => exportArtReqDocx(btn.dataset.path, btn)));
     $$('.artreq-regen-btn').forEach(btn => btn.addEventListener('click', () => regenerateArtReqVariation(Number(btn.dataset.idx))));
     $$('.artreq-images-btn').forEach(btn => btn.addEventListener('click', () => generateZoneImages(Number(btn.dataset.idx))));
     $$('.artreq-pass').forEach(cb => cb.addEventListener('change', () => refreshPlan(Number(cb.dataset.idx))));
     $$('.zoneimg-regen-btn').forEach(btn => btn.addEventListener('click', () => regenerateZoneImage(Number(btn.dataset.idx), btn.dataset.zone)));
+    restoreArtReqFeedbackDrafts(drafts);
   }
 
   $('#artreq-generate-btn').addEventListener('click', async () => {
@@ -2698,6 +3054,7 @@
       ideationTheme: ideationTheme || undefined,
       ideationDocText: usingDoc ? ideationPickedOnePager.text : undefined,
       ideationDocName: usingDoc ? ideationPickedOnePager.name : undefined,
+      ideationDocPath: usingDoc ? ideationPickedOnePager.docPath : undefined,
     });
     btn.disabled = false; btn.textContent = 'Generate Art Requirement Variations';
 
@@ -2707,10 +3064,21 @@
       if (parsed.error) { log(`Error: ${parsed.error}`, 'console-log-error'); toast(parsed.error, 'error'); return; }
       artReqVariations = parsed.variations;
       artReqDraftPaths = parsed.draft_paths || [];
+      artReqPreviews = [];
       artReqSelectedIndex = -1;
       artReqSavedPath = '';
       renderArtReqResults();
-      log(`Generated ${artReqVariations.length} Art Requirement variation(s) via ${parsed.provider === 'ollama' ? 'local Ollama' : 'Claude'}.`, 'console-log-success');
+      loadAllArtReqPreviews();
+      // Say when reference art went with the request. It changes what comes
+      // back, and it is billed on every variation, so it should never be
+      // invisible.
+      const refs = parsed.reference_images || 0;
+      const refNote = refs
+        ? ` with ${refs} reference image${refs === 1 ? '' : 's'} from the One-Pager attached`
+        : '';
+      log(`Generated ${artReqVariations.length} Art Requirement variation(s) via `
+        + `${parsed.provider === 'ollama' ? 'local Ollama' : 'Claude'}${refNote}.`,
+        'console-log-success');
       toast(`${artReqVariations.length} variation(s) generated.`, 'success');
     } catch (e) {
       log(`Error parsing Art Requirement response: ${e.message}`, 'console-log-error');
@@ -2718,9 +3086,26 @@
     }
   });
 
+  // Per-section notes and the general box are merged into the one feedback
+  // string the backend already takes, each prefixed with the section it was
+  // written against. Nothing downstream changes - the store, the lesson
+  // extraction and the regeneration prompt all keep working as they are, and
+  // the model gets told which section a note is about instead of having to
+  // infer it.
+  function collectArtReqFeedback(idx) {
+    const parts = [];
+    $$(`.artreq-section-fb[data-idx="${idx}"]`).forEach(el => {
+      const v = el.value.trim();
+      if (v) parts.push(`[${el.dataset.section}] ${v}`);
+    });
+    const general = ($(`#artreq-feedback-${idx}`) || {}).value || '';
+    if (general.trim()) parts.push(general.trim());
+    return parts.join('\n');
+  }
+
   async function regenerateArtReqVariation(idx) {
-    const feedback = $(`#artreq-feedback-${idx}`).value.trim();
-    if (!feedback) { toast('Enter feedback before regenerating.', 'error'); return; }
+    const feedback = collectArtReqFeedback(idx);
+    if (!feedback) { toast('Add feedback in a section or the general box before regenerating.', 'error'); return; }
     const eventType = $('#ideation-event-type').value;
     const variation = artReqVariations[idx];
 
@@ -2741,9 +3126,16 @@
       if (parsed.error) { log(`Error: ${parsed.error}`, 'console-log-error'); toast(parsed.error, 'error'); return; }
       artReqVariations[idx] = parsed.variation;
       if (parsed.draft_path) artReqDraftPaths[idx] = parsed.draft_path;
+      // This feedback has been applied and stored - clear the boxes before the
+      // rebuild so the draft-preservation above doesn't restore notes the
+      // reviewer has already submitted onto the freshly rewritten document.
+      $$(`.artreq-section-fb[data-idx="${idx}"]`).forEach(el => { el.value = ''; });
+      const genBox = $(`#artreq-feedback-${idx}`);
+      if (genBox) genBox.value = '';
       await refreshIdeationEntries(eventType);
       renderLessonsPanel();
       renderArtReqResults();
+      loadArtReqPreview(idx);
       log(`Variation "${parsed.variation.title}" regenerated. Feedback saved for future runs.`, 'console-log-success');
       toast('Variation regenerated — feedback stored for next time.', 'success');
     } catch (e) {
@@ -2771,6 +3163,9 @@
       log(`Saved to ${res.output}`, 'console-log-success');
       toast('Saved as the final Art Requirement for this event.', 'success');
       renderArtReqResults();
+      // The status line in the document header changes on finalisation, so
+      // re-render the preview rather than leaving it showing "Draft".
+      loadArtReqPreview(idx);
     } else {
       log(`Could not save the final Art Requirement: ${res.output}`, 'console-log-error');
       toast('Save failed: ' + res.output, 'error');
