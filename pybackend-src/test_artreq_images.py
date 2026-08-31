@@ -385,6 +385,7 @@ try:
         # canvas would be silently wrong everywhere it is used.
         import icon_sheet
         def blob_generate(base_url, prompt, dest, ref_paths=(), **kw):
+            # records refs too, so a sequence's derivation chain is checkable
             # What the prompt actually asks for: one object on a flat mid-grey
             # backdrop, so knockout_background has something to cut.
             calls.append({"dest": dest, "prompt": prompt, "refs": list(ref_paths)})
@@ -465,6 +466,104 @@ try:
             ok(len([c for c in calls if os.path.basename(c["dest"]).startswith("zone")]) == 2,
                "while ticking scene still renders every zone", str(len(calls)))
             ok(r_scene["requested"] == 3, "and counts them", str(r_scene["requested"]))
+
+            # 7d. the Blocks progression pass, end to end ----------------------
+            # This exists because the pass shipped with a NameError in it - the
+            # helper never had events_root in scope - and no unit test could see
+            # it, only running the pass could. Stubbed ComfyUI, so it costs
+            # nothing to keep.
+            calls.clear()
+            pdoc = json.loads(json.dumps(DOC))
+            pdoc["zones"] = [dict(pdoc["zones"][0], zone_number=1, zone_theme="Cove",
+                                  construction_steps=["a hero lantern", "a boat shed",
+                                                      "a farm cart", "a hamper"])]
+            pdoc["characters"] = [{"name": "Keeper", "base_character": "turtle",
+                                   "costume": "a teal coat"}]
+            pout = os.path.join(tmp, "prog_out")
+            pres = artreq_images._generate_extra_passes(
+                {"passes": ["progression"], "events_root": events, "aspect_ratio": "4:5"},
+                pdoc, pdoc["zones"], pout, "http://stub", "Blocks")
+            ok(pres["requested"] == 4 + 2 + 1,
+               "a 4-step scene renders base + 3 earlier frames + empty + derelict + characters",
+               "requested %s" % pres["requested"])
+            ok(pres["requested"] == artreq_images.plan_passes(
+                   pdoc, ["progression"], "Blocks")["total"],
+               "and the plan agrees with what was actually rendered",
+               "%s vs %s" % (pres["requested"],
+                             artreq_images.plan_passes(pdoc, ["progression"], "Blocks")["total"]))
+            names = sorted(os.path.basename(c["dest"]) for c in calls)
+            ok(any(n.startswith("00_F0_derelict") for n in names)
+               and any(n.startswith("00_F1_empty") for n in names),
+               "the derelict and empty frames are both produced", str(names))
+            ok(any("characters" in n for n in names), "and the character frame", str(names))
+            byname = {os.path.basename(c["dest"]): c for c in calls}
+            base_name = [n for n in names if n.endswith("_complete.png")][0]
+            ok(not byname[base_name]["refs"] or "zone" not in byname[base_name]["refs"][0],
+               "the base is rendered from the style references, not from a frame")
+            hero = byname["01_F2.png"]
+            ok("ONLY change" in hero["prompt"],
+               "the hero-adjacent frame is cut with a single blunt change, not a bulk list")
+            ok("ONLY change" not in byname["03_F4.png"]["prompt"],
+               "while a later step is cut from the base with a cumulative list")
+
+            # blunt_steps forces a dedicated hop at a named step. Without it a
+            # large structure or flat ground element further up the ladder is cut
+            # in bulk and silently survives - the barn's dance-floor sat at step
+            # 5, and repairing it cost five renders because the fix cascades.
+            calls.clear()
+            bdoc = json.loads(json.dumps(pdoc))
+            bdoc["zones"][0]["blunt_steps"] = [4]
+            artreq_images._generate_extra_passes(
+                {"passes": ["progression"], "events_root": events}, bdoc, bdoc["zones"],
+                os.path.join(tmp, "blunt_out"), "http://stub", "Blocks")
+            bn = {os.path.basename(c["dest"]): c for c in calls}
+            ok("ONLY change" in bn["03_F4.png"]["prompt"],
+               "naming step 4 in blunt_steps gives it its own single-change hop",
+               bn["03_F4.png"]["prompt"][:90])
+            ok(bn["03_F4.png"]["refs"]
+               and "04_F5" in os.path.basename(bn["03_F4.png"]["refs"][0]),
+               "cut from the frame directly after it, not from the base",
+               str(bn["03_F4.png"]["refs"]))
+            ok("ONLY change" in bn["01_F2.png"]["prompt"],
+               "and steps 1 and 2 keep their automatic blunt hops")
+            # Every frame BELOW a blunt step must chain too. Cutting one from the
+            # base means a bulk list that still contains the difficult object, and
+            # it survives again: blunt_steps=[5] fixed frame 5 and frame 4 then
+            # put the dance floor straight back.
+            ok("ONLY change" in bn["02_F3.png"]["prompt"],
+               "frames below a blunt step chain too, rather than reverting to a bulk list",
+               bn["02_F3.png"]["prompt"][:90])
+            ok(bn["02_F3.png"]["refs"]
+               and "03_F4" in os.path.basename(bn["02_F3.png"]["refs"][0]),
+               "each cut from its own successor, so the difficult object is already gone",
+               str(bn["02_F3.png"]["refs"]))
+            calls.clear()
+            gdoc = json.loads(json.dumps(pdoc))
+            gdoc["zones"][0]["blunt_steps"] = ["nonsense", 4]
+            artreq_images._generate_extra_passes(
+                {"passes": ["progression"], "events_root": events}, gdoc, gdoc["zones"],
+                os.path.join(tmp, "blunt_bad"), "http://stub", "Blocks")
+            gn = {os.path.basename(c["dest"]): c for c in calls}
+            ok("ONLY change" in gn["03_F4.png"]["prompt"],
+               "a junk entry is skipped rather than crashing the whole sequence")
+            der = byname["00_F0_derelict.png"]
+            ok("FROZEN" in der["prompt"] and "REMOVE EVERYTHING HUMANISED" in der["prompt"],
+               "the derelict frame is frozen and stripped of humanised things")
+            ok(der["refs"] and "00_F1_empty" in der["refs"][0],
+               "and is derived from the EMPTY frame, so nothing built survives into it",
+               str(der["refs"]))
+            ch = byname[[n for n in names if "characters" in n][0]]
+            ok(ch["refs"] and ch["refs"][0].endswith("_complete.png"),
+               "characters are one additive hop from the completed base", str(ch["refs"]))
+            ok("progression_scene1" in pres["reviews"],
+               "and the set is handed to sequence_review automatically",
+               str(list(pres["reviews"])))
+            calls.clear()
+            skipped = artreq_images._generate_extra_passes(
+                {"passes": ["progression"], "events_root": events}, pdoc, pdoc["zones"],
+                os.path.join(tmp, "prog_sort"), "http://stub", "Sort")
+            ok(skipped["requested"] == 0 and not calls,
+               "a non-Blocks type renders no sequence even when asked", str(skipped))
 
             # and the other type's passes produce nothing from this document
             calls.clear()

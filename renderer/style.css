@@ -1508,3 +1508,75 @@ select.text-input option { background: #121834; color: var(--fg); }
   border-top: 1px solid var(--line);
   margin-top: 2px;
 }
+
+/* ---- Ideation starting-point choice + One-Pager picker ------------------- */
+/* The app had no radio anywhere before this, so the control is built here
+   rather than borrowed. Each option carries its consequence as a subtitle -
+   the choice is "have you already got a One-Pager", and the answer changes
+   which half of the workflow you see. */
+.choice-group {
+  display: flex; flex-direction: column; gap: 8px;
+  flex: 1 1 320px; min-width: 0;
+}
+.choice {
+  display: flex; align-items: flex-start; gap: 11px;
+  padding: 11px 13px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+  background: var(--bg-raise, transparent);
+}
+.choice:hover { border-color: var(--line-hot); }
+.choice input[type="radio"] {
+  margin: 2px 0 0; flex: 0 0 auto;
+  accent-color: var(--accent-1);
+  width: 15px; height: 15px; cursor: pointer;
+}
+.choice:has(input:checked) { border-color: var(--line-hot); }
+.choice:has(input:focus-visible) { outline: 2px solid var(--line-hot); outline-offset: 2px; }
+.choice-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.choice-title { font-size: 13px; font-weight: 700; color: var(--fg); }
+.choice-sub { font-size: 11.5px; line-height: 1.45; color: var(--fg-muted); }
+
+.onepager-list { display: flex; flex-direction: column; gap: 7px; margin: 12px 0 0; }
+.onepager-row {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 10px 13px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.onepager-row.is-picked { border-color: var(--line-hot); }
+.onepager-name { font-size: 13px; font-weight: 600; color: var(--fg); flex: 1 1 240px; min-width: 0; word-break: break-word; }
+.onepager-meta { font-size: 11px; color: var(--fg-faint); flex: 0 0 auto; }
+.onepager-row.is-unreadable .onepager-name { color: var(--fg-muted); }
+.onepager-empty { font-size: 12.5px; color: var(--fg-muted); padding: 10px 2px; }
+/* A JS hook, not a look - the button takes its appearance from .secondary-btn
+   .small. The rule exists so the class is accounted for, and so a picked row's
+   button reads as already chosen rather than still inviting a click. */
+.onepager-pick-btn { flex: 0 0 auto; }
+.onepager-row.is-picked .onepager-pick-btn { opacity: 0.72; pointer-events: none; }
+
+/* ---- Presence: who else has this event open ------------------------------ */
+/* Deliberately an amber notice rather than a red one. Nobody is blocked and
+   nothing is wrong - two people on one event is a thing to know, not an error
+   to clear - so it sits above the work without looking like a failure. */
+.presence-bar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+  border: 1px solid var(--warn-line, rgba(226, 178, 90, 0.42));
+  border-left: 3px solid var(--warn-line, rgba(226, 178, 90, 0.75));
+  border-radius: 8px;
+  background: var(--warn-bg, rgba(226, 178, 90, 0.09));
+  font-size: 12.5px;
+  color: var(--fg);
+}
+.presence-who { display: inline-flex; align-items: center; gap: 7px; }
+.presence-dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--accent-1);
+  flex: 0 0 auto;
+}
+.presence-name { font-weight: 700; }
+.presence-detail { color: var(--fg-muted); }
+.presence-since { color: var(--fg-faint); font-size: 11.5px; }

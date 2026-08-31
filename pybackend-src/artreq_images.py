@@ -185,7 +185,7 @@ def generate_for_doc(payload):
             "generated": ok_n,
             "requested": (len(zones) if do_scenes else 0) + extra["requested"],
             "review": review, "extra_reviews": extra["reviews"], "doc": doc,
-            "plan": plan_passes(doc, payload.get("passes") or DEFAULT_PASSES),
+            "plan": plan_passes(doc, payload.get("passes") or DEFAULT_PASSES, event_type),
             "style_refs": [os.path.basename(p) for p in refs]}
 
 
@@ -413,6 +413,265 @@ def _generate_extra_passes(payload, doc, zones, out_dir, comfy_url, event_type):
                     out["generated"] += 1
             review(made, sign, "ingredient")
 
+    # ---- scene evolution sequences (Blocks) ----------------------------------
+    # Structure and method are Blocks_scene_progression_rules.md, which was
+    # written after a chained-forward run drifted its palette into the banned
+    # taupe band. Everything below encodes a rule that document paid for:
+    #   * the built base is rendered ONCE and every earlier frame is a single
+    #     CUMULATIVE hop from it, so nothing accumulates
+    #   * a bulk removal silently leaves large objects standing, so the hero and
+    #     the first structure each get their own blunt single-change hop
+    #   * the derelict frame is a different WEATHER AND LIGHT state, not a
+    #     desaturated copy
+    #   * characters are one ADDITIVE hop from the base, final frame only
+    #   * every set is checked by sequence_review, never by eye
+    if "progression" in requested and (event_type or "") in PROGRESSION_TYPES:
+        # Derived here rather than passed in: this helper only receives the
+        # payload, and the sequence needs the same spec and references the scene
+        # pass uses. distil_fn is None - the visual-language distillation needs a
+        # provider and a sequence must not depend on one being reachable.
+        events_root = payload.get("events_root", "")
+        title = doc.get("title") or event_type
+        spec = art_reference.load_style_spec(events_root, event_type)
+        refs = art_reference.style_reference_images(events_root, event_type)
+        distil = None
+        made_any = False
+        for z in zones:
+            steps = [s for s in (z.get("construction_steps") or []) if str(s).strip()]
+            if len(steps) < 2:
+                continue
+            made_any = True
+            zn = z.get("zone_number")
+            zdir = os.path.join(out_dir, "scene%s_%s" % (zn, _slug(z.get("zone_theme"), 24)))
+            frames, labels = [], []
+
+            base_prompt = art_reference.build_scene_prompt(
+                events_root, event_type,
+                dict(z, reference_notes="%s\n\n%s" % (
+                    z.get("reference_notes", ""), asset_prompts.built_scene(steps))),
+                doc_title=title, art_direction=doc.get("art_direction_guidance"),
+                style_spec=spec, distil_fn=distil)
+            base = os.path.join(zdir, "%02d_F%d_complete.png" % (len(steps), len(steps) + 1))
+            log("scene %s: rendering the completed base" % zn)
+            r = _render_one(comfy_url, base_prompt, base, refs, "progression",
+                            payload.get("aspect_ratio", "4:5"), "2K")
+            out["images"].append(r); out["requested"] += 1
+            if not r["ok"]:
+                log("scene %s: base failed, skipping the rest of this sequence" % zn)
+                continue
+            out["generated"] += 1
+
+            # steps 1..N-1, each the base minus everything not yet built.
+            # Step 1 (the hero alone) and step 2 are cut from their OWN
+            # successor rather than in bulk, because a long removal list leaves
+            # the biggest object standing.
+            prev = base
+            per_step = {}
+            # Steps 1 and 2 always get their own blunt hop - the hero is step 1
+            # and the largest structure is usually step 2, and a bulk list leaves
+            # both standing. blunt_steps names any OTHER step that is a large
+            # structure or a flat ground element: the barn's laid dance-floor sat
+            # at step 5, survived the bulk removal, and cost five renders to
+            # repair because the fix cascades down the chain.
+            blunt = set()
+            for x in (z.get("blunt_steps") or []):
+                try:
+                    blunt.add(int(x))
+                except (TypeError, ValueError):
+                    log("scene %s: ignoring non-numeric blunt_steps entry %r" % (zn, x))
+            # Everything at or below the highest blunt step must CHAIN from its
+            # successor, not be cut from the base. Cutting from the base means
+            # one bulk list containing the difficult object, and it survives
+            # again - which is exactly what happened when blunt_steps=[5] fixed
+            # frame 5 and frame 4 then re-introduced the dance floor. Chaining
+            # works because the source frame already lacks it.
+            chain_below = max([2] + [s - 1 for s in blunt])
+            for k in range(len(steps) - 1, 0, -1):
+                absent = steps[k:]
+                dest = os.path.join(zdir, "%02d_F%d.png" % (k, k + 1))
+                if k <= chain_below:             # dedicated single-change hop
+                    src, instr = prev, asset_prompts.remove_one(steps[k])
+                else:
+                    src, instr = base, asset_prompts.remove_many(absent)
+                log("scene %s: frame %d of %d (%s)"
+                    % (zn, k + 1, len(steps) + 2,
+                       "one change" if k <= chain_below else "cumulative"))
+                r = _render_one(comfy_url, instr, dest, [src], "progression",
+                                payload.get("aspect_ratio", "4:5"), "2K")
+                out["images"].append(r); out["requested"] += 1
+                if r["ok"]:
+                    out["generated"] += 1; per_step[k] = dest; prev = dest
+
+            empty = os.path.join(zdir, "00_F1_empty.png")
+            hero_src = per_step.get(1, base)
+            log("scene %s: the restored-but-empty frame" % zn)
+            r = _render_one(comfy_url, asset_prompts.remove_one(steps[0]), empty,
+                            [hero_src], "progression", payload.get("aspect_ratio", "4:5"), "2K")
+            out["images"].append(r); out["requested"] += 1
+            if r["ok"]:
+                out["generated"] += 1
+
+            derelict = os.path.join(zdir, "00_F0_derelict.png")
+            log("scene %s: the derelict frame" % zn)
+            r = _render_one(comfy_url, asset_prompts.derelict_prompt(z), derelict,
+                            [empty if os.path.exists(empty) else base], "progression",
+                            payload.get("aspect_ratio", "4:5"), "2K")
+            out["images"].append(r); out["requested"] += 1
+            if r["ok"]:
+                out["generated"] += 1
+
+            # Characters arrive ONE BY ONE across the last two frames, so the
+            # population reads as arriving rather than appearing at once.
+            chars = [c for c in (doc.get("characters") or []) if c.get("name")][:2]
+            prev_frame = base
+            for i, c in enumerate(chars):
+                cf = os.path.join(zdir, "%02d_F%d_characters%d.png"
+                                  % (len(steps) + 1 + i, len(steps) + 2 + i, i + 1))
+                log("scene %s: character %d of %d arrives" % (zn, i + 1, len(chars)))
+                r = _render_one(comfy_url,
+                                asset_prompts.add_characters(
+                                    chars[:i + 1], arriving=[c],
+                                    scale=(z.get("character_scale") or "beside")),
+                                cf, [prev_frame], "progression",
+                                payload.get("aspect_ratio", "4:5"), "2K")
+                out["images"].append(r); out["requested"] += 1
+                if r["ok"]:
+                    out["generated"] += 1; prev_frame = cf
+
+            # build order for the review: empty, then each step, then the base
+            ordered = [empty] + [per_step[k] for k in sorted(per_step)] + [base]
+            labels = ["empty"] + ["+ %s" % steps[k][:24] for k in sorted(per_step)] + ["complete"]
+            frames = [p for p in ordered if os.path.exists(p)]
+            _review_progression_set(frames, base, derelict, labels, zn, out)
+        if not made_any:
+            log("no zone carries construction_steps, so there is no sequence to build")
+
+    # ---- goods icons (Sort) --------------------------------------------------
+    # Per ZONE, not per document: each floor carries its own themed catalogue,
+    # and Sort's loop is sorting these onto shelves. Portrait canvas, because the
+    # shipped sets are 1:2 and squaring a can or a baguette wastes half the frame.
+    if "goods" in requested:
+        import icon_sheet
+        made, sign = [], {}
+        for z in zones:
+            zn = z.get("zone_number")
+            goods = z.get("goods") or []
+            names = [g.get("name", "") for g in goods]
+            zone_made = []
+            for i, g in enumerate(goods, 1):
+                dest = os.path.join(out_dir, "goods", "z%s_good_%02d_%s.png"
+                                    % (zn, i, _slug(g.get("name"), 22)))
+                log("rendering goods %s/%s - %s" % (zn, i, g.get("name", "")))
+                # The siblings are the rest of THIS floor's catalogue. Without
+                # them each icon is drawn blind to the set it belongs to and the
+                # generator settles on one safe product blob for all of them.
+                sibs = [n for j, n in enumerate(names, 1) if j != i and n]
+                r = _render_one(comfy_url,
+                                asset_prompts.goods_prompt(g, z.get("palette_or_mood", ""),
+                                                           siblings=sibs),
+                                # 9:16 (0.563) is the closest portrait the node
+                                # offers to the shipped 1:2; 1:2 itself is not in
+                                # its list and is refused outright.
+                                dest, [], "goods", "9:16", "2K",
+                                # One fill for every good, matching the shipped
+                                # 0.86 wide / 0.90 tall. Sizing goods down
+                                # individually is what left half a frame empty.
+                                post=_icon_post(1, 1,
+                                                fraction=asset_prompts.goods_fraction(
+                                                    g, icon_sheet.GOODS_FRACTION),
+                                                canvas=icon_sheet.GOODS_CANVAS))
+                out["images"].append(r); out["requested"] += 1
+                if r["ok"]:
+                    g["image_path"] = dest
+                    made.append(dest); sign[os.path.basename(dest)] = []
+                    zone_made.append(dest)
+                    out["generated"] += 1
+
+            # Colour is the third axis the player sorts on, after kind and shape,
+            # and it is checked PER FLOOR because that is where a shelf is seen.
+            # A floor whose fifteen goods share one palette is a floor of one
+            # item repeated, however different their outlines are.
+            for deg, a, b in icon_sheet.hue_collisions(zone_made):
+                msg = ("zone %s: '%s' and '%s' are the same colour (%d degrees apart) "
+                       "- goods on a floor must differ in colour as well as shape"
+                       % (zn, os.path.basename(a)[8:-4], os.path.basename(b)[8:-4], deg))
+                log("WARNING " + msg)
+                out.setdefault("warnings", []).append(msg)
+
+        # Does each good actually sit in its frame the way the shipped ones do?
+        # Reported, never corrected: the only way to fix an object that is too
+        # wide for a 1:2 frame is to draw a different object or stand it on its
+        # end. Scaling it up just makes it wider and softer.
+        for f in made:
+            probs, fit = icon_sheet.frame_problems(
+                f, asset_prompts.GOODS_ASPECT_RANGE, asset_prompts.GOODS_MIN_AREA)
+            for why in probs:
+                msg = "%s %s" % (os.path.basename(f)[:-4], why)
+                log("WARNING " + msg)
+                out.setdefault("warnings", []).append(msg)
+
+        # Checked across ALL the goods, not floor by floor. Checking each floor
+        # in isolation is what let a catalogue ship where every floor was
+        # internally fine and all five were the same fifteen shapes - the repeat
+        # ran down the columns, where a per-floor check cannot look.
+        for iou, a, b in icon_sheet.silhouette_collisions(made):
+            msg = ("'%s' and '%s' share a silhouette (%.2f) - the player cannot sort "
+                   "apart two goods that look the same"
+                   % (os.path.basename(a)[:-4], os.path.basename(b)[:-4], iou))
+            log("WARNING " + msg)
+            out.setdefault("warnings", []).append(msg)
+        review(made, sign, "goods")
+
+    # ---- construction materials (Blocks) ------------------------------------
+    # Blocks' mechanic-specific class, the way recipes are Dessert's: each
+    # construction step consumes 2-3 themed material icons, so they are a set.
+    if "material" in requested:
+        import icon_sheet
+        pal = ((doc.get("zones") or [{}])[0]).get("palette_or_mood", "")
+        made, sign = [], {}
+        for i, m in enumerate(doc.get("construction_materials") or [], 1):
+            dest = os.path.join(out_dir, "materials", "material_%02d_%s.png"
+                                % (i, _slug(m.get("name"), 24)))
+            log("rendering material %s - %s" % (i, m.get("name", "")))
+            r = _render_one(comfy_url, asset_prompts.material_prompt(m, pal), dest,
+                            [], "material", "1:1", "2K",
+                            post=_icon_post(1, 1, fraction=icon_sheet.SIZE_STEPS[-1]))
+            out["images"].append(r); out["requested"] += 1
+            if r["ok"]:
+                m["image_path"] = dest
+                made.append(dest); sign[os.path.basename(dest)] = []
+                out["generated"] += 1
+        review(made, sign, "material")
+
+    # ---- characters ----------------------------------------------------------
+    # Cut out but NOT normalised: icon_sheet forces a square canvas, and a
+    # character ships as a tall portrait sprite (Dessert guests are 320x512).
+    # Squaring one would letterbox it and throw away the proportion that the
+    # style guide spends six sections defining.
+    if "character" in requested:
+        pal = ((doc.get("zones") or [{}])[0]).get("palette_or_mood", "")
+
+        def cutout(dest):
+            import scoop
+            scoop.knockout_background(dest)
+            scoop.knockout_enclosed(dest)
+            scoop.dehalo(dest)
+
+        made, sign = [], {}
+        for i, c in enumerate(doc.get("characters") or [], 1):
+            dest = os.path.join(out_dir, "characters", "character_%02d_%s.png"
+                                % (i, _slug(c.get("name"), 24)))
+            log("rendering character %s - %s (%s)"
+                % (i, c.get("name", ""), c.get("base_character", "new")))
+            r = _render_one(comfy_url, asset_prompts.character_prompt(c, pal), dest,
+                            [], "character", "2:3", "2K", post=cutout)
+            out["images"].append(r); out["requested"] += 1
+            if r["ok"]:
+                c["image_path"] = dest
+                made.append(dest); sign[os.path.basename(dest)] = []
+                out["generated"] += 1
+        review(made, sign, "character")
+
     # ---- balloon, badge and task icons --------------------------------------
     # Small standalone objects. Same cut-out path as the icons, but no chain and
     # so no size ladder - each is normalised at the top of the scale.
@@ -439,6 +698,38 @@ def _generate_extra_passes(payload, doc, zones, out_dir, comfy_url, event_type):
                 out["generated"] += 1
         review(made, sign, "extras")
     return out
+
+
+def _review_progression_set(frames, base, derelict, labels, zn, out):
+    """Check one scene sequence with sequence_review - never by eye.
+
+    The rules document is blunt about why: visual inspection missed a leaked
+    stall across three frames of a shipped set, and it would have reached the
+    art team. The subtractive method gives the invariant this exploits - each
+    frame is the base minus what is not yet built, so diff-from-base must shrink
+    monotonically along the build order.
+    """
+    key = "progression_scene%s" % zn
+    if len(frames) < 2:
+        out["reviews"][key] = {"ok": False, "findings": [
+            {"level": "error", "frame": "-", "message": "too few frames rendered to review"}]}
+        return
+    try:
+        import sequence_review
+        r = sequence_review.review(base, frames,
+                                   derelict_path=derelict if os.path.exists(derelict) else None,
+                                   labels=labels[:len(frames)])
+    except Exception as e:
+        out["reviews"][key] = {"ok": False, "findings": [
+            {"level": "error", "frame": "-",
+             "message": "sequence_review failed to run (%s: %s)" % (e.__class__.__name__, e)}]}
+        return
+    out["reviews"][key] = r
+    for f in r["findings"]:
+        log("REVIEW %s [scene %s]: %s - %s"
+            % (f["level"].upper(), zn, f.get("frame", ""), f["message"]))
+    if r["ok"]:
+        log("REVIEW PASS [scene %s]: %d frames, build order holds" % (zn, len(frames)))
 
 
 def _review_progression(chains, out):
@@ -487,11 +778,12 @@ def _review_chains(producers, out_dir, out):
     out["reviews"]["icon_progression"] = {"ok": not findings, "findings": findings}
 
 
-PASSES = ("scene", "building", "stage", "icon", "producer", "recipe", "ingredient", "extras")
+PASSES = ("scene", "progression", "building", "stage", "icon", "producer", "recipe",
+          "ingredient", "goods", "material", "character", "extras")
 DEFAULT_PASSES = ("scene",)     # unchanged behaviour unless the caller asks for more
 
 
-def plan_passes(doc, passes):
+def plan_passes(doc, passes, event_type=""):
     """What each requested pass would produce, without producing any of it.
 
     Separate from generation so the app can show the cost before spending it -
@@ -517,6 +809,21 @@ def plan_passes(doc, passes):
             n = len(doc.get("recipes") or [])
         elif name == "ingredient":
             n = len(doc.get("ingredients") or [])
+        elif name == "progression":
+            # per scene: derelict + empty + one frame per build step + characters
+            n = 0
+            for z in (zones if (event_type or "") in PROGRESSION_TYPES else []):
+                st = [x for x in (z.get("construction_steps") or []) if str(x).strip()]
+                if len(st) >= 2:
+                    # derelict + empty + one per build step + one per arriving
+                    # character (they come in one by one over the last frames)
+                    n += len(st) + 2 + len((doc.get("characters") or [])[:2])
+        elif name == "goods":
+            n = sum(len(z.get("goods") or []) for z in zones)
+        elif name == "material":
+            n = len(doc.get("construction_materials") or [])
+        elif name == "character":
+            n = len(doc.get("characters") or [])
         elif name == "extras":
             ex = doc.get("event_extras") or {}
             n = (1 if (ex.get("hot_air_balloon") or "").strip() else 0)                 + (1 if (ex.get("achievement_badge") or "").strip() else 0)                 + len([t for t in (ex.get("task_icons") or []) if str(t).strip()])
@@ -653,6 +960,12 @@ TONE_RE = re.compile(r"MAIN\s*TONE\s*[:\-]?\s*(COOL|WARM)", re.I)
 # FLOWER SHOP. There the defect is not "text" but "text the brief did not ask
 # for", usually a building's design name written across the building.
 TEXT_IS_SCENERY = {"Merge"}
+
+# Only Blocks delivers a scene as a BUILD SEQUENCE. Every other type uses
+# construction_steps as free-text reveal notes - a pre-schema Sort draft carries
+# two of them - so without this gate every legacy draft would suddenly be offered
+# a nine-frame sequence it has no use for, and charged for it in the cost line.
+PROGRESSION_TYPES = {"Blocks"}
 
 SIGN_RE = re.compile(r"sign reads\s+([^\n,;.]+)", re.I)
 
@@ -925,7 +1238,8 @@ def plan_main():
     try:
         payload = _read_payload()
         doc = payload.get("doc") or {}
-        plan = plan_passes(doc, payload.get("passes") or PASSES)
+        plan = plan_passes(doc, payload.get("passes") or PASSES,
+                           payload.get("event_type", ""))
         plan["ok"] = True
         plan["estimate_seconds"] = plan["total"] * 32      # measured average per render
         print(json.dumps(plan))

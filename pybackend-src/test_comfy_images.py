@@ -163,7 +163,17 @@ ok(abs(w * h - cc.BASE_PIXELS) / float(cc.BASE_PIXELS) < 0.02
    "%d vs %d vs %d" % (w * h, w2 * h2, cc.BASE_PIXELS))
 ok(wh("Auto") == cc.BASE_SCALE, "Auto keeps the size the approved workflow exported at",
    str(wh("Auto")))
-ok(wh("nonsense") == cc.BASE_SCALE, "and an unparseable ratio falls back rather than crashing")
+# This used to assert an unparseable ratio quietly fell back to BASE_SCALE. That
+# fallback only ever sized the ImageScale node correctly - the bad string still
+# went on to NanoBananaAIO, which rejects the entire workflow with HTTP 400. The
+# "graceful" path produced no image and no explanation, so it now raises instead.
+try:
+    wh("nonsense")
+    ok(False, "an unparseable ratio raises here rather than being refused by the server")
+except ValueError:
+    ok(True, "an unparseable ratio raises here rather than being refused by the server")
+ok(cc.scale_for("nonsense") == cc.BASE_SCALE,
+   "scale_for itself still falls back, so sizing alone never crashes")
 ok(wh("1:1", scale_w=800, scale_h=600) == (800, 600),
    "an explicit size still wins over the ratio")
 
@@ -174,7 +184,10 @@ ok(wh("1:1", scale_w=800, scale_h=600) == (800, 600),
 # references that are now the shipped art, to stay matte when the shipped art is
 # glossy, and not to draw producer fittings on a type that has no producers.
 dess = ar.named_failures("Dessert")
-dflt = ar.named_failures("Merge")
+# Sort is the default sample now: Merge, Blocks and Dessert each carry their
+# own studio document, so only a type WITHOUT one still gets the default.
+# Sim is the last type without a studio document of its own.
+dflt = ar.named_failures("Sim")
 ok("SHIPPED GAME ART" in dess, "Dessert is told its references ARE the target")
 ok("must depart from them" not in dess,
    "and is NOT told to depart from them (the bug this fixes)")
@@ -182,7 +195,7 @@ ok("Matte only" not in dess, "nor to stay matte, which the shipped art is not")
 ok("producer" not in dess.lower(), "nor about producer fittings it does not have")
 ok("CONTINUOUS PARK" in dess, "and is told it is one continuous park, not a floating plate")
 ok("must depart from them" in dflt and "Matte only" in dflt,
-   "while every other type keeps the block it was written for")
+   "while a type with no document of its own keeps the default block")
 for shared in ("no soft-serve", "No text, letters or numbers", "Nothing mirrored"):
     ok(shared.lower() in dess.lower() and shared.lower() in dflt.lower(),
        "the genuinely shared ban survives in both: %r" % shared)
@@ -191,6 +204,75 @@ pd = ar.build_scene_prompt(DATA, "Dessert", zone, doc_title="Dessert2611",
                            style_spec="# Dessert zone art", distil_fn=fake_distil)
 ok("SHIPPED GAME ART" in pd and "must depart from them" not in pd,
    "and build_scene_prompt injects the type's own block, not the default")
+
+# ---- Merge carries its own block too, from Merge Art.docx section 27 --------
+# The default contradicted that document twice: matte-only with no specular, and
+# a blanket ban on material texture, where it asks for glossy clean materials,
+# PBR-inspired shading and controlled emissive glow.
+mrg = ar.named_failures("Merge")
+ok("ultra-wide-angle perspective" in mrg, "Merge carries its document's own negatives")
+ok("Matte only" not in mrg, "and not the matte-only rule that contradicted it")
+ok("No material texture of any kind" not in mrg, "nor the blanket texture ban")
+ok("LINELESS" in mrg,
+   "while KEEPING lineless scene art, which the Merge spec section 6.2 depends on")
+ok("Do NOT light the whole scene equally" in mrg,
+   "and the document's strongest rule - dark surroundings, lit hero")
+
+# ---- a zone's BUILDINGS reach the scene prompt --------------------------------
+# They did not. build_scene_prompt only read construction_steps, and a Merge zone
+# carries its eight buildings in `buildings` - so a Merge scene was briefed with
+# no idea which structures it should contain and came back with four or five.
+bz = {"zone_number": 1, "zone_theme": "Big Top", "palette_or_mood": "navy and gold",
+      "reference_notes": "a carnival ground",
+      "buildings": [{"building_number": i, "name": "Building %d" % i,
+                     "silhouette": "a shape %d" % i,
+                     "key_features": ["f%da" % i, "f%db" % i], "max_level": 2}
+                    for i in range(1, 9)]}
+bp = ar.build_scene_prompt(DATA, "Merge", bz, distil_fn=None)
+ok("EVERY ONE OF THESE 8 BUILDINGS" in bp,
+   "the scene prompt states the building COUNT as a number", bp[-400:])
+for i in (1, 4, 8):
+    ok("Building %d" % i in bp, "and names building %d" % i)
+ok("a shape 8" in bp, "carrying each building's silhouette")
+ok("recognisable by f1a, f1b" in bp, "and its recognition points")
+ok("Upgrade points in this scene: 16" in bp,
+   "plus the scene's upgrade-point total, so the grander buildings read as grander")
+nz = dict(bz, buildings=[])
+ok("EVERY ONE OF THESE" not in ar.build_scene_prompt(DATA, "Merge", nz, distil_fn=None),
+   "a zone with no buildings block is briefed exactly as before")
+
+# ---- Sort carries its own block, and it CONTRADICTS its own document once ----
+# Sort Art.docx section 21 lists "empty rooms" as a thing to avoid. The measured
+# shipped floors are 5.5-7.0% detail fill - about 93% quiet surface - and a first
+# generated attempt that followed the density instinct came back at 9.9-18.7% and
+# read cluttered. The measurement wins, so that one negative is dropped and the
+# measured targets go in as positive instruction.
+srt = ar.named_failures("Sort")
+ok("dark horror" in srt and "fisheye lens" in srt, "Sort carries its document's negatives")
+ok("empty rooms" not in srt,
+   "except 'empty rooms', which the measured 93%-quiet shipped floors contradict")
+ok("90% of the floor plate is quiet" in srt, "and the measured fill target replaces it")
+ok("never crowd the top" in srt.lower() and "CENTRE LANE stays" in srt,
+   "with the measured per-band and per-column distribution")
+ok("NOTHING overlaps" in srt,
+   "and the gameplay rule that makes density wrong here in the first place")
+ok("bright top surface" in srt, "plus the document's own shading recipe")
+
+# ---- an invalid aspect is caught here, not by the server ---------------------
+# "1:2" is not in the node's list. Sent anyway, ComfyUI rejects the whole
+# workflow with HTTP 400 - which failed all 75 renders of the goods pass before
+# anyone saw the first image.
+try:
+    cc.build_workflow("p", aspect_ratio="1:2")
+    ok(False, "an aspect outside the node's list is refused before sending")
+except ValueError as e:
+    ok("not one of" in str(e), "an aspect outside the node's list is refused before sending")
+    ok("9:16" in str(e), "and the error names the values that are allowed")
+for a in cc.VALID_ASPECTS:
+    cc.build_workflow("p", aspect_ratio=a)
+ok(True, "every value in VALID_ASPECTS builds a workflow")
+ok("1:2" not in cc.VALID_ASPECTS and "9:16" in cc.VALID_ASPECTS,
+   "9:16 is the closest portrait the node offers to the shipped 1:2 goods canvas")
 
 print("")
 if fails:

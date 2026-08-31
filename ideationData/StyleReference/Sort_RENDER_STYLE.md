@@ -35,6 +35,81 @@ no depth-of-field blur. Painted, not rendered.
 
 ---
 
+## 1b. The style bible — from `Sort Art.docx`
+
+The studio's own 22-section breakdown. Its one-line essence:
+
+> *"A premium, colourful, highly detailed isometric toy-diorama environment where
+> every room feels like a miniature playable world, built from soft rounded 3D
+> objects with strong silhouettes, clean gradients, gentle lighting, and dense
+> thematic storytelling."*
+
+Most of it agrees with what is already here and sharpens it.
+
+**§2 Camera.** Looking down at **30–45°**, showing front, side and top faces,
+very little perspective distortion — orthographic/pseudo-isometric rather than
+cinematic. *"Each floor behaves like a small diorama platform"*, which is exactly
+the plate this file already describes.
+
+**§3 Building composition — the part that is genuinely new here.** Sort is a
+**vertical cutaway dollhouse**: a stack of floors, each with a floor platform,
+back and side walls, and an open front. Our zone rules describe one floor; this
+describes the tower they belong to. Structural hierarchy per floor:
+architecture → main furniture → gameplay objects → small props → characters →
+decorative details.
+
+**§7 Materials.** Three named classes, and the split matters: **plastic-like**
+(appliances, toys, tech — smooth, soft reflections, clean gradients),
+**matte painted** (walls, furniture, floors — soft shading, minimal noise), and
+**glossy accents used selectively** (glass, screens, water, bottles, metal).
+Not heavy realistic PBR.
+
+**§9 Shading — called "extremely important for reproducing the style".** Every
+object: bright top surface → mid-tone front → darker side face → small highlight
+→ soft ambient occlusion underneath.
+
+**§10 Outlines.** Minimal or selective. Separation comes from colour contrast,
+soft shadow, ambient occlusion and slight bevels. A subtle darker contour is
+allowed; thick black outlines, ink lines and cel borders are not. That is
+consistent with §5.8 below.
+
+**§15 Floor layering.** Back layer walls and architecture · middle layer main
+furniture and the activity · front layer small props and collectibles.
+
+**§18 Level of detail.** Large objects moderate detail, small objects strong
+colour and silhouette with minimal geometry, tiny decorations as simple forms and
+colour blobs. *"Do not make every object equally detailed."*
+
+**§22 Theme formula.** `[THEME] + miniature isometric dollhouse + 3–5 themed
+furniture pieces + 10–20 small storytelling props + dominant theme palette +
+cute character activity + soft rounded toy-like geometry + polished casual
+mobile-game rendering`.
+
+### Where this document and the shipped assets DISAGREE — density
+
+§11 asks for *"high-density, controlled clutter"* and §21 lists **"empty rooms"**
+as a thing to avoid. The measured shipped Sort2609 floors say the opposite:
+
+| | measured on the five shipped floors |
+|---|---|
+| Detail fill | **5.5–7.0%**, mean 6.4% |
+| Top band | 2.9–5.5% — sparsest in all five |
+| Middle band | 7.5–9.4% — densest in all five |
+| Centre column | quietest of the three in four of five |
+
+Roughly **93% of a shipped plate is quiet surface**. A first generated attempt
+came in at 9.9–18.7% fill and read "correct but cluttered" — it had followed
+exactly the instinct §11 describes.
+
+**The measurement wins.** It is taken off the assets that shipped, and Sort's
+gameplay requires every object to read as its own separate silhouette with
+nothing overlapping — density directly fights that. Read §11 as *"many small
+themed props, each in its own clear pocket"*, not as filling the plate. The
+per-band and per-column targets in §7 of `Sort_zone_floor_rules.md` are the
+operative numbers.
+
+---
+
 ## 2. Colour
 
 Each zone is built almost entirely from tints and shades of **one dominant

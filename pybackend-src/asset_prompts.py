@@ -404,6 +404,467 @@ glance. Roughly as wide as it is tall.
         palette=ingredient.get("palette") or palette or "the event palette")
 
 
+# --------------------------------------------------------- scene evolution ---
+# One hold clause, used by every hop in a sequence. It is long on purpose: the
+# whole method depends on each edit changing exactly one thing, and an edit that
+# quietly re-draws the scene shows up as palette drift three frames later.
+HOLD = (
+    "Everything else stays EXACTLY as it is - the same camera and framing, the same foreground "
+    "framing device, the same ground, the same background and sky, the same light direction, the "
+    "same warm key and cool ambient shadows, the same palette and the same finish. Do NOT re-draw "
+    "the scene, do NOT move anything, do NOT add anything, do NOT change the time of day. "
+    "No text anywhere."
+)
+
+
+# Where each build step lands, in order. The art director's note: populate from
+# the bottom of the frame upwards, and JUMP between areas rather than clustering
+# around the hero - the eye travelling makes each step land harder. The
+# subtractive method can only reveal an arrangement the base already has, so the
+# distribution has to be specified when the base is drawn, not later.
+PLACEMENT = ["at the bottom centre, nearest the camera",
+             "on the LEFT, level with the hero",
+             "on the RIGHT, further back than the hero",
+             "at the bottom LEFT, close to the camera",
+             "on the RIGHT, near the back of the scene",
+             "across the UPPER part of the scene, furthest back",
+             "at the bottom RIGHT, close to the camera",
+             "in the MIDDLE DISTANCE on the left"]
+
+
+def built_scene(steps):
+    """The completed scene: everything present, hero first, distribution fixed.
+
+    Each item is given its own region of the frame, in build order, so the
+    sequence populates bottom-to-top and jumps side to side as it goes.
+    """
+    body = "\n".join("%d. %s - placed %s"
+                     % (i + 1, s, PLACEMENT[i % len(PLACEMENT)]) for i, s in enumerate(steps))
+    return ("*** THE COMPLETED SCENE ***\nEverything below is built and standing. The first item is "
+            "the HERO. Each item sits in its own part of the frame, spread apart - do NOT cluster "
+            "them together around the hero:\n%s\n"
+            "Each is chunky, rounded and slightly inflated, lit by the warm key with a cool "
+            "ambient shadow and a soft rim on its silhouette. The scene should read as HUMANISED "
+            "ACTIVITY spread across the whole frame, near to far." % body)
+
+
+def remove_one(item):
+    """A single blunt removal - the only reliable way to take out a big object.
+
+    A long removal list leaves the largest object standing: an eight-category
+    instruction left the press and the cart in place, and a six-item one left a
+    boat shed. Both were fixed by giving the big object its own hop.
+    """
+    return ("Revise this image. Delete %s completely, leaving clean empty ground where it stood. "
+            "That is the ONLY change.\n\n%s" % (item, HOLD))
+
+
+def remove_many(items):
+    """Cumulative removal of the secondary props - safe in bulk, unlike a hero.
+
+    Cumulative, not one-per-frame: removing a single item from the base left
+    every middle frame still holding everything else, so the sequence never
+    built up.
+    """
+    joined = ", ".join(items[:-1]) + (" and " + items[-1] if len(items) > 1 else items[0])
+    return ("Revise this image. Remove %s - remove ALL of those, completely, leaving clean empty "
+            "ground where they stood.\n\n%s" % (joined, HOLD))
+
+
+def derelict_prompt(zone):
+    """The 'before' state: EMPTY of everything humanised, and DIFFERENT per scene.
+
+    Two corrections from the art director, in order.
+
+    First: the instinct to show neglect - broken boards, slack rope, scattered
+    debris - is wrong, because every one of those is itself a human trace. The
+    frame wants the place WITHOUT people: its landscape or its shell present,
+    everything humanised absent. That part is mandatory.
+
+    Second, and this one corrected an over-reach of mine: FROZEN IS NOT THE RULE.
+    It was offered as one way to make a before-state distinctive, because the
+    previous generation's scenes all looked alike. Freezing every scene just
+    reproduces that sameness in a colder palette. So the before-state is chosen
+    per scene to suit its own theme - `before_state` on the zone says how - and
+    the requirement is that the five differ from each other.
+    """
+    given = (zone.get("before_state") or "").strip()
+    if given:
+        return ("Revise this image into its 'before' state: %s\n"
+                "*** REMOVE EVERYTHING HUMANISED. *** No buildings, stalls, carts, furniture, "
+                "goods, crates, tools, fences, paths, hanging decoration, lights, people or "
+                "animals. Nothing built, nothing placed, nothing arranged, and NO DEBRIS OR RUINS "
+                "either - broken boards and scattered litter are human traces too and must not "
+                "appear. The place is bare and unused, not abandoned.\n"
+                "KEEP the same camera and the same %s, so it is recognisably this place. "
+                "Almost EMPTY is the target. Keep the same soft-painterly finish. "
+                "No text anywhere." % (given, "room shell - walls, floor, ceiling, window"
+                                       if zone.get("interior") else
+                                       "landscape - fields, hills, mountains, horizon"))
+    if zone.get("interior"):
+        # An interior has no fields to freeze. The equivalent is the SHELL kept -
+        # walls, floor, window, beams, the thing that makes it this location - and
+        # every trace of use stripped out, under cold light. Same idea as the
+        # landscape version: the place exists, nobody has worked in it.
+        return ("Revise this image into its FROZEN 'before' state - this room in deep winter, "
+                "unused and shut up.\n"
+                "KEEP the shell of the room exactly as it is: the same walls, floor, ceiling and "
+                "beams, the same window and door in the same places, the same camera. The room is "
+                "simply COLD - frost on the glass, pale blue-white light, breath-cold air, the "
+                "colour drained out of the timber.\n"
+                "*** REMOVE EVERYTHING THAT SHOWS IT IS USED. *** No goods, no produce, no crates "
+                "or barrels, no furniture, no counters or shelves of stock, no tools, no hanging "
+                "decoration, no lights lit, no people and no animals. Nothing placed, nothing "
+                "stored, nothing arranged, and NO DEBRIS, dust sheets or ruin either - clutter is "
+                "a human trace too and must not appear.\n"
+                "Almost EMPTY is the target: a bare cold room and the light through the frosted "
+                "window, nothing else. Keep the same soft-painterly finish. No text anywhere.")
+    return ("Revise this image into its FROZEN 'before' state - the land in deep winter, before "
+            "anyone has worked it.\n"
+            "KEEP the natural landscape exactly where it is: the same fields, the same hills, the "
+            "same mountains or horizon, the same camera. They are simply frozen - held under snow "
+            "and frost, still and silent, the colour drained to pale blue-white and cold grey.\n"
+            "*** REMOVE EVERYTHING HUMANISED. *** No buildings, no stalls, no carts, no fences or "
+            "posts, no paths or paving, no tools, no crates, no bunting, no lights, no people and "
+            "no animals. Nothing built, nothing placed, nothing repaired, and NO DEBRIS OR RUINS "
+            "either - broken boards and scattered litter are human traces too and must not appear. "
+            "The land is bare and untouched, not abandoned.\n"
+            "Almost EMPTY is the target: quiet frozen ground, quiet frozen distance, nothing else. "
+            "Keep the same soft-painterly finish. No text anywhere.")
+
+
+def _who(c):
+    base = (c.get("base_character") or "character").strip()
+    return ("a cute stylized anthropomorphic %s in %s"
+            % (base, (c.get("costume") or "this event's costume").strip()))
+
+
+CHARACTER_SCALES = ("beside", "foreground")
+
+
+def add_characters(characters, arriving=None, scale="beside"):
+    """Characters arrive ONE BY ONE across the last two frames.
+
+    The art director's note: not a single character frame. One character in the
+    penultimate frame, the second joining in the last, so the population reads as
+    arriving rather than appearing all at once.
+
+    `arriving` names who is new in THIS frame; anyone else in `characters` is
+    already standing there and must be held unchanged.
+    """
+    arriving = arriving if arriving is not None else characters
+    already = [c for c in characters if c not in arriving]
+    new = " and ".join(_who(c) for c in arriving)
+    held = ("The character%s already in the picture - %s - stay%s exactly where they are, "
+            "unchanged. " % ("s" if len(already) > 1 else "",
+                             " and ".join(_who(c) for c in already),
+                             "" if len(already) > 1 else "s") if already else "")
+    # Two scales, because they trade against each other and both are wanted.
+    #
+    # "beside" is the default and composites cleanly: the characters stand
+    # lateral to the hero at the scene's own scale, and the frame stays
+    # faithful to the completed base.
+    #
+    # "foreground" follows the style guide's camera section - character-centric
+    # framing, large elements close to camera - and the faces read far better.
+    # It costs fidelity: measured across five scenes, 67-95% of image columns
+    # change, because the model re-renders the frame around the character
+    # instead of compositing one into it. Composition survives; pixels do not.
+    if scale == "foreground":
+        place = ("*** THEY ARE BIG AND CLOSE TO CAMERA ***\n"
+                 "They stand in the FOREGROUND, on the near side of the scene, well in front of "
+                 "the hero object - not back beside it. Each one is ABOUT A THIRD OF THE FRAME'S "
+                 "HEIGHT, the largest thing in the picture after the hero, close enough that the "
+                 "face reads instantly. They are the subject of this frame, not dressing in it. A "
+                 "character that reads as a small background figure is wrong.\n"
+                 "Place them to ONE SIDE of the centre line so the hero and the built scene behind "
+                 "them stay visible - overlapping the lower corner of the frame is fine, hiding "
+                 "the hero is not.\n")
+    else:
+        place = ("They stand on the ground BESIDE the central hero object, lateral to it so "
+                 "nothing behind them is hidden, at the scene's own scale - part of the picture "
+                 "rather than in front of it.\n")
+    return ("Revise this image by adding %d character%s: %s.\n"
+            "%s"
+            "%sLarge rounded heads, compact pear-shaped bodies, short simplified limbs, mitten "
+            "hands, oversized expressive eyes and broad friendly expressions readable at thumbnail "
+            "size.\n"
+            "Adding %s is the ONLY change. %s"
+            % (len(arriving), "" if len(arriving) == 1 else "s", new, place, held,
+               "that character" if len(arriving) == 1 else "those characters",
+               HOLD.replace("do NOT add anything, ", "")))
+
+
+# Measured off the shipped Sort2603 and Sort2606 goods sets - 76 icons across six
+# folders - rather than chosen:
+#
+#     canvas                 96x192, a 1:2 PORTRAIT
+#     bbox width  / canvas   0.86 mean   (0.60 - 1.00)
+#     bbox height / canvas   0.90 mean   (0.74 - 0.99)
+#     CONTENT ASPECT w/h     0.48 mean   (0.31 - 0.62)
+#     canvas area covered    0.55 mean
+#
+# The third line is the one that matters and the one three earlier attempts here
+# missed. Every shipped good is ITSELF a portrait object at roughly 1:2, which is
+# why it fills both axes and why the frame never looks empty. An earlier set here
+# measured 0.81 mean aspect and covered 0.27 of the canvas - half the shipped
+# figure - because its objects were square or wide. A harmonica at aspect 1.85
+# cannot fill a 1:2 frame at any scale factor, so the fix is never a bigger
+# number: scaling it up only makes it wider and leaves the same band of dead
+# space above and below.
+#
+# So the requirement moved from the post-processing into the brief. Each good is
+# chosen and presented so that the OBJECT is about twice as tall as it is wide -
+# stood on its end, leaning, hung, or simply a tool that is already long. That is
+# how the shipped set does it, and it is why there is one fill number here now
+# instead of a ladder of size classes: the variation in how much ink lands on the
+# canvas should come from the object (a whisk is mostly air, a sack is solid),
+# never from deliberately shrinking things.
+GOODS_FILL = 0.90
+
+# What a rendered good has to come back as. Outside these it is re-rendered, not
+# rescaled - stretching an object to fit is what makes an icon look wrong.
+GOODS_ASPECT_RANGE = (0.33, 0.68)
+GOODS_MIN_AREA = 0.30
+
+# Measured across the shipped goods: WITHIN one floor the hues run right round the
+# wheel (Sort2603/Goods3 spans 23 to 332 degrees), mean pairwise separation 76-94
+# degrees, only 5-16% of pairs within 15 degrees. A shipped floor is emphatically
+# not one palette. Handing every good on a floor the same palette string put one
+# generated floor's entire catalogue inside 29 degrees of hue.
+#
+# The same measurement also caught the finish being off: shipped goods average
+# 0.71 saturation and 0.81 value, against 0.52 and 0.55 for a set generated
+# without asking. They are brighter and cleaner than a plain "rich colour" brief
+# produces, and that brightness is what makes fifteen different hues still read
+# as one shelf.
+COLOUR_RULE = """
+
+*** ITS COLOUR IS ITS OWN ***
+This good's colour is: %s
+The other goods on this shelf are deliberately DIFFERENT colours from it and from each other - the
+player sorts by colour as well as by shape, so a shelf of one colour is a shelf of one item repeated.
+Do not drift this object toward the colours of the room it sits in; give it the colour named above,
+strongly and unmistakably, as the colour a person would use to describe it.
+What makes these fifteen a set is the FINISH, not the hue: the same clean gloss, the same soft
+rounded shading, the same dark keyline. Colour them BRIGHT and CLEAN - strongly saturated, light in
+tone, like fresh painted toys under good light. Never dull, never greyed, never dark and muddy.
+
+*** HOW LIGHT IT IS - THE WHOLE OBJECT IS HIGH-KEY ***
+Light the object brightly and evenly, as if photographed under a big soft light in a white room.
+EVEN THE SHADOW SIDE STAYS LIGHT: the darkest part of the object is a soft mid-tone, never a deep
+shadow, never near-black. Shading works by dropping a little brightness and adding a little colour,
+not by going dark. Keep the highlights broad and clean. The only genuinely dark thing in the picture
+is the thin keyline around the edge.
+Aim for the object to read as a LIGHT, luminous colour overall - a pale-to-mid version of its hue -
+rather than a deep or dark one. "Deep", "rich", "dark" and "moody" are all wrong here."""
+
+PORTRAIT_RULE = """
+
+*** THE FRAME IS TALL - THE OBJECT MUST BE TALL TOO ***
+This icon is drawn on a TALL PORTRAIT frame, twice as high as it is wide, and the object has to be
+about TWICE AS TALL AS IT IS WIDE so that it fills that frame properly. A short or wide object
+leaves a dead band of empty space above and below it and reads as a tiny icon lost in its box.
+Get the height from the OBJECT, never from the drawing:
+  - stand it on its end, upright, the way it would sit on a shelf;
+  - or lean it, or hang it, or tilt it so its length runs UP the frame;
+  - or show the whole of it including the handle, the stem, the stand it sits on.
+NEVER stretch, squash or distort it to reach the top and bottom, and never blow up a small object
+until it goes soft. It must look like the real thing, in its right proportions, stood so that its
+long axis runs up the picture."""
+
+
+def goods_prompt(item, palette="", siblings=()):
+    """One Sort goods icon.
+
+    `siblings` is the rest of THIS floor's catalogue. Passing it matters: the
+    generator sees one item at a time and cannot avoid a collision it does not
+    know about - the same reason a Merge scene had to be told its own building
+    list before it would draw all of them.
+    """
+    sil = (item.get("silhouette") or "").strip()
+
+    extra = """
+
+*** IT IS A SHELF GOOD ***
+A single real object from this workshop, as the player sorts it onto a shelf. One whole thing on its
+own - not a scene, not a shelf, not a group, no second copy. It is a REAL tool or product of this
+craft, the sort a working shop would actually stock, never a generic blob with the theme's colours
+painted on."""
+
+    extra += PORTRAIT_RULE
+
+    colour = (item.get("palette") or palette or "").strip()
+    if colour:
+        extra += COLOUR_RULE % colour
+
+    if sil:
+        extra += """
+
+*** ITS SILHOUETTE - THIS IS THE POINT OF THE IMAGE ***
+Its outline is: %s
+Commit to that outline completely. The player picks this item off a shelf of similar items by its
+SHAPE ALONE at thumbnail size, so the shape has to be unmistakable before any detail is read.
+It should reach close to the top and the bottom of the frame, and most of the way across.""" % sil
+
+    sibs = [x for x in siblings if x]
+    if sibs:
+        extra += ("""
+
+*** IT MUST NOT LOOK LIKE ANY OF THESE ***
+These are the other goods on this same shelf, and this one is sorted against them:
+    %s
+Its outline must be tellable from every one of them at a glance. If what you are drawing would
+share an outline with any item on that list, change the shape - not the colour, not the label,
+the SHAPE.""" % ", ".join(sibs))
+
+    # This used to ask the generator for the dark keyline, on the reasoning that
+    # a shelf good is outlined where a Sort floor is lineless. But icon_sheet
+    # then paints a keyline too, so every good came back wearing two - a drawn
+    # contour of a few pixels under a 6px painted rim. Measured on the output,
+    # peeling the painted rim lifted the 5th-percentile brightness from 0.24 to
+    # 0.38 and peeling the drawn contour as well lifted it to 0.56, against a
+    # shipped 0.52. The frames were not shaded dark; they were outlined twice.
+    #
+    # So goods now do what every other icon class does: the generator leaves the
+    # edge clean and add_stroke supplies one keyline at a controlled width. That
+    # is also what Mattel's own note asks for - "add a 1-2 pixel stroke" - rather
+    # than whatever weight a generator happens to draw.
+    extra += """
+
+*** NO CONTOUR SHADING AT THE EDGE ***
+Do not darken the object around its own outline. No dark rim, no inked contour, no band of heavy
+ambient occlusion following the silhouette, no vignette. The edge of the object is the same
+brightness as the surface just inside it. The keyline is added afterwards and must not be drawn
+here - drawn as well as added, it doubles up and turns the whole outer edge of the icon dark."""
+
+    out = _object_prompt(item.get("description") or item.get("name", "a shelf good"),
+                         item.get("palette") or palette, extra)
+
+    # The shared style block and the injected render spec both ask for DEEP
+    # colour. That is right for a room and wrong for a shelf icon: measured, the
+    # shipped goods sit at 0.81 value where goods generated under the deep
+    # wording came back at 0.51. Adding a sentence asking for brightness changed
+    # nothing, because three other sentences were still asking for the opposite
+    # and the model is free to pick whichever it likes. So the conflicting words
+    # are REPLACED rather than argued with - the same lesson as the render spec
+    # that quoted a banned instruction and put it back into the prompt.
+    for a, b in (("deep saturated colour",
+                  "bright, clean, high-key saturated colour"),
+                 # TRIED AND REVERTED. Side by side the shipped goods look
+                 # flatter than the shared icon style asks for - measured tonal
+                 # spread 0.43 against 0.70 here - so this replaced "smooth
+                 # airbrushed gradients with a wide tonal range" with bold nearly
+                 # flat colour and a narrow range. Rendered and measured, it made
+                 # every figure slightly WORSE (p25 0.69 -> 0.60, saturation 0.60
+                 # -> 0.57) and two of fifteen icons came back as broken
+                 # fragments. The wide-range wording stays. The tonal gap that
+                 # remains is not caused by it.
+                 ("Rich and appetising, never washed out or greyed.",
+                  "Bright, clean and light in tone - the colour of a freshly painted toy "
+                  "under good light. Never washed out or greyed, and never dark, deep "
+                  "or muddy.")):
+        out = out.replace(a, b)
+    return out
+
+
+def goods_fraction(item, default=GOODS_FILL):
+    """One fill for every good, matching the shipped 0.86 wide / 0.90 tall.
+
+    There is deliberately no per-item size any more. Sizing individual goods down
+    is what produced icons covering 6% of their canvas, and the honest way to
+    make an icon fill its frame is to draw an object that fits it.
+    """
+    return GOODS_FILL
+
+
+
+
+MATERIAL_EXTRA = """
+
+*** IT IS A CONSTRUCTION MATERIAL ***
+A raw building material as a game resource icon: a neat, chunky, self-contained bundle or piece - a
+stack, a bundle, a single worked block - not a finished structure and not a tool in use. It reads at a
+glance as "the stuff you build with"."""
+
+
+def material_prompt(material, palette=""):
+    """One Blocks construction-material icon.
+
+    Blocks' mechanic-specific asset class, the way recipes are Dessert's and
+    chains are Merge's: each construction step consumes 2-3 themed material
+    icons, so they are a set and share a palette.
+    """
+    return _object_prompt(material.get("description") or material.get("name", "a material"),
+                          material.get("palette") or palette, MATERIAL_EXTRA)
+
+
+# Section 20 of Blocks Art.docx, the studio's own character formula. Used
+# verbatim because it is the studio's language for its own cast, and because
+# sections 9-14 of that document are entirely about character construction -
+# head 40-55% of visual mass, oval/pear body, mitten hands, thumbnail-readable
+# face - which no generic prompt of mine would have got right.
+CHARACTER_FORMULA = (
+    "premium casual game character design, large rounded head, compact pear-shaped body, short "
+    "simplified limbs, oversized expressive eyes, soft rounded facial features, exaggerated friendly "
+    "expression, simplified anatomy, toy-like proportions, smooth organic shapes, soft matte "
+    "materials, subtle painterly 3D shading, broad soft highlights, gentle ambient occlusion, "
+    "colorful oversized accessories, highly readable silhouette, charming playful personality, "
+    "polished stylized mobile game artwork"
+)
+
+
+def character_prompt(character, palette=""):
+    """One event character: the EXISTING cast member in this event's costume.
+
+    The house convention across Merge, Dessert and Blocks is that a character
+    art requirement is the COSTUME - the animal underneath is already drawn and
+    is reused. So the base animal is stated as a constraint, not invented here.
+    """
+    base = (character.get("base_character") or "").strip()
+    costume = (character.get("costume") or "").strip()
+    actions = [a for a in (character.get("scene_actions") or []) if str(a).strip()]
+    who = ("Cute stylized anthropomorphic %s" % base) if base else "Cute stylized anthropomorphic character"
+    reuse = ("\n\n*** THIS IS AN EXISTING CHARACTER IN A NEW COSTUME ***\n"
+             "The %s itself is already designed and must stay recognisably the same animal - same "
+             "species, same friendly proportions. What is new is only the costume: %s. Draw the "
+             "costume as the event's contribution, not a redesign of the character."
+             % (base, costume)) if base and costume else ""
+    pose = ("\n\nPose: standing, facing the viewer, full body visible head to feet, weight on both "
+            "feet, arms relaxed and clear of the body so the silhouette reads."
+            + (" In character: %s." % actions[0] if actions else ""))
+    return """*** A SINGLE GAME CHARACTER ***
+{who}: {costume}
+{formula}
+
+Draw ONE character only, centred, filling the frame top to bottom. Nothing else is in the picture - no
+scene, no furniture, no props on the ground, no second character.
+
+{backdrop}
+
+*** FACE ***
+The face must communicate its emotion at THUMBNAIL SIZE. Eyes large, rounded, set well apart, each with
+a dark pupil, a lighter iris and a bright highlight. The mouth is exaggerated and may take a large share
+of the face. The expression is broad and clear - no subtle realistic acting.
+
+*** PROPORTIONS ***
+The head is roughly 40-55% of the character's total visual mass. Body oval, pear or bean shaped. Limbs
+short and simplified; hands as mittens or rounded paws; legs very short or partly hidden.
+NOT athletic anatomy, NOT realistic muscles, NOT long limbs, NOT a narrow face, NOT anime proportions.
+
+*** ACCESSORIES ***
+Large and readable from a distance, in the same rounded shape language. No tiny buckles, no stitching,
+no micro-mechanical detail.
+
+*** COLOUR ***
+Built from {palette}. Warm key light, cool ambient shadow, a subtle rim light around the silhouette.
+
+{no_text}{reuse}{pose}""".format(
+        who=who, costume=costume or "in this event's costume", formula=CHARACTER_FORMULA,
+        backdrop=ICON_BACKDROP, palette=palette or "the event palette",
+        no_text=ICON_NO_TEXT, reuse=reuse, pose=pose)
+
+
 def _object_prompt(subject, palette, extra=""):
     """The shared shape for a standalone themed object rendered as a cut-out."""
     return """*** A SINGLE OBJECT, ON ITS OWN ***

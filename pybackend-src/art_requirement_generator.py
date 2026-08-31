@@ -60,6 +60,12 @@ import json
 import anthropic
 
 import ideation_store as store
+# The portrait band is shared with the renderer rather than restated, so the two
+# cannot drift. Shape itself is deliberately NOT an enum - see the goods block in
+# asset_prompts.py: a fixed list of shapes caps the catalogue at that many
+# distinct objects, and five floors drawing from one list of fifteen produced a
+# set that repeated down every column.
+from asset_prompts import GOODS_ASPECT_RANGE as _GOODS_ASPECT
 from ideation_generator import (
     KNOWN_TYPES, log, _read_template, _client, _call_claude, _call_ollama,
     write_feedback_digest, find_latest_doc,
@@ -211,6 +217,17 @@ PRODUCER_SCHEMA = {
     "additionalProperties": False
 }
 
+MATERIAL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "name": {"type": "string", "description": "e.g. 'Driftwood Plank', 'Coral Brick'."},
+        "description": {"type": "string", "description": "The raw material as a resource icon - a stack, a bundle, a worked block. Not a finished structure."},
+        "palette": {"type": "string"}
+    },
+    "required": ["name", "description", "palette"],
+    "additionalProperties": False
+}
+
 INGREDIENT_SCHEMA = {
     "type": "object",
     "properties": {
@@ -265,8 +282,39 @@ ZONE_SCHEMA = {
             "items": BUILDING_SCHEMA,
             "description": "The buildable structures in this zone, each described at its FINAL level. Empty for types with no discrete buildings."
         },
-        "reference_notes": {"type": "string", "description": "What reference art/mood imagery Art needs for this zone."}
+        "reference_notes": {"type": "string", "description": "What reference art/mood imagery Art needs for this zone."},
+        "goods": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "e.g. 'Glazed Bowl', 'Ink Tin'."},
+                    "description": {"type": "string", "description": "The single product as it stands on a shelf, in one line. It must MATCH the shape family, and it must not repeat another good's use on this floor - one thing to store liquid, one to cut, one to measure, and so on."},
+                    "silhouette": {"type": "string", "description": "This good's OWN outline, in one line, as a shape rather than as a name - 'a deep round cup on a long handle bent at an angle', 'four flat shelves stacked with gaps between them'. It must be the shape the real object actually has. Two rules on it: no two goods in the WHOLE event may share an outline, not just no two on this floor; and the outline must be ROUGHLY TWICE AS TALL AS IT IS WIDE (%s-%s), because the icon frame is 1:2 and a square or wide object leaves half the frame empty. Get that height from the object - a tall tool, or a wide one stood on its end - never by stretching it." % (_GOODS_ASPECT[0], _GOODS_ASPECT[1])},
+                    "palette": {"type": "string", "description": "THIS GOOD's own dominant colour, not the floor's. Every good on a floor must be a clearly different colour from every other - the player sorts by colour as well as by shape, and a shelf of one palette is a shelf of one item repeated. Spread them right round the hue wheel: the shipped goods sets average 76-94 degrees of separation between any two items on a floor. What keeps a floor coherent is the shared finish - same gloss, same keyline, bright and clean - not a shared hue."}
+                },
+                "required": ["name", "description", "silhouette", "palette"],
+                "additionalProperties": False
+            },
+            "description": "Sort goods: the shelf-icon catalogue for THIS zone, roughly 15 small collectible items. Sort's loop is sorting these BY EYE, so three strict rules hold. (1) Every good is a REAL tool or product of THIS floor's craft, the sort that shop would actually stock - not a generic shape with the theme painted on. (2) No two goods anywhere in the event are the same KIND of object: if one floor has a bottle, no other floor gets a bottle. (3) No two goods anywhere share an OUTLINE. (4) No two goods on a FLOOR share a COLOUR - spread them round the hue wheel and let the shared finish, not a shared palette, hold the floor together. Build the list craft-first - pick real items that already differ in shape - because picking shapes first and theming them afterwards produces invented filler, and giving every floor the same list of shapes produces a set that repeats down every column. Empty for event types with no sorting."
+        },
+        "before_state": {
+            "type": "string",
+            "description": "How THIS scene looks before anything is built, in its own terms - shuttered and dusty, bare dry ground under a flat sky, dim and cavernous, a winter-bare orchard, a dark unlit field. It must be EMPTY of everything humanised, and it must differ from the other scenes' before-states: the point of this field is variety, because a previous set gave every scene the same treatment and they all looked alike. Frozen is one option among many, not the rule - pick what suits the theme."
+        },
+        "interior": {
+            "type": "boolean",
+            "description": "True when this scene is INSIDE - a shop, a barn, a hall. Blocks scenes should mix interiors and exteriors rather than being all outdoors. It changes the 'before' frame: an exterior freezes the land, an interior freezes the room and keeps its shell."
+        },
+        "blunt_steps": {
+            "type": "array",
+            "items": {"type": "integer", "minimum": 1},
+            "description": "Build-step numbers (1-based) that must be removed by their OWN dedicated edit rather than in a bulk list. A bulk removal silently leaves three kinds of object standing: the hero, a large structure, and a large flat ground element such as a laid floor. Steps 1 and 2 are handled automatically; list any OTHER step that is one of those. Empty for event types with no build sequence."
+        }
     },
+    # interior and blunt_steps are deliberately NOT required: both are optional
+    # production hints, usually absent, and forcing a constrained decoder to
+    # reason about them on every zone would cost more than it buys.
     "required": ["zone_number", "zone_theme", "palette_or_mood", "main_tone", "scene_material",
                  "construction_steps", "buildings", "reference_notes"],
     "additionalProperties": False
@@ -350,6 +398,11 @@ ART_REQUIREMENT_SCHEMA = {
             "items": INGREDIENT_SCHEMA,
             "description": "Dessert ingredients: the raw components the recipes are built from. Dessert2608 shipped 11 - 6 common and 5 secret. Empty for event types with no recipes."
         },
+        "construction_materials": {
+            "type": "array",
+            "items": MATERIAL_SCHEMA,
+            "description": "Blocks construction material icons. Each construction step consumes 2-3 of these, so they are a themed set sharing one palette. Empty for event types with no build materials."
+        },
         "event_motif": {
             "type": "string",
             "description": "The one recurring motif this event stamps on its assets - Dessert2608's was the 5th-anniversary numeral 5, which appears worked into every one of its 24 common recipes. One short phrase. Empty if the event has no such motif."
@@ -375,7 +428,7 @@ ART_REQUIREMENT_SCHEMA = {
         },
         "notes": {"type": "string"}
     },
-    "required": ["title", "gameplay_overview", "zones", "producers", "recipes", "ingredients", "event_motif", "gameplay_specific_content", "characters", "event_extras", "art_direction_guidance", "ui_icon_refresh_notes", "notes"],
+    "required": ["title", "gameplay_overview", "zones", "producers", "recipes", "ingredients", "construction_materials", "event_motif", "gameplay_specific_content", "characters", "event_extras", "art_direction_guidance", "ui_icon_refresh_notes", "notes"],
     "additionalProperties": False
 }
 
@@ -701,6 +754,13 @@ def generate_main():
 
     event_type = payload.get("event_type", "")
     ideation_theme = payload.get("ideation_theme") or {}
+    # An Art Requirement can start from a theme this tool just generated, OR from
+    # a One-Pager that already exists on disk - one finalized in an earlier
+    # session, written by hand, or saved by a colleague into the shared folder.
+    # Only the markdown is kept when a theme is finalized, so the document text
+    # is the honest thing to pass back rather than a theme dict reconstructed
+    # from it - and it is also what carries any edits made after saving.
+    ideation_doc_text = (payload.get("ideation_doc_text") or "").strip()
     events_root = payload.get("events_root", "")
     provider = payload.get("provider") or "anthropic"
     author_id = payload.get("author_id", "")
@@ -713,8 +773,10 @@ def generate_main():
     if event_type not in KNOWN_TYPES:
         print(json.dumps({"error": f"Unknown event type: {event_type}"}))
         sys.exit(1)
-    if not ideation_theme.get("theme_name"):
-        print(json.dumps({"error": "No finalized Ideation theme supplied - select one as Final first."}))
+    if not ideation_theme.get("theme_name") and not ideation_doc_text:
+        print(json.dumps({"error": "No Ideation theme or One-Pager supplied - either "
+                                   "select a generated theme as Final, or pick an "
+                                   "existing One-Pager to build from."}))
         sys.exit(1)
 
     try:
@@ -723,9 +785,23 @@ def generate_main():
         art_req_folder = os.path.join(events_root, event_type, "Art Requirements") if events_root else ""
         _, past_doc_text = find_latest_doc(art_req_folder)
 
+        if ideation_doc_text:
+            source_block = (
+                "Approved One-Pager Ideation document to translate into art "
+                "direction. This is the finished, signed-off brief - treat every "
+                "detail in it as decided, and do not invent a different theme:\n\n"
+                "----- BEGIN ONE-PAGER -----\n"
+                f"{ideation_doc_text}\n"
+                "----- END ONE-PAGER -----"
+            )
+        else:
+            source_block = (
+                "Finalized Ideation theme to translate into art direction:\n"
+                f"{json.dumps(ideation_theme, ensure_ascii=False)}"
+            )
+
         user_message = (
-            f"Finalized Ideation theme to translate into art direction:\n"
-            f"{json.dumps(ideation_theme, ensure_ascii=False)}\n\n"
+            f"{source_block}\n\n"
             f"Generate exactly {variation_count} distinct Art Requirement variations "
             f"for this theme - different concrete visual executions of the SAME "
             f"approved theme (not different themes). Vary zone composition, "

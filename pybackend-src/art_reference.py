@@ -363,7 +363,87 @@ _DESSERT_FAILURES = (
     "square plate floating on a white or empty background. "
 ) + _SHARED_FAILURES
 
-FAILURES_BY_TYPE = {"Dessert": _DESSERT_FAILURES}
+# Blocks' negatives are the studio's own, from section 22 of Blocks Art.docx.
+# They matter more than usual here because the default block contradicts the
+# Blocks guide on three points: it demands lineless (the guide asks for soft edge
+# contrast WITH an allowed slight darker edge and rim light), matte-only with no
+# specular (the guide asks for broad soft highlights and volumetric glow), and no
+# material texture (the guide asks for simplified stylised wood, metal and
+# fabric). Injecting it into a Blocks render would brief against the house style.
+_BLOCKS_FAILURES = (
+    "The attached reference images are the SHIPPED GAME ART for this event type. Match their "
+    "lighting, their depth and their finish.\n"
+    "Avoid all of the following: photorealistic, realistic anatomy, realistic skin texture, pores, "
+    "hyper-detailed textures, gritty, dark horror, sharp cel shading, thick black outlines, flat "
+    "vector art, anime proportions, realistic proportions, long limbs, thin characters, excessive "
+    "micro-details, harsh metallic reflections, complex realistic backgrounds, noisy textures, "
+    "monochromatic lighting, hard-edged shadows, overly glossy plastic, realistic photography.\n"
+    "EDGES: no thick black outline and no uniform ink contour - forms separate by colour, lighting "
+    "and soft shadow. A slight darker edge, ambient occlusion or a rim light on an important "
+    "silhouette is correct and wanted; a drawn outline is not.\n"
+    "DETAIL IS GRADED, not uniform: highest in the foreground, medium-high on characters, medium in "
+    "the midground, LOW in the background. Roughly 70% large and medium readable forms, 20% "
+    "secondary detail, 10% tiny accents. Do not detail every part equally.\n"
+    "No text, letters or numbers anywhere."
+)
+
+# Merge's negatives are the studio's own, from section 27 of Merge Art.docx,
+# plus the lineless rule the Merge spec's section 6.2 depends on. The default
+# block contradicts the document twice - it demands matte-only with no specular
+# and bans material texture, where the document asks for glossy clean materials,
+# PBR-inspired shading and controlled emissive glow. Same bug class as Blocks.
+_MERGE_FAILURES = (
+    "Avoid all of the following: photorealistic, realistic architecture, realistic proportions, "
+    "gritty textures, dark horror aesthetic, realistic human anatomy, ultra-wide-angle "
+    "perspective, fisheye lens, excessive perspective distortion, low-poly assets, flat 2D "
+    "illustration, anime, manga, watercolour, painterly brush strokes, realistic environmental "
+    "wear, dirty surfaces, excessive texture noise, desaturated palette, monochromatic palette, "
+    "harsh shadows, dramatic photographic lighting, excessive bloom, overly thin geometry, "
+    "microscopic details, cluttered composition, physically realistic industrial design.\n"
+    "EDGES: the SCENE art is LINELESS - no dark contour, keyline or ink line around anything, and "
+    "no darker band ringing a shape. Forms separate by colour, shading and ambient occlusion. "
+    "(Item and producer ICONS are the opposite and do carry a rim - do not confuse the two.)\n"
+    "LIGHT IS NOT EVEN: dark atmospheric surroundings with bright, readable, illuminated hero "
+    "objects. Do NOT light the whole scene equally, and keep the background darker, softer and "
+    "less saturated than the play area.\n"
+    "GLOW IS CONTROLLED: soft and magical, never neon cyberpunk, never blown-out bloom.\n"
+    "No text, letters or numbers anywhere except signage the brief explicitly authorises."
+)
+
+# Sort's negatives are the studio's own, from section 21 of Sort Art.docx, minus
+# "empty rooms" - the measured shipped floors are 93% quiet surface and the
+# density instinct is exactly what made the first generated attempt read
+# cluttered. The measured composition targets are added as positive instruction
+# because a negative list cannot express them.
+_SORT_FAILURES = (
+    "Avoid all of the following: photorealistic, realistic architecture, gritty, dark horror, "
+    "harsh shadows, cinematic realism, ultra-realistic materials, rough textures, dirty surfaces, "
+    "thin objects, sharp edges, heavy black outlines, comic book style, flat 2D illustration, "
+    "watercolour, sketch, realistic human proportions, excessive perspective distortion, fisheye "
+    "lens, dramatic contrast, muted colours, monochrome palette.\n"
+    "EDGES: separation comes from colour contrast, soft shadow, ambient occlusion and slight "
+    "bevels. A subtle darker contour on an important silhouette is fine; a thick black outline, "
+    "an ink line or a cel-shaded border is not.\n"
+    "SHADING, per object: bright top surface, mid-tone front face, darker side face, one small "
+    "highlight, soft ambient occlusion underneath. Not detailed realistic lighting.\n"
+    "MATERIALS: smooth plastic-like for props and appliances, MATTE painted for walls, floors and "
+    "furniture, and glossy only as a selective accent on glass, screens, water and metal. Never "
+    "heavy realistic PBR.\n"
+    "*** THE PLATE IS MOSTLY EMPTY - THIS IS THE MOST COMMONLY MISSED RULE ***\n"
+    "Roughly 90% of the floor plate is quiet, undecorated surface. Every object sits in its own "
+    "clear pocket with floor visible all around it; NOTHING overlaps or occludes anything else, "
+    "because the player has to read each object as a separate silhouette. Ten to fourteen objects "
+    "in total, no more.\n"
+    "The UPPER wall band carries at most two or three small fittings - never crowd the top. The "
+    "MIDDLE band carries the main furniture mass and is the densest. The CENTRE LANE stays "
+    "clearest; weight the left and right flanks.\n"
+    "No text, letters or numbers anywhere."
+)
+
+FAILURES_BY_TYPE = {"Dessert": _DESSERT_FAILURES,
+                    "Blocks": _BLOCKS_FAILURES,
+                    "Merge": _MERGE_FAILURES,
+                    "Sort": _SORT_FAILURES}
 NAMED_FAILURES = _DEFAULT_FAILURES          # kept for callers that import it
 
 
@@ -408,6 +488,32 @@ def build_scene_prompt(events_root, event_type, zone, doc_title="",
     if steps:
         scene.append("Buildings / upgrades to show: " +
                      "; ".join(str(s) for s in steps[:10]))
+
+    # The zone's BUILDINGS reach the scene prompt. They did not before: this
+    # builder only ever read construction_steps, and a Merge zone carries its
+    # eight buildings in `buildings` instead - so a Merge scene was briefed with
+    # no idea which structures it was supposed to contain, and came back with
+    # four or five vague ones. The count is stated as a number because "several
+    # buildings" is exactly the instruction that produces five.
+    blds = [b for b in (zone.get("buildings") or []) if b.get("name")]
+    if blds:
+        lines = ["EVERY ONE OF THESE %d BUILDINGS IS IN THIS SCENE, all visible and all "
+                 "distinguishable from each other by silhouette alone. Do not draw fewer, do not "
+                 "merge two into one, and do not substitute a generic structure for a named one:"
+                 % len(blds)]
+        for b in blds:
+            bits = [str(b.get("name"))]
+            if b.get("silhouette"):
+                bits.append(str(b["silhouette"]))
+            feats = [str(f) for f in (b.get("key_features") or []) if str(f).strip()]
+            if feats:
+                bits.append("recognisable by " + ", ".join(feats[:3]))
+            lines.append("  %s. %s" % (b.get("building_number", "-"), " - ".join(bits)))
+        levels = sum(int(b.get("max_level") or 1) for b in blds)
+        lines.append("Upgrade points in this scene: %d across %d buildings - the taller, more "
+                     "elaborate buildings are the ones that upgrade furthest, so give those a "
+                     "visibly grander silhouette than the single-level ones." % (levels, len(blds)))
+        scene.append("\n".join(lines))
     if ad.get("lean_into"):
         scene.append("Lean into: " + "; ".join(ad["lean_into"]))
     if ad.get("avoid"):

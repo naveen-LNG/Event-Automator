@@ -725,6 +725,183 @@ ipcMain.handle('ideation:testOllama', async (evt, { baseUrl, model }) => {
   }
 });
 
+// ---- PRESENCE -------------------------------------------------------------
+// Two designers pointed at the same shared folder could both work an event and
+// neither would know. This is the smallest honest fix: each machine drops a
+// file saying who it is and when it last checked in, and everyone reads
+// everyone else's.
+//
+// It is ADVISORY and deliberately so. Nothing is blocked and nothing has to be
+// released, because a hard lock on a synced folder fails in the one way you
+// cannot recover from in an office: a laptop sleeps or the app crashes, the lock
+// survives, and someone has to be talked through deleting a file. A record that
+// simply ages out has no such state to get stuck in.
+//
+// The numbers are set by OneDrive rather than by taste. A write here is not
+// visible on another machine until the folder syncs, which is seconds at best
+// and minutes on a slow link, so the timeout has to be generous enough that a
+// working colleague does not flicker in and out of the banner. Thirty seconds
+// between check-ins against a five-minute timeout means ten missed writes before
+// someone disappears.
+const PRESENCE_TTL_MS = 5 * 60 * 1000;
+
+function presenceDir(eventType) {
+  return path.join(ideationEventsRoot(), eventType, '.active');
+}
+
+// Windows forbids these in a filename, and an AzureAD id is DOMAIN\user.
+function presenceFileName(authorId) {
+  return (authorId || 'unknown').replace(/[\\/:*?"<>|]/g, '_') + '.json';
+}
+
+ipcMain.handle('presence:announce', async (evt, { eventType, detail }) => {
+  try {
+    const cfg = loadConfig();
+    if (!eventType || !cfg.authorId) return { success: false, output: 'No event type or identity.' };
+    const dir = presenceDir(eventType);
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, presenceFileName(cfg.authorId));
+    // startedAt survives a refresh so the banner can say how long someone has
+    // been in, not merely that they pinged a moment ago.
+    let startedAt = Date.now();
+    try {
+      const prev = JSON.parse(fs.readFileSync(file, 'utf8'));
+      if (prev && prev.startedAt && (Date.now() - prev.lastSeen) < PRESENCE_TTL_MS) {
+        startedAt = prev.startedAt;
+      }
+    } catch { /* first check-in, or a half-written file mid-sync */ }
+    fs.writeFileSync(file, JSON.stringify({
+      authorId: cfg.authorId,
+      authorName: cfg.authorName || cfg.authorId,
+      avatarColor: cfg.avatarColor || '',
+      eventType,
+      detail: detail || '',
+      startedAt,
+      lastSeen: Date.now(),
+    }), 'utf8');
+    return { success: true };
+  } catch (e) {
+    // A sync conflict or a locked file must never take the UI down with it -
+    // presence is a courtesy, not a feature anyone is blocked on.
+    return { success: false, output: e.message };
+  }
+});
+
+ipcMain.handle('presence:list', async (evt, { eventType }) => {
+  try {
+    const cfg = loadConfig();
+    const dir = presenceDir(eventType);
+    if (!fs.existsSync(dir)) return { success: true, others: [] };
+    const now = Date.now();
+    const others = [];
+    for (const name of fs.readdirSync(dir)) {
+      if (!name.endsWith('.json')) continue;
+      let rec;
+      try { rec = JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8')); }
+      catch { continue; }            // mid-sync write, ignore it this round
+      if (!rec || !rec.authorId) continue;
+      if (rec.authorId === cfg.authorId) continue;          // that is you
+      if (!rec.lastSeen || (now - rec.lastSeen) > PRESENCE_TTL_MS) continue;
+      others.push({
+        authorId: rec.authorId,
+        authorName: rec.authorName || rec.authorId,
+        avatarColor: rec.avatarColor || '',
+        detail: rec.detail || '',
+        sinceMs: now - (rec.startedAt || rec.lastSeen),
+        lastSeenMs: now - rec.lastSeen,
+      });
+    }
+    others.sort((a, b) => a.authorName.localeCompare(b.authorName));
+    return { success: true, others };
+  } catch (e) {
+    return { success: false, output: e.message };
+  }
+});
+
+ipcMain.handle('presence:clear', async (evt, { eventType }) => {
+  try {
+    const cfg = loadConfig();
+    if (!eventType || !cfg.authorId) return { success: true };
+    fs.unlinkSync(path.join(presenceDir(eventType), presenceFileName(cfg.authorId)));
+    return { success: true };
+  } catch (e) {
+    // Already gone is the normal case when leaving a view you never announced.
+    return { success: true, output: e.message };
+  }
+});
+
+// Leaving without checking out is the common case - the window is closed, the
+// machine sleeps, the app crashes. Clearing on the way out is a courtesy that
+// makes the banner accurate sooner; the TTL is what actually guarantees it.
+app.on('before-quit', () => {
+  try {
+    const cfg = loadConfig();
+    if (!cfg.authorId) return;
+    const root = ideationEventsRoot();
+    if (!fs.existsSync(root)) return;
+    for (const type of fs.readdirSync(root)) {
+      const f = path.join(root, type, '.active', presenceFileName(cfg.authorId));
+      try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch { /* best effort */ }
+    }
+  } catch { /* never block the quit */ }
+});
+
+// Every One-Pager already sitting in the shared folder for this event type,
+// whichever machine wrote it. This is what lets someone who ALREADY has a
+// signed-off One-Pager go straight to the Art Requirement step instead of being
+// forced to generate throwaway themes first — including a One-Pager a colleague
+// finalized, since the folder is shared.
+//
+// .md is what this tool writes; .txt is accepted because hand-written briefs
+// turn up as text. A .pdf is listed but flagged unreadable — the real shipped
+// One-Pagers are PDFs and the user should see them here rather than wonder why
+// their event is missing, even though we cannot pass one to the model.
+ipcMain.handle('ideation:listOnePagers', async (evt, { eventType }) => {
+  try {
+    const dir = path.join(ideationEventsRoot(), eventType, 'One-Pager Ideation');
+    if (!fs.existsSync(dir)) return { success: true, docs: [] };
+    const docs = fs.readdirSync(dir)
+      .filter(n => /\.(md|txt|pdf)$/i.test(n))
+      .map(n => {
+        const p = path.join(dir, n);
+        let st; try { st = fs.statSync(p); } catch { return null; }
+        if (!st.isFile()) return null;
+        return {
+          name: n,
+          path: p,
+          modified: st.mtimeMs,
+          bytes: st.size,
+          readable: !/\.pdf$/i.test(n),
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.modified - a.modified);
+    return { success: true, docs };
+  } catch (e) {
+    return { success: false, output: e.message };
+  }
+});
+
+ipcMain.handle('ideation:readOnePager', async (evt, { docPath }) => {
+  try {
+    const root = ideationEventsRoot();
+    const resolved = path.resolve(docPath);
+    // Only ever read out of the ideation folder the user has configured - a path
+    // arriving from the renderer is not a licence to read anywhere on disk.
+    if (!resolved.startsWith(path.resolve(root) + path.sep)) {
+      return { success: false, output: 'That file is outside the ideation data folder.' };
+    }
+    if (/\.pdf$/i.test(resolved)) {
+      return { success: false, output: 'PDF One-Pagers cannot be read by this tool yet. Save or export it as Markdown or text first.' };
+    }
+    const text = fs.readFileSync(resolved, 'utf8');
+    if (!text.trim()) return { success: false, output: 'That One-Pager is empty.' };
+    return { success: true, text, name: path.basename(resolved) };
+  } catch (e) {
+    return { success: false, output: e.message };
+  }
+});
+
 // "Select as Final" — writes the theme as a Markdown 1-Pager into the same
 // per-type "One-Pager Ideation" folder the real PDFs already live in (e.g.
 // ideationData/Events/Merge/One-Pager Ideation/Merge2608 One-Pager Ideation.pdf).
@@ -818,7 +995,7 @@ Generated by the Event Automator Ideation tab (Claude API). Treat as a first dra
 // same real-template-verified structure backs drafts, regenerations, and
 // the final save — no second markdown template to keep in sync in JS. ----
 
-ipcMain.handle('artreq:generate', async (evt, { eventType, ideationTheme, variationCount }) => {
+ipcMain.handle('artreq:generate', async (evt, { eventType, ideationTheme, ideationDocText, ideationDocName, variationCount }) => {
   const cfg = loadConfig();
   const { provider } = resolveIdeationProvider(cfg);
   if (!provider) {
@@ -829,6 +1006,10 @@ ipcMain.handle('artreq:generate', async (evt, { eventType, ideationTheme, variat
   fs.writeFileSync(tmp, JSON.stringify({
     event_type: eventType,
     ideation_theme: ideationTheme,
+    // Set instead of ideation_theme when the designer already had a One-Pager.
+    // The backend takes either.
+    ideation_doc_text: ideationDocText || '',
+    ideation_doc_name: ideationDocName || '',
     variation_count: count,
     provider,
     author_id: cfg.authorId,

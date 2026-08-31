@@ -41,6 +41,120 @@ are the opposite — see §6.2. Do not confuse the two.)
 
 ---
 
+## 1b. The style bible — from `Merge Art.docx`
+
+The studio's own 30-section art-direction breakdown, written to be reusable
+across themes. Checked against the shipped `Merge2608/Texture/Scene*` boards
+before being adopted: the night boards are exactly what §8 below describes —
+deep navy surroundings with a bright violet play area — so this is the house
+look, not a proposal.
+
+> **One-line descriptor:** *a premium, whimsical, toy-like 3D mobile-game diorama
+> with rounded exaggerated geometry, saturated theme-park colours, soft cinematic
+> lighting, rich decorative detail, and an elevated three-quarter composition.*
+
+It sits between **3D asset render + illustrated concept art + mobile game
+environment + miniature diorama**. It must NOT read as photorealistic,
+Pixar-realistic, semi-realistic, low-poly, or hand-painted.
+
+### The visual DNA
+
+| | |
+|---|---|
+| Geometry | rounded, simplified, chunky, **exaggerated bevels** |
+| Proportions | exaggerated, toy-like |
+| Camera | elevated three-quarter, **orthographic-inspired**, little perspective distortion |
+| Detail | high quantity, simplified per item |
+| Materials | **glossy, smooth, clean** |
+| Lighting | soft, colourful, cinematic |
+| Colour | highly saturated but harmonised |
+| Background | atmospheric, **darker than the foreground** |
+| Texture | minimal physical texture; material and colour do the work |
+
+### §8 Contrast — the strongest single characteristic
+
+**Dark environment + bright attractions.** Dark sky against a luminous stage,
+dark foliage against glowing lanterns, dark water against a colourful boat.
+
+> **Do not illuminate the whole scene equally.** Dark atmospheric surroundings,
+> highly readable illuminated hero objects. That is what creates the focal point.
+
+Palette hierarchy, in order: background deep navy / dark blue / dark teal /
+muted purple → environment blue, turquoise, violet, green → primary attractions
+purple, magenta, cyan, orange → premium accents gold, yellow, warm orange →
+highlights white, cream, soft pink, light blue.
+
+### §9–10 Lighting layers
+
+Soft ambient base · **warm practical lights** (lanterns, bulbs, candles, stage
+lights) making warm yellow-orange pools · **cool environmental fill** in blue,
+purple or cyan · subtle rim light · firm contact shadows · **ambient occlusion,
+which the doc calls very important** for depth, grounding and separation.
+
+Controlled emissive glow and gentle bloom — *"soft and magical rather than
+aggressive"*. Never neon cyberpunk.
+
+### §16 Decorative density, in five levels
+
+1 hero object · 2 supporting structures (platforms, stages, buildings) ·
+3 medium props (tables, chairs, plants, lamps) · 4 micro details (flowers, bulbs,
+ornaments, trim) · 5 atmospheric details (glow, shadow, foliage depth, background
+silhouettes). Organising detail this way is what keeps a dense scene readable.
+
+### §17 Composition — a miniature theme-park diorama
+
+A central visual anchor with secondary attractions distributed around it:
+
+```
+            BACKGROUND
+   [A]        [HERO]        [B]
+   [C]       [CENTRE]       [D]
+            FOREGROUND
+```
+
+Central symmetry or radial arrangement, clear pathways, strong
+foreground-to-background depth. **§20:** the ground is never a plain surface —
+curved pathways, platforms, decorative borders, water, garden islands, circular
+plazas, layered terrain, which frame the attractions.
+
+### §28 Tier hierarchy — what survives a theme change
+
+When a new theme fights the style, these give way in this order, and tier 1
+never does:
+
+1. **3D stylized mobile-game aesthetic — never changes**
+2. toy-like rounded geometry
+3. diorama composition + elevated three-quarter camera
+4. bright saturated palette
+5. soft cinematic lighting
+6. decorative fantasy architecture
+7. micro-detail and theme-specific props
+
+### §26 Theme formula
+
+`[THEME] + [GAMEPLAY/ACTIVITY] + [LANDMARKS] + [PROPS]`, with the style block
+left unchanged. The theme changes; the visual language does not.
+
+### One conflict this document settles
+
+The shared named-failure block used to forbid every event type any sheen,
+specular hit or mirror highlight, and to ban material texture outright. This
+document asks for the opposite on both counts: *glossy, smooth, clean*
+materials, *polished PBR-inspired shading*, controlled emissive glow and gentle
+bloom. Merge now has its own failure block carrying the document's §27 negatives
+instead — see `art_reference.FAILURES_BY_TYPE`.
+
+> **Note for anyone editing this file:** every word here is injected verbatim
+> into the render prompt, so a paragraph *describing* a banned instruction reads
+> as the instruction itself. An earlier draft of this section quoted the
+> matte-only rule to explain that it no longer applies, and the quoted rule went
+> straight back into the prompt. Describe superseded rules; never quote them.
+
+Lineless still holds: the doc never asks for outlines, and §6.2 keeps the
+scene-lineless / icon-outlined split intact.
+
+---
+
 ## 2. Material identity per scene
 
 This is the strongest organising idea in Merge2606 and it has no equivalent in

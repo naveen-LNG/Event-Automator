@@ -41,6 +41,12 @@ contextBridge.exposeInMainWorld('api', {
   ideationGenerate: (params) => ipcRenderer.invoke('ideation:generate', params),
   ideationRegenerate: (params) => ipcRenderer.invoke('ideation:regenerate', params),
   ideationSaveFinal: (params) => ipcRenderer.invoke('ideation:saveFinal', params),
+  ideationListOnePagers: (params) => ipcRenderer.invoke('ideation:listOnePagers', params),
+  ideationReadOnePager: (params) => ipcRenderer.invoke('ideation:readOnePager', params),
+
+  presenceAnnounce: (params) => ipcRenderer.invoke('presence:announce', params),
+  presenceList: (params) => ipcRenderer.invoke('presence:list', params),
+  presenceClear: (params) => ipcRenderer.invoke('presence:clear', params),
   ideationTestOllama: (params) => ipcRenderer.invoke('ideation:testOllama', params),
 
   artReqGenerate: (params) => ipcRenderer.invoke('artreq:generate', params),

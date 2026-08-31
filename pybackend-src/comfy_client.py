@@ -175,6 +175,12 @@ def upload_image(base_url, local_path, timeout=180):
 
 
 # -------------------------------------------------------------- workflow ---
+# The node accepts only these. A value outside the list is not a soft failure:
+# ComfyUI rejects the whole workflow with HTTP 400, so one typo failed all 75
+# renders of a pass. Validated here and reported, rather than sent and refused.
+VALID_ASPECTS = ("1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4",
+                 "9:16", "16:9", "21:9", "Auto")
+
 BASE_SCALE = (1115, 994)              # what the approved Art Style.json exported at
 BASE_PIXELS = BASE_SCALE[0] * BASE_SCALE[1]
 
@@ -217,6 +223,11 @@ def build_workflow(prompt, ref_names=(), image_count=1, use_search=False,
     matters - a prompt-only call is the degraded mode, not the intended one.
     """
     ref_names = list(ref_names)[:6]
+    if aspect_ratio not in VALID_ASPECTS:
+        raise ValueError(
+            "aspect_ratio %r is not one of %s - ComfyUI rejects the whole workflow, "
+            "so this is caught here instead of failing every render in the pass."
+            % (aspect_ratio, ", ".join(VALID_ASPECTS)))
     wf = {}
     nb_inputs = {
         "model_name": MODEL_NAME,

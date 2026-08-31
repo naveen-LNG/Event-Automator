@@ -306,6 +306,301 @@ try:
 finally:
     shutil.rmtree(tmp3, ignore_errors=True)
 
+# ---- Blocks: construction materials and characters ---------------------------
+# Blocks' mechanic-specific class is the construction material icon, the way
+# recipes are Dessert's and chains are Merge's. Characters are shared across
+# every type but had no pass until now - six sections of the Blocks style guide
+# are about character construction and none of it was reachable.
+ok("construction_materials" in S["properties"] and "construction_materials" in S["required"],
+   "construction_materials is a required top-level field")
+MS = arg.MATERIAL_SCHEMA
+for f in ("name", "description", "palette"):
+    ok(f in MS["properties"] and f in MS["required"], "a material declares %s" % f)
+
+_blocks = dict(NEW_DOC, producers=[], recipes=[], ingredients=[],
+               construction_materials=[{"name": "Driftwood Plank",
+                                        "description": "a bundle of pale planks",
+                                        "palette": "warm cream"} for _ in range(6)],
+               characters=[{"name": "Cove Keeper", "role": "Chef/host", "npc_id": "101",
+                            "base_character": "turtle", "costume": "a lantern-keeper's coat",
+                            "design_notes": "", "scene_actions": ["waves"]}])
+bc = {e["pass"]: e["count"] for e in _ai.plan_passes(_blocks, _ai.PASSES)["passes"]}
+ok(bc["material"] == 6, "6 construction materials planned", str(bc))
+ok(bc["character"] == 1, "and the characters pass counts them", str(bc))
+ok(bc["recipe"] == 0 and bc["icon"] == 0 and bc["producer"] == 0,
+   "a Blocks document plans no recipes, chains or producers", str(bc))
+ok(_ai.plan_passes(NEW_DOC, ["material"])["total"] == 0,
+   "and a Merge document plans no construction materials")
+
+import asset_prompts as _ap2
+mp = _ap2.material_prompt({"name": "Driftwood Plank", "description": "a bundle of pale planks",
+                           "palette": "warm cream"})
+ok("CONSTRUCTION MATERIAL" in mp, "the material prompt says what class it is")
+ok("not a finished structure" in mp, "and rules out the failure it guards against")
+
+cp = _ap2.character_prompt({"name": "Cove Keeper", "base_character": "turtle",
+                            "costume": "a lantern-keeper's coat", "scene_actions": ["waves"]})
+ok("turtle" in cp, "the character prompt names the existing cast member")
+ok("already designed" in cp,
+   "and states that the animal is reused and only the costume is new")
+ok("40-55%" in cp, "it carries the head-to-body ratio the style guide fixes")
+ok("THUMBNAIL SIZE" in cp, "and the rule that decides the face")
+ok("NOT anime proportions" in cp, "and the proportions it must not use")
+cp2 = _ap2.character_prompt({"name": "Newcomer", "costume": "a coat"})
+ok("already designed" not in cp2,
+   "a genuinely new character gets no reuse clause, rather than an empty one")
+
+# ---- Blocks gets its own render spec and failure block ------------------------
+import art_reference as _ar2
+bf = _ar2.named_failures("Blocks")
+ok("hyper-detailed textures" in bf, "the Blocks block carries the doc's own negatives")
+ok("70%" in bf, "and its 70/20/10 detail ratio")
+for clash, why in (("Matte only", "matte-only, which the doc contradicts"),
+                   ("render lineless", "lineless, which the doc contradicts"),
+                   ("valve wheels", "producer fittings Blocks does not have")):
+    ok(clash not in bf, "and does NOT carry %s" % why)
+# Sim is now the only type without a studio document of its own.
+ok("Matte only" in _ar2.named_failures("Sim"),
+   "while a type with no document of its own keeps the default block")
+ok("empty rooms" not in _ar2.named_failures("Sort"),
+   "Sort has its own block, and drops the one negative its document got wrong")
+ok("Matte only" not in _ar2.named_failures("Merge"),
+   "Merge no longer gets it either - Merge Art.docx asks for glossy, not matte")
+
+# ---- the progression pass ----------------------------------------------------
+# A Blocks scene is delivered as a build sequence, not a single picture, and the
+# cost line has to say so: five scenes of six steps is 45 renders, not five.
+_prog = dict(NEW_DOC, producers=[], recipes=[], ingredients=[],
+             construction_materials=[],
+             characters=[{"name": "Keeper", "role": "Chef/host", "npc_id": "101",
+                          "base_character": "turtle", "costume": "a teal coat",
+                          "design_notes": "", "scene_actions": []}])
+for z in _prog["zones"]:
+    z = z
+_prog["zones"] = [dict(z, construction_steps=["hero lantern", "boat shed", "farm cart",
+                                              "hamper", "jars", "bunting"])
+                  for z in _prog["zones"]]
+pc = {e["pass"]: e["count"] for e in _ai.plan_passes(_prog, _ai.PASSES, "Blocks")["passes"]}
+ok("progression" in _ai.PASSES, "progression is a real pass")
+ok(pc["progression"] == 3 * (6 + 2 + 1),
+   "each scene plans derelict + empty + one frame per step + characters",
+   "6 steps over 3 zones should be %d, got %s" % (3 * 9, pc["progression"]))
+_noch = dict(_prog, characters=[])
+ok({e["pass"]: e["count"] for e in _ai.plan_passes(_noch, ["progression"], "Blocks")["passes"]}
+   ["progression"] == 3 * 8,
+   "with no characters the character frame is not planned or charged")
+_one = dict(_prog, zones=[dict(_prog["zones"][0], construction_steps=["only one"])])
+ok(_ai.plan_passes(_one, ["progression"], "Blocks")["total"] == 0,
+   "a zone with fewer than two steps has no sequence and plans nothing")
+ok(_ai.plan_passes(NEW_DOC, ["progression"], "Merge")["total"] == 0,
+   "and a Merge document, whose zones use buildings not steps, plans none")
+ok(_ai.plan_passes(_prog, ["progression"], "Sort")["total"] == 0,
+   "a non-Blocks type is never offered a sequence, however many steps it lists",
+   "legacy Sort and Sim drafts use construction_steps as free-text reveal notes")
+ok(_ai.PROGRESSION_TYPES == {"Blocks"}, "and Blocks is the only type that gets one")
+
+# The prompts encode the rules that document paid for.
+import asset_prompts as _ap3
+ok("HERO" in _ap3.built_scene(["a lantern", "a shed"]),
+   "the base prompt names the first step as the hero")
+one = _ap3.remove_one("the wooden boat shed")
+ok("ONLY change" in one, "a hero/structure removal is a single blunt change")
+many = _ap3.remove_many(["the cart", "the jars", "the bunting"])
+ok("the cart, the jars and the bunting" in many,
+   "a bulk removal lists every item not yet built, cumulatively", many[:120])
+ok("ALL of those" in many, "and insists on all of them")
+der = _ap3.derelict_prompt({"zone_theme": "Cove"})
+ok("colour drained" in der and "FROZEN" in der,
+   "the before frame changes the season and the light, not the exposure")
+ok("Nothing built, nothing placed" in der, "and it is empty of built objects")
+ch = _ap3.add_characters([{"base_character": "turtle", "costume": "a teal coat"}])
+ok("turtle" in ch and "ONLY change" in ch,
+   "characters are one additive hop naming the existing cast")
+ok("do NOT add anything" not in ch,
+   "and the hold clause drops its no-adding rule for that one hop")
+for p_ in (one, many, der):
+    ok("No text anywhere" in p_, "every sequence hop still bans text")
+
+# ---- art director feedback, encoded ------------------------------------------
+# Direction on the first current-style regeneration, section 11 of the rules.
+der = _ap3.derelict_prompt({"zone_theme": "Cove"})
+ok("FROZEN" in der, "the before frame is FROZEN, not merely damaged")
+ok("REMOVE EVERYTHING HUMANISED" in der, "and empty of everything humanised")
+ok("NO DEBRIS OR RUINS" in der,
+   "debris and ruins are excluded too - they are human traces, which was the wrong instinct",
+   "the earlier version asked for broken boards and scattered litter")
+ok("same fields, the same hills" in der, "while the natural landscape is kept")
+
+# FROZEN IS NOT THE RULE. It was one suggestion for making a scene distinctive,
+# and applying it to every scene reproduces the sameness it was meant to fix.
+dv = _ap3.derelict_prompt({"zone_theme": "Fruit Shop", "interior": True,
+                           "before_state": "shuttered and dusty, one cold shaft through a gap"})
+ok("shuttered and dusty" in dv, "a zone's own before_state is used verbatim")
+ok("frozen" not in dv.lower() and "winter" not in dv.lower(),
+   "and nothing forces frost or winter onto a scene that did not ask for it")
+ok("REMOVE EVERYTHING HUMANISED" in dv and "NO DEBRIS OR RUINS" in dv,
+   "while the mandatory part - empty of humanised things - still holds")
+ok("room shell" in dv, "an interior keeps its shell")
+ok("landscape - fields, hills" in _ap3.derelict_prompt(
+       {"zone_theme": "Yard", "before_state": "a winter-bare orchard"}),
+   "and an exterior keeps its landscape")
+
+# An interior has no fields to freeze - the shell is what gets kept instead.
+din = _ap3.derelict_prompt({"zone_theme": "Fruit Shop", "interior": True})
+ok("this room in deep winter" in din, "an interior zone freezes the ROOM, not the land")
+ok("same walls, floor, ceiling" in din, "keeping the shell that makes it this location")
+ok("REMOVE EVERYTHING THAT SHOWS IT IS USED" in din, "and stripping every trace of use")
+ok("NO DEBRIS" in din, "clutter excluded here too, for the same reason")
+ok("fields" not in din, "and it never mentions fields, which an interior does not have")
+
+bs = _ap3.built_scene(["a hero", "a shed", "a cart", "a hamper"])
+ok("do NOT cluster" in bs, "the base spreads its objects instead of clustering them")
+ok("bottom centre" in bs and "LEFT" in bs and "RIGHT" in bs,
+   "and gives each build step its own region, so the sequence jumps between areas")
+ok("HUMANISED ACTIVITY" in bs, "the steps read as humanised activity")
+
+CH = [{"name": "A", "base_character": "badger", "costume": "a waistcoat"},
+      {"name": "B", "base_character": "fox", "costume": "a pinafore"}]
+first = _ap3.add_characters(CH[:1], arriving=CH[:1])
+second = _ap3.add_characters(CH, arriving=CH[1:])
+ok("badger" in first and "fox" not in first,
+   "the first character frame introduces one character only")
+ok("fox" in second and "stays exactly where they are" in second,
+   "and the second adds the other while holding the first in place", second[:200])
+ok("adding 1 character" in first.lower(),
+   "characters arrive one by one, not as a group", first[:120])
+# They came in as small background figures first time. The style guide asks for
+# character-centric framing with large foreground elements close to camera.
+# Two scales, both kept, because they trade against each other: "beside"
+# composites cleanly and stays faithful to the base, "foreground" reads far
+# better but repaints the frame (67-95% of columns change).
+ok("BESIDE the central hero" in first and "scene's own scale" in first,
+   "the DEFAULT is the lateral, scene-scale placement that composites cleanly")
+ok("THIRD OF THE FRAME" not in first,
+   "and nothing forces the large near-camera framing onto it")
+big = _ap3.add_characters(CH[:1], arriving=CH[:1], scale="foreground")
+ok("THIRD OF THE FRAME'S HEIGHT" in big, "the foreground scale sizes them against the frame")
+ok("close to camera" in big.lower(),
+   "and stands them in the near ground rather than back beside the hero")
+ok("small background figure is wrong" in big,
+   "with the failure named, since that is what the first pass produced")
+ok("hiding the hero is" in big,
+   "while still not being allowed to hide the hero behind them")
+ok(_ap3.CHARACTER_SCALES == ("beside", "foreground"), "both scales stay available")
+
+_prog2 = dict(_prog, characters=CH)
+ok({e["pass"]: e["count"] for e in _ai.plan_passes(_prog2, ["progression"], "Blocks")["passes"]}
+   ["progression"] == 3 * (6 + 2 + 2),
+   "and the plan charges one frame per arriving character")
+
+# ---- the zone hints the sequence pass needs ----------------------------------
+# Both were used by the pass before they were declared, so a generated document
+# could not have carried either. interior changes the 'before' frame; blunt_steps
+# forces a dedicated removal hop where a bulk one would silently fail.
+for f in ("interior", "blunt_steps", "before_state"):
+    ok(f in Z["properties"], "a zone can declare %s" % f)
+    ok(f not in Z["required"],
+       "and %s stays optional - it is a production hint, usually absent" % f)
+ok(Z["properties"]["blunt_steps"]["items"]["type"] == "integer",
+   "blunt_steps is a list of step numbers")
+ok("hero" in Z["properties"]["blunt_steps"]["description"]
+   and "flat ground element" in Z["properties"]["blunt_steps"]["description"],
+   "and its description names the three classes a bulk removal cannot touch")
+ok(Z["properties"]["interior"]["type"] == "boolean", "interior is a flag")
+ok("variety" in Z["properties"]["before_state"]["description"]
+   and "not the rule" in Z["properties"]["before_state"]["description"],
+   "before_state's description says variety is the point and frozen is optional")
+ok(Z["additionalProperties"] is False,
+   "the zone schema stays closed, so a declared field is the only way to pass one")
+
+# ---- Sort goods: the last mechanic-specific class to get a pass ---------------
+# Merge has chains and producers, Dessert recipes and ingredients, Blocks
+# construction materials - Sort's loop is literally sorting goods onto shelves
+# and it had nothing. Goods live on the ZONE because the catalogue is per floor.
+ok("goods" in Z["properties"], "a zone can declare its goods catalogue")
+ok("goods" not in Z["required"], "and it stays optional, like the other zone hints")
+gi = Z["properties"]["goods"]["items"]["properties"]
+for f in ("name", "description", "silhouette", "palette"):
+    ok(f in gi, "a good declares %s" % f)
+_gd = Z["properties"]["goods"]["description"]
+ok("REAL tool or product of THIS floor" in _gd,
+   "the schema demands real items of the craft, not shapes with a theme painted on")
+ok("no other floor gets a bottle" in _gd,
+   "and forbids the same KIND of object twice across the whole event")
+ok("share an OUTLINE" in _gd, "and the same outline twice across the whole event")
+ok("repeats down every column" in _gd,
+   "and says why per-floor rules were not enough - five floors spending one list "
+   "of fifteen shapes gave the event fifteen objects painted five ways")
+ok("enum" not in gi["silhouette"],
+   "silhouette is free text, not an enum - a fixed list caps the catalogue at that "
+   "many distinct objects")
+ok("size_in_frame" not in gi,
+   "there is no per-item size any more - shrinking individual goods is what left "
+   "half the canvas empty")
+ok("TWICE AS TALL AS IT IS WIDE" in gi["silhouette"]["description"],
+   "the schema states the portrait rule measured off the shipped goods (0.48 aspect)")
+ok("never by stretching it" in gi["silhouette"]["description"],
+   "and that the height comes from the object, not from distorting it")
+
+_sortdoc = dict(NEW_DOC, producers=[], recipes=[], ingredients=[],
+                construction_materials=[],
+                zones=[dict(z, goods=[{"name": "G%d" % i, "description": "a thing",
+                                       "silhouette": "a shape",
+                                       "palette": "blue"} for i in range(1, 16)])
+                       for z in NEW_DOC["zones"]])
+gc = {e["pass"]: e["count"] for e in _ai.plan_passes(_sortdoc, _ai.PASSES, "Sort")["passes"]}
+ok("goods" in _ai.PASSES, "goods is a real pass")
+ok(gc["goods"] == 45, "15 goods across 3 zones plans 45 renders", str(gc))
+ok(_ai.plan_passes(NEW_DOC, ["goods"], "Merge")["total"] == 0,
+   "and a document with no goods plans none")
+
+import icon_sheet as _is2
+ok(_is2.GOODS_CANVAS == (256, 512),
+   "the goods canvas is the shipped 1:2 PORTRAIT, not a square", str(_is2.GOODS_CANVAS))
+# 0.88 came from "longest content edge", which says an object touches ONE edge
+# and nothing about the other. Re-measured across all 76 shipped icons: bbox is
+# 0.86 of the width AND 0.90 of the height, because the object is itself 1:2.
+ok(abs(_is2.GOODS_FRACTION - 0.90) < 0.01,
+   "at the re-measured fill, matching the shipped 0.86 wide / 0.90 tall",
+   str(_is2.GOODS_FRACTION))
+ok(_is2.GOODS_FRACTION == _ap3.GOODS_FILL,
+   "and the renderer and the geometry module agree on it")
+
+gp = _ap3.goods_prompt({"name": "Ink Tin", "description": "a squat tin of ink",
+                        "palette": "ink blue"})
+ok("SHELF GOOD" in gp, "the goods prompt says what class it is")
+# This used to assert the prompt demanded "taller than it is wide". That single
+# line forced all 75 goods into one silhouette and is the reason a floor came
+# back with four objects sharing a rounded rectangle. The canvas is 1:2; the
+# OBJECT need not be, and a bowl drawn tall is the wrong bowl.
+ok("TALLER THAN IT IS WIDE" not in gp,
+   "the prompt no longer forces every good into one upright silhouette")
+gp_bowl = _ap3.goods_prompt(
+    {"name": "Clay Harp", "description": "a clay harp",
+     "silhouette": "a tall narrow U-frame on a handle with a taut wire across its mouth",
+     "palette": "blue"},
+    siblings=["Amphora", "Kiln Post"])
+ok("a tall narrow U-frame on a handle" in gp_bowl,
+   "a good is asked for the outline that object actually has, verbatim")
+ok("TWICE AS TALL AS IT IS WIDE" in gp_bowl,
+   "and for the portrait proportions the shipped goods have")
+ok("NEVER stretch, squash or distort" in gp_bowl,
+   "and is told to get that from the object, not by distorting it")
+ok("Amphora" in gp_bowl and "Kiln Post" in gp_bowl,
+   "the rest of the floor's catalogue reaches the prompt, so a collision is avoidable")
+ok("SHAPE" in gp_bowl.split("MUST NOT LOOK LIKE")[1],
+   "and the instruction is to change the shape, not the colour")
+# This used to assert the prompt ASKED for the keyline. It did, and icon_sheet
+# painted one as well, so every good wore two - which is what made the icons read
+# dark: 5th-percentile brightness 0.24 against a shipped 0.52. The generator now
+# leaves the edge clean, like every other icon class, and add_stroke supplies the
+# one keyline at a controlled 3px.
+ok("NO TEXT, NO OUTLINE" in gp,
+   "the generator leaves the edge clean - the keyline is added afterwards, once")
+ok("No dark rim, no inked contour" in gp,
+   "and is told not to shade a dark band round the silhouette either")
+ok("lineless" not in gp.lower(), "so the floor rule does not leak into the icon")
+
 print("")
 if fails:
     print("%d CHECK(S) FAILED" % len(fails)); sys.exit(1)

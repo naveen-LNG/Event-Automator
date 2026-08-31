@@ -8,6 +8,8 @@ const fs = require('fs'), path = require('path');
 
 const R = (f) => fs.readFileSync(path.join(__dirname, '..', 'renderer', f), 'utf-8');
 const js = R('app.js'), html = R('index.html'), css = R('style.css');
+const main = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf-8');
+const preload = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf-8');
 
 // Backend .py files live in two places depending on checkout shape: the git
 // repo keeps a mirror at pybackend-src/, while the primary dev machine has the
@@ -198,6 +200,82 @@ check(/sim_path:\s*cfg\.chapterSimPath/.test(js),
 // reintroduce exactly the internal-vs-display offset bug the backend removes.
 check(!/id="chapter-(old|new)-input"/.test(html),
   'chapter numbers are read from the workbook, not entered by hand');
+
+// ---- 6b. the Art Requirement can start from an EXISTING One-Pager ----------
+// Before this, the Art Requirement card only ever appeared after generating
+// throwaway themes and marking one Final in the same session. A designer who
+// already had a signed-off One-Pager - their own from last week, or a
+// colleague's in the shared folder - had no route to it at all.
+check(/id="ideation-mode-new"/.test(html) && /id="ideation-mode-existing"/.test(html),
+  'the Ideation view offers both starting points');
+check(/id="ideation-new-card"/.test(html) && /id="ideation-existing-card"/.test(html),
+  'each starting point has its own card to show or hide');
+check(/id="ideation-onepager-list"/.test(html),
+  'the existing-One-Pager card has somewhere to list what is on disk');
+check(/ideationListOnePagers/.test(R('../preload.js')) && /ideationReadOnePager/.test(R('../preload.js')),
+  'preload exposes listing and reading One-Pagers');
+check(/ideation:listOnePagers/.test(main) && /ideation:readOnePager/.test(main),
+  'main.js handles both');
+check(main.includes('startsWith(path.resolve(root)'),
+  'reading a One-Pager is confined to the configured ideation folder - a path from '
+  + 'the renderer is not a licence to read anywhere on disk');
+check(/ideation_doc_text/.test(main),
+  'the document text is forwarded to the backend payload');
+
+const artreq = backendFile('art_requirement_generator.py');
+check(artreq.includes('payload.get("ideation_doc_text")'),
+  'the backend reads a One-Pager document as an alternative source');
+check(artreq.includes('if not ideation_theme.get("theme_name") and not ideation_doc_text:'),
+  'and only errors when NEITHER a theme nor a document was supplied');
+check(/BEGIN ONE-PAGER/.test(artreq),
+  'the document is fenced in the prompt so the model can tell brief from instruction');
+check(/do not invent a different theme/.test(artreq),
+  'and is framed as already signed off, not as raw inspiration');
+
+// Exactly one source may be armed. Switching mode has to clear the other, or the
+// Art Requirement is built from whichever the click handler happens to check first.
+check(js.includes('ideationPickedOnePager = null;') && js.includes('applyIdeationMode'),
+  'switching starting point clears whatever the other route had armed');
+check(js.includes('const usingDoc = !!ideationPickedOnePager;'),
+  'the generate handler picks its source explicitly rather than by fallback');
+
+// ---- 6c. presence: who else has this event open ----------------------------
+// Two designers on the same shared folder could both work an event and neither
+// would know. Advisory only - nothing blocks, nothing has to be released.
+check(/id="ideation-presence"/.test(html), 'the Ideation view has a presence banner');
+check(/role="status"/.test(html) && /aria-live="polite"/.test(html),
+  'and it announces itself to a screen reader without stealing focus');
+check(main.includes("ipcMain.handle('presence:announce'")
+   && main.includes("ipcMain.handle('presence:list'")
+   && main.includes("ipcMain.handle('presence:clear'"),
+  'main.js handles check-in, read and check-out');
+check(/presenceAnnounce/.test(preload) && /presenceList/.test(preload) && /presenceClear/.test(preload),
+  'preload exposes all three');
+
+// The TTL is the whole safety story: a crashed app or a slept laptop leaves a
+// record behind, and it has to expire on its own. A lock needing manual release
+// is the failure mode this design exists to avoid.
+check(/PRESENCE_TTL_MS/.test(main), 'a record expires on its own');
+check(main.includes('(now - rec.lastSeen) > PRESENCE_TTL_MS'),
+  'and a stale record is filtered out on read, so nobody ever clears a lock by hand');
+check(main.includes('rec.authorId === cfg.authorId'),
+  'you are never shown as working alongside yourself');
+check(/before-quit/.test(main),
+  'leaving cleanly checks out, so the banner is right sooner than the TTL alone');
+
+// Heartbeat must be well inside the timeout or a slow OneDrive sync drops a
+// working colleague off the banner.
+const beat = /PRESENCE_BEAT_MS = (\d+) \* 1000/.exec(js);
+check(!!beat, 'the renderer checks in on a timer');
+if (beat) {
+  check(Number(beat[1]) * 1000 * 4 <= 5 * 60 * 1000,
+    'and does so at least four times inside the 5-minute timeout',
+    'beat ' + beat[1] + 's');
+}
+check(/viewId === 'ideation-view'\) startPresence\(\); else stopPresence\(\)/.test(js),
+  'presence follows the view - you are not reported on an event you navigated away from');
+check(/presenceAnnouncedType !== e\.target\.value/.test(js),
+  'switching event type checks out of the old one first');
 
 // ---- 7. stylesheet is actually linked, and cache-busted ---------------------
 const link = /href="style\.css(\?v=(\d+))?"/.exec(html);

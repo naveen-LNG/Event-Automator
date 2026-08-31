@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Event Automator (Standalone)</title>
-<link rel="stylesheet" href="style.css?v=13" />
+<link rel="stylesheet" href="style.css?v=15" />
 </head>
 <body>
 <div class="app-container">
@@ -690,8 +690,10 @@
         <p class="header-subtitle">Generates distinct 1-Pager theme drafts for the 35+ US women player base, following the studio's real Event_Ideation_1Pager.md template. Every draft is written to disk under ideationData so feedback happens against the actual document. Uses the Claude API when a key is set in Settings, otherwise falls back to a local Ollama server if one is configured there.</p>
       </div>
 
+      <div id="ideation-presence" class="presence-bar" style="display:none;" role="status" aria-live="polite"></div>
+
       <div class="stacked-card">
-        <h2 class="card-title">New Ideation Run</h2>
+        <h2 class="card-title">Starting Point</h2>
         <div class="form-row">
           <label class="form-label" for="ideation-event-type">Event Type</label>
           <select id="ideation-event-type" class="text-input">
@@ -703,6 +705,29 @@
           </select>
         </div>
         <div class="form-row">
+          <span class="form-label">One-Pager</span>
+          <div class="choice-group" role="radiogroup" aria-label="Where the One-Pager comes from">
+            <label class="choice">
+              <input type="radio" name="ideation-mode" id="ideation-mode-new" value="new" checked />
+              <span class="choice-body">
+                <span class="choice-title">Start from scratch</span>
+                <span class="choice-sub">Generate theme drafts, pick one, then build the Art Requirement from it.</span>
+              </span>
+            </label>
+            <label class="choice">
+              <input type="radio" name="ideation-mode" id="ideation-mode-existing" value="existing" />
+              <span class="choice-body">
+                <span class="choice-title">I already have a One-Pager</span>
+                <span class="choice-sub">Skip ideation and go straight to the Art Requirement, using a One-Pager already in the shared folder.</span>
+              </span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="stacked-card" id="ideation-new-card">
+        <h2 class="card-title">New Ideation Run</h2>
+        <div class="form-row">
           <label class="form-label" for="ideation-duration">Sprint Duration (days)</label>
           <input type="number" id="ideation-duration" class="text-input" min="1" value="14" />
         </div>
@@ -713,6 +738,16 @@
         <div class="board-divider"></div>
         <div class="execution-footer" style="justify-content:flex-end;">
           <button id="ideation-generate-btn" class="primary-btn">Generate Themes</button>
+        </div>
+      </div>
+
+      <div class="stacked-card" id="ideation-existing-card" style="display:none;">
+        <h2 class="card-title">Pick the One-Pager</h2>
+        <p class="settings-hint">Everything in this event type's <code>One-Pager Ideation</code> folder, newest first — including One-Pagers a colleague finalized, since the folder is shared. The Art Requirement is written from the document as it stands on disk, so any edits made after it was saved are carried through.</p>
+        <div id="ideation-onepager-list" class="onepager-list"></div>
+        <div class="board-divider"></div>
+        <div class="execution-footer" style="justify-content:flex-end;">
+          <button id="ideation-refresh-onepagers-btn" class="secondary-btn small" type="button">Refresh list</button>
         </div>
       </div>
 

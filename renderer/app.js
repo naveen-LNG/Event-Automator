@@ -21,6 +21,15 @@
   let artReqDraftPaths = [];
   let artReqSelectedIndex = -1;
   let artReqSavedPath = '';
+  // A One-Pager the user already had, picked off disk instead of generated here.
+  // { name, path, text } once chosen. The Art Requirement step accepts either
+  // this or a theme selected as Final, never both at once.
+  let ideationOnePagers = [];
+  let ideationPickedOnePager = null;
+  // Presence: which event type this machine has currently announced, so a type
+  // switch can check out of the old one before checking in to the new.
+  let presenceTimer = null;
+  let presenceAnnouncedType = '';
   // Shared across designers via the ideationData folder — refreshed after
   // every generate/regenerate/retract so a colleague's note shows up here.
   let ideationEntries = [];
@@ -103,6 +112,9 @@
     if (viewId === 'placeholder-view' && title) {
       $('#placeholder-title').textContent = title;
     }
+    // Presence is scoped to the Ideation view. Announcing while someone is off
+    // in Settings would report them as working on an event they are not on.
+    if (viewId === 'ideation-view') startPresence(); else stopPresence();
     if (viewId === 'main-events-view') loadEventTypes();
     if (viewId === 'minigames-view') loadMinigames();
     if (viewId === 'battlepass-view') loadBP();
@@ -2044,7 +2056,186 @@
     renderLessonsPanel();
     renderIdeationResults();
     renderArtReqResults();
+    // The One-Pager list is per type too, and a document picked for Merge must
+    // not still be armed after switching to Blocks.
+    clearPickedOnePager();
+    if (ideationMode() === 'existing') await loadOnePagers();
+    // Check out of the type just left before checking in to the new one, or the
+    // old record lingers for its full timeout saying you are still on Merge.
+    if (presenceAnnouncedType && presenceAnnouncedType !== e.target.value) {
+      await window.api.presenceClear({ eventType: presenceAnnouncedType });
+      presenceAnnouncedType = '';
+    }
+    await presenceBeat();
   });
+
+  // ---- presence: who else has this event open ------------------------------
+  // Checking in every 30s against main.js's 5-minute timeout, so ten writes can
+  // be lost to a slow OneDrive sync before a working colleague drops off the
+  // banner. Nothing here blocks anything - it answers "is someone else already
+  // on this?", which is the question that actually costs a duplicated afternoon.
+  const PRESENCE_BEAT_MS = 30 * 1000;
+
+  function presenceDetail() {
+    if (ideationPickedOnePager) return ideationPickedOnePager.name;
+    if (ideationSavedPath) return 'finalised a One-Pager';
+    if (ideationThemes) return 'generating themes';
+    return '';
+  }
+
+  async function presenceBeat() {
+    const eventType = $('#ideation-event-type').value;
+    if (!eventType) return;
+    await window.api.presenceAnnounce({ eventType, detail: presenceDetail() });
+    presenceAnnouncedType = eventType;
+    await renderPresence(eventType);
+  }
+
+  async function renderPresence(eventType) {
+    const bar = $('#ideation-presence');
+    if (!bar) return;
+    const res = await window.api.presenceList({ eventType });
+    const others = (res && res.others) || [];
+    if (!others.length) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
+    const mins = (ms) => {
+      const m = Math.floor(ms / 60000);
+      if (m < 1) return 'just now';
+      if (m === 1) return 'for a minute';
+      if (m < 60) return `for ${m} minutes`;
+      const h = Math.floor(m / 60);
+      return h === 1 ? 'for over an hour' : `for over ${h} hours`;
+    };
+    const who = others.map(o => {
+      const dot = o.avatarColor
+        ? `<span class="presence-dot" style="background:${escapeHtml(o.avatarColor)}"></span>`
+        : '<span class="presence-dot"></span>';
+      const detail = o.detail ? ` <span class="presence-detail">— ${escapeHtml(o.detail)}</span>` : '';
+      return `<span class="presence-who">${dot}<span class="presence-name">${escapeHtml(o.authorName)}</span>${detail}`
+        + ` <span class="presence-since">${escapeHtml(mins(o.sinceMs))}</span></span>`;
+    }).join('');
+    const lead = others.length === 1 ? 'is also working on' : 'are also working on';
+    bar.innerHTML = `${who} <span class="presence-detail">${lead} ${escapeHtml(eventType)}.</span>`;
+    bar.style.display = 'flex';
+  }
+
+  async function startPresence() {
+    if (presenceTimer) return;
+    await presenceBeat();
+    presenceTimer = setInterval(presenceBeat, PRESENCE_BEAT_MS);
+  }
+
+  async function stopPresence() {
+    if (presenceTimer) { clearInterval(presenceTimer); presenceTimer = null; }
+    const bar = $('#ideation-presence');
+    if (bar) { bar.style.display = 'none'; bar.innerHTML = ''; }
+    if (presenceAnnouncedType) {
+      const was = presenceAnnouncedType;
+      presenceAnnouncedType = '';
+      await window.api.presenceClear({ eventType: was });
+    }
+  }
+
+  // ---- starting point: generate themes, or use a One-Pager you already have --
+
+  function ideationMode() {
+    return $('#ideation-mode-existing').checked ? 'existing' : 'new';
+  }
+
+  function clearPickedOnePager() {
+    ideationPickedOnePager = null;
+    renderOnePagerList();
+  }
+
+  function applyIdeationMode() {
+    const existing = ideationMode() === 'existing';
+    $('#ideation-new-card').style.display = existing ? 'none' : '';
+    $('#ideation-existing-card').style.display = existing ? '' : 'none';
+    // Results from the other route are stale the moment you switch, and leaving
+    // them on screen makes it ambiguous which source the Art Requirement will
+    // actually be built from.
+    $('#ideation-results').innerHTML = '';
+    $('#artreq-results').innerHTML = '';
+    ideationThemes = null;
+    ideationDraftPaths = [];
+    ideationSelectedIndex = -1;
+    ideationSavedPath = '';
+    artReqVariations = null;
+    artReqDraftPaths = [];
+    artReqSelectedIndex = -1;
+    artReqSavedPath = '';
+    ideationPickedOnePager = null;
+    $('#artreq-trigger-card').style.display = 'none';
+    if (existing) loadOnePagers();
+  }
+
+  $$('input[name="ideation-mode"]').forEach(r => {
+    r.addEventListener('change', applyIdeationMode);
+  });
+  $('#ideation-refresh-onepagers-btn').addEventListener('click', () => loadOnePagers());
+
+  async function loadOnePagers() {
+    const eventType = $('#ideation-event-type').value;
+    const box = $('#ideation-onepager-list');
+    box.innerHTML = '<div class="onepager-empty">Looking…</div>';
+    const res = await window.api.ideationListOnePagers({ eventType });
+    if (!res.success) {
+      box.innerHTML = '';
+      log(`Could not list One-Pagers: ${res.output}`, 'console-log-error');
+      toast('Could not read the One-Pager folder: ' + res.output, 'error');
+      return;
+    }
+    ideationOnePagers = res.docs || [];
+    renderOnePagerList();
+  }
+
+  function renderOnePagerList() {
+    const box = $('#ideation-onepager-list');
+    if (!box) return;
+    const eventType = $('#ideation-event-type').value;
+    if (!ideationOnePagers.length) {
+      box.innerHTML = `<div class="onepager-empty">No One-Pager found for ${escapeHtml(eventType)}. `
+        + `Save one into its <code>One-Pager Ideation</code> folder, or switch to "Start from scratch".</div>`;
+      return;
+    }
+    box.innerHTML = ideationOnePagers.map((d, i) => {
+      const picked = ideationPickedOnePager && ideationPickedOnePager.path === d.path;
+      const when = new Date(d.modified).toLocaleString();
+      const cls = ['onepager-row', picked ? 'is-picked' : '', d.readable ? '' : 'is-unreadable']
+        .filter(Boolean).join(' ');
+      const action = d.readable
+        ? `<button class="secondary-btn small onepager-pick-btn" data-idx="${i}">${picked ? 'Picked' : 'Use this'}</button>`
+        : `<span class="onepager-meta">PDF — export as .md to use</span>`;
+      return `<div class="${cls}">
+          <span class="onepager-name">${escapeHtml(d.name)}</span>
+          <span class="onepager-meta">${escapeHtml(when)}</span>
+          ${action}
+        </div>`;
+    }).join('');
+    $$('.onepager-pick-btn').forEach(b => {
+      b.addEventListener('click', () => pickOnePager(Number(b.dataset.idx)));
+    });
+  }
+
+  async function pickOnePager(idx) {
+    const doc = ideationOnePagers[idx];
+    if (!doc) return;
+    const res = await window.api.ideationReadOnePager({ docPath: doc.path });
+    if (!res.success) {
+      log(`Could not read ${doc.name}: ${res.output}`, 'console-log-error');
+      toast(res.output, 'error');
+      return;
+    }
+    ideationPickedOnePager = { name: doc.name, path: doc.path, text: res.text };
+    renderOnePagerList();
+    $('#artreq-trigger-card').style.display = 'block';
+    artReqVariations = null;
+    artReqDraftPaths = [];
+    artReqSelectedIndex = -1;
+    artReqSavedPath = '';
+    $('#artreq-results').innerHTML = '';
+    log(`Using "${doc.name}" as the approved One-Pager.`, 'console-log-success');
+    toast('One-Pager selected — generate Art Requirement variations below.', 'success');
+  }
 
   $('#ideation-generate-btn').addEventListener('click', async () => {
     const eventType = $('#ideation-event-type').value;
@@ -2289,6 +2480,20 @@
     const ns = zones.reduce((a, z) => a +
       (z.buildings || []).reduce((b, x) => b + Math.max(0, (Number(x.max_level) || 1) - 1), 0), 0);
     const nr = ((doc && doc.recipes) || []).length;
+    // A Blocks scene ships as a build sequence: derelict + empty + one frame per
+    // construction step + characters. Counted here so the cost line is honest -
+    // five scenes of six steps is 45 renders, not five.
+    // Only Blocks delivers a scene as a build sequence; other types use
+    // construction_steps as free-text reveal notes.
+    const evType = (document.querySelector('#ideation-event-type') || {}).value || '';
+    const np2 = evType !== 'Blocks' ? 0 : zones.reduce((a, z) => {
+      const st = (z.construction_steps || []).filter(x => String(x).trim());
+      return a + (st.length >= 2 ? st.length + 2 + Math.min(2, ((doc && doc.characters) || []).length) : 0);
+    }, 0);
+    // Sort goods live on the ZONE - one themed catalogue per floor.
+    const ng = zones.reduce((a, z) => a + ((z.goods || []).length), 0);
+    const nm = ((doc && doc.construction_materials) || []).length;
+    const nc = ((doc && doc.characters) || []).length;
     const ni = ((doc && doc.ingredients) || []).length;
     const ex = (doc && doc.event_extras) || {};
     const nx = (String(ex.hot_air_balloon || '').trim() ? 1 : 0)
@@ -2306,6 +2511,10 @@
       ['producer', 'Producer icons', np * 2, np > 0],
       ['recipe', 'Recipes', nr, nr > 0],
       ['ingredient', 'Ingredients', ni, ni > 0],
+      ['progression', 'Scene build sequences', np2, np2 > 0],
+      ['goods', 'Goods icons', ng, ng > 0],
+      ['material', 'Construction materials', nm, nm > 0],
+      ['character', 'Characters', nc, nc > 0],
       ['extras', 'Balloon, badge, task icons', nx, nx > 0]
     ];
     const boxes = rows.map(([key, label, count, enabled]) => `
@@ -2464,9 +2673,17 @@
   }
 
   $('#artreq-generate-btn').addEventListener('click', async () => {
-    if (ideationSelectedIndex === -1) { toast('Select an Ideation theme as Final first.', 'error'); return; }
+    // Two legitimate sources now: a theme generated and marked Final in this
+    // session, or a One-Pager that already existed. Exactly one is armed at a
+    // time - switching modes clears the other.
+    const usingDoc = !!ideationPickedOnePager;
+    if (!usingDoc && ideationSelectedIndex === -1) {
+      toast('Select an Ideation theme as Final, or pick an existing One-Pager.', 'error');
+      return;
+    }
     const eventType = $('#ideation-event-type').value;
-    const ideationTheme = ideationThemes[ideationSelectedIndex];
+    const ideationTheme = usingDoc ? null : ideationThemes[ideationSelectedIndex];
+    const sourceLabel = usingDoc ? ideationPickedOnePager.name : ideationTheme.theme_name;
     let variationCount = parseInt($('#artreq-variation-count').value, 10);
     if (!Number.isFinite(variationCount)) variationCount = 3;
     variationCount = Math.max(1, Math.min(10, variationCount));
@@ -2474,9 +2691,14 @@
 
     const btn = $('#artreq-generate-btn');
     btn.disabled = true; btn.textContent = `Generating ${variationCount} variation${variationCount === 1 ? '' : 's'}...`;
-    log(`Generating ${variationCount} Art Requirement variation(s) for "${ideationTheme.theme_name}"...`);
+    log(`Generating ${variationCount} Art Requirement variation(s) for "${sourceLabel}"...`);
 
-    const res = await window.api.artReqGenerate({ eventType, ideationTheme, variationCount });
+    const res = await window.api.artReqGenerate({
+      eventType, variationCount,
+      ideationTheme: ideationTheme || undefined,
+      ideationDocText: usingDoc ? ideationPickedOnePager.text : undefined,
+      ideationDocName: usingDoc ? ideationPickedOnePager.name : undefined,
+    });
     btn.disabled = false; btn.textContent = 'Generate Art Requirement Variations';
 
     if (!res.success) { log(`Art Requirement generation failed: ${res.output}`, 'console-log-error'); toast('Generation failed: ' + res.output, 'error'); return; }
