@@ -409,6 +409,103 @@ check(backendFile('pybackend_cli.py').includes('md_to_docx')
 // what makes what a reviewer opens in Word identical to what was saved.
 check(/artReqSavedPath\) \|\| artReqDraftPaths\[idx\]/.test(js),
   'a generated variation exports the document already written to disk');
+
+// ---- generating art for a document that was opened, not generated ------------
+// The Reference Images controls used to exist only on a freshly generated
+// variation card. Open a document filed last week and there was no way to render
+// its art at all. The image pass needs the STRUCTURED document - blunt_steps,
+// character_scale and render_aspect never appear in the rendered Markdown - so a
+// .json sidecar is written on every save and read back when a document is opened.
+check(/ipcMain\.handle\('artreq:docData'/.test(main)
+   && /ipcMain\.handle\('artreq:saveDoc'/.test(main),
+  'main.js can read a document\'s structured data and save it back');
+check(/artReqDocData/.test(preload) && /artReqSaveDoc/.test(preload),
+  'preload exposes both');
+check(/openedDocArtHtml/.test(js) && /generateOpenedDocImages/.test(js),
+  'the renderer offers an art panel on an opened document');
+check(/passPickerHtml\(OPENED_DOC_IDX/.test(js),
+  'and reuses the same pass picker the generated cards use, so the cost line is the same one');
+check(/artReqSaveDoc\(\{[\s\S]{0,200}?variation: artReqOpenedDoc/.test(js),
+  'renders are written back into the document they came from');
+
+// Every save site must write the sidecar, or a document saved by one path gets
+// the art button and one saved by another silently does not.
+const argPy = backendFile('art_requirement_generator.py');
+check((argPy.match(/_write_doc_data\(/g) || []).length >= 4,
+  'all three save paths write the sidecar (plus its definition)',
+  'found ' + (argPy.match(/_write_doc_data\(/g) || []).length);
+check(/def save_doc_main/.test(argPy)
+   && backendFile('pybackend_cli.py').includes('artreq_save_doc'),
+  'and artreq_save_doc is dispatched');
+
+// An in-place update must not reassign the document. Adding art to a colleague's
+// document should leave their name and its review state alone.
+check(/found_by = re\.search/.test(argPy) && /found_status = re\.search/.test(argPy),
+  'saving in place carries the existing By: and Status: forward');
+check(!/author_name: cfg\.authorName,\s*\}\), 'utf-8'\);\s*return parseJsonResult\(await runPythonAndScrub\('artreq_save_doc'/.test(main),
+  'and the IPC does not override them with the current user');
+
+// A document with no sidecar must say so rather than offering a button that
+// cannot work, or parsing the Markdown back and being wrong where nobody checks.
+check(/has no structured data beside it/.test(main),
+  'a document without structured data explains why art cannot be generated from it');
+
+// ---- the documents panel shows this event, once each ------------------------
+// It listed every document in the folder - a Blocks folder holds every Blocks
+// event ever run - and listed a .md and its exported .docx as separate rows even
+// though the .md row already carries a "Show .docx" button.
+check(/function eventNumberOf/.test(main),
+  'main.js derives an event number from a filename so documents can be matched to a One-Pager');
+check(/onePagerName, showAll/.test(main),
+  'and listDocs accepts the picked One-Pager plus an escape hatch');
+check(/mdStems/.test(main) && /ext === '\.docx'/.test(main),
+  'a .docx exported from a listed .md is not listed a second time');
+check(/onePagerName: ideationPickedOnePager \? ideationPickedOnePager\.name/.test(js),
+  'the renderer passes the picked One-Pager to the listing');
+check(/artreq-showall-link/.test(js) && /function toggleArtReqDocFilter/.test(js),
+  'the filter is reversible from the panel itself');
+check(/Showing event/.test(js) && /hiding/.test(js),
+  'and says which event it is showing and how much it is holding back',
+  'a filter that hides rows silently is the next bug report');
+check(/artReqShowAllDocs = false;\s*\n\s*loadArtReqDocs\(\);/.test(js),
+  'picking a One-Pager re-filters the panel to that event');
+check(/loadArtReqDocs\(\);\s*\n\s*\}/.test(js.slice(js.indexOf('function clearPickedOnePager'))),
+  'and clearing it refreshes the panel too');
+// The event number must survive both spellings the studio uses: the One-Pager
+// says "Block2609", the shipped Art Requirements say "Blocks2604".
+check(/\\d\{4\}/.test(main.slice(main.indexOf('function eventNumberOf'),
+                                 main.indexOf('function eventNumberOf') + 400)),
+  'the match is on the four-digit number, not the type word, so Block2609 and Blocks2609 agree');
+
+// ---- a document records the One-Pager it was written from -------------------
+// The panel used to match documents to a One-Pager by scraping a four-digit
+// number out of both filenames. That worked only because the naming happened to
+// be consistent, and would have failed silently the first time someone named a
+// file without its event number. The link is data now.
+const argPy2 = backendFile('art_requirement_generator.py');
+check(/\("Source One-Pager", doc\.get\("source_one_pager"\)/.test(argPy2),
+  'the rendered header carries the source One-Pager',
+  'a document gets exported and mailed around; the sidecar can be lost, the header travels');
+check(/v\["source_one_pager"\] = source_name/.test(argPy2),
+  'generation stamps it from the file the tool actually read');
+check(/new_variation\["source_one_pager"\] = prior_source/.test(argPy2),
+  'and a regeneration keeps it, since a rewrite is the same document');
+check(!/"source_one_pager"/.test(JSON.stringify(
+        require('child_process').execFileSync(
+          path.join(__dirname, '..', 'pybackend_dist', 'python', 'python.exe'),
+          [path.join(__dirname, '..', 'pybackend_dist', 'python', 'pybackend_cli.py'),
+           'artreq_schemas'], { encoding: 'utf-8', maxBuffer: 32 * 1024 * 1024 }))),
+  'but it is NOT in the generation schema - the model has no idea what the file is called',
+  'asking a model for a filename invites it to invent one');
+
+check(/function onePagerStem/.test(main),
+  'the match ignores the extension, because a One-Pager is picked as .pdf and read as .md');
+check(/onePagerStem\(source\) === onePagerStem\(onePagerName\)/.test(main),
+  'and prefers the recorded source over the filename number');
+check(/matchedBySource/.test(main) && /matched by recorded source/.test(js),
+  'the panel says which basis it matched on, so a silent fallback is visible');
+check(/source_one_pager: \{/.test(fs.readFileSync(path.join(__dirname, '..', 'mcp', 'server.js'), 'utf-8')),
+  'the MCP save tool can record it too');
 // ---- 7. stylesheet is actually linked, and cache-busted ---------------------
 const link = /href="style\.css(\?v=(\d+))?"/.exec(html);
 check(!!link, 'index.html links style.css');

@@ -618,6 +618,9 @@ _CONTENT_TYPES = (
     '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
     '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
     '<Default Extension="xml" ContentType="application/xml"/>'
+    '<Default Extension="png" ContentType="image/png"/>'
+    '<Default Extension="jpeg" ContentType="image/jpeg"/>'
+    '<Default Extension="jpg" ContentType="image/jpeg"/>'
     '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
     '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>'
     '</Types>')
@@ -660,6 +663,74 @@ def _styles_xml():
     return "".join(out)
 
 
+EMU_PER_PX = 9525                      # 914400 EMU per inch at 96 dpi
+# Embedded at twice the drawn size, so it still looks right if someone enlarges
+# it in Word, without carrying a 4000px render for a 260px cell.
+EMBED_SCALE = 2
+EMBED_MAX_BYTES = 400 * 1024
+DOC_IMAGE_MAX_PX = 620                 # fits the landscape text column
+CELL_IMAGE_MAX_PX = 260                # a table cell is much narrower
+
+
+def _image_size(path, max_px):
+    """Pixel size to draw at, scaled down to fit and never scaled up."""
+    try:
+        from PIL import Image
+        with Image.open(path) as im:
+            w, h = im.size
+    except Exception:
+        return None
+    if not w or not h:
+        return None
+    scale = min(1.0, float(max_px) / float(w))
+    return int(w * scale), int(h * scale)
+
+
+def _embed_bytes(path, draw_px):
+    """The bytes to store for an image drawn at draw_px wide.
+
+    Returns (data, extension). Falls back to the original file whenever anything
+    is unclear - a document with a heavy image is a nuisance, a document with a
+    corrupted one is a failure.
+    """
+    try:
+        from PIL import Image
+    except Exception:
+        return None, None
+    try:
+        with Image.open(path) as im:
+            im.load()
+            target = max(1, int(draw_px * EMBED_SCALE))
+            if im.width <= target and os.path.getsize(path) <= EMBED_MAX_BYTES:
+                return None, None                      # small enough already
+            ratio = float(target) / float(im.width)
+            if ratio < 1.0:
+                im = im.resize((target, max(1, int(im.height * ratio))), Image.LANCZOS)
+            buf = io.BytesIO()
+            im.convert("RGB").save(buf, "JPEG", quality=82, optimize=True)
+            return buf.getvalue(), ".jpg"
+    except Exception:
+        return None, None
+
+
+def _drawing_xml(rid, cx, cy, name):
+    """An inline drawing. Word needs the whole a:graphic tree, not just a rel."""
+    return (
+        '<w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"'
+        ' xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">'
+        '<wp:extent cx="%d" cy="%d"/><wp:docPr id="%d" name="%s"/>'
+        '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
+        '<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">'
+        '<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">'
+        '<pic:nvPicPr><pic:cNvPr id="%d" name="%s"/><pic:cNvPicPr/></pic:nvPicPr>'
+        '<pic:blipFill><a:blip xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"'
+        ' r:embed="%s"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>'
+        '<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="%d" cy="%d"/></a:xfrm>'
+        '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>'
+        '</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>'
+        % (cx, cy, int(rid[3:] or 1), name, int(rid[3:] or 1), name, rid, cx, cy))
+
+
 def _esc(s):
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
@@ -667,17 +738,58 @@ def _esc(s):
 # Bold first, then italic, and the italic arm refuses to fire when an underscore
 # is flanked by word characters - so a snake_case name in the text stays literal
 # instead of silently turning half a sentence italic.
-_INLINE = re.compile(r"\*\*(?P<b>.+?)\*\*"
+_INLINE = re.compile(r"!\[(?P<alt>[^\]]*)\]\((?P<src>[^)]+)\)"
+                     r"|\*\*(?P<b>.+?)\*\*"
                      r"|(?<![A-Za-z0-9])_(?P<i>[^_\n]+)_(?![A-Za-z0-9])")
 
 
+_IMAGE_RUN = "\x00img"
+
+_IMG_STATE = {"base": "", "items": [], "in_cell": False}
+
+
+def _register_image(src):
+    """Resolve a markdown image path and return (rid, cx, cy, name), or None."""
+    path = src if os.path.isabs(src) else os.path.join(_IMG_STATE["base"], src)
+    path = os.path.normpath(path)
+    if not os.path.isfile(path):
+        return None
+    ext = os.path.splitext(path)[1].lower()
+    if ext not in (".png", ".jpg", ".jpeg"):
+        return None
+    size = _image_size(path, CELL_IMAGE_MAX_PX if _IMG_STATE["in_cell"]
+                       else DOC_IMAGE_MAX_PX)
+    if not size:
+        return None
+    for item in _IMG_STATE["items"]:
+        if item["path"] == path and item["cell"] == _IMG_STATE["in_cell"]:
+            return item["rid"], item["cx"], item["cy"], item["name"]
+    n = len(_IMG_STATE["items"]) + 1
+    data, newext = _embed_bytes(path, size[0])
+    if data is not None:
+        ext = newext
+    # The relationship ids start at 100 so they cannot collide with rId1, which
+    # the styles part already owns.
+    item = {"path": path, "data": data, "rid": "rId%d" % (100 + n),
+            "name": "media%d%s" % (n, ext),
+            "cx": size[0] * EMU_PER_PX, "cy": size[1] * EMU_PER_PX,
+            "cell": _IMG_STATE["in_cell"]}
+    _IMG_STATE["items"].append(item)
+    return item["rid"], item["cx"], item["cy"], item["name"]
+
+
 def _runs(text):
-    """Split one line into (text, bold, italic) runs."""
+    """Split one line into (text, bold, italic) runs, or (_IMAGE_RUN, src, alt)."""
     out, at = [], 0
     for m in _INLINE.finditer(text):
         if m.start() > at:
             out.append((text[at:m.start()], False, False))
-        if m.group("b") is not None:
+        if m.group("src") is not None:
+            # (src, alt) rather than (text, bold, italic) - _run_xml tells them
+            # apart by the marker, so an image can sit anywhere a run can,
+            # including inside a table cell.
+            out.append((_IMAGE_RUN, m.group("src"), m.group("alt")))
+        elif m.group("b") is not None:
             out.append((m.group("b"), True, False))
         else:
             out.append((m.group("i"), False, True))
@@ -688,6 +800,16 @@ def _runs(text):
 
 
 def _run_xml(text, bold=False, italic=False):
+    # An image run arrives as (_IMAGE_RUN, src, alt) from _runs, so the second
+    # and third slots carry the path and the alt text rather than the styles.
+    if text == _IMAGE_RUN:
+        reg = _register_image(bold)
+        if not reg:
+            # A path that does not resolve becomes its alt text. Silently
+            # dropping it would leave a cell that looks deliberately blank.
+            return _run_xml("[%s]" % (italic or "image not found"), italic=True)
+        rid, cx, cy, name = reg
+        return "<w:r>%s</w:r>" % _drawing_xml(rid, cx, cy, name)
     pr = ""
     if bold or italic:
         pr = "<w:rPr>%s%s</w:rPr>" % ("<w:b/>" if bold else "", "<w:i/>" if italic else "")
@@ -709,7 +831,11 @@ def _para(text, style=None, indent=0, rule=False, bold_all=False):
 
 def _cell(text, header, width):
     shade = '<w:shd w:val="clear" w:fill="D9E2F3"/>' if header else ""
-    body = _para(text, bold_all=header) if text.strip() else "<w:p/>"
+    _IMG_STATE["in_cell"] = True
+    try:
+        body = _para(text, bold_all=header) if text.strip() else "<w:p/>"
+    finally:
+        _IMG_STATE["in_cell"] = False
     return ('<w:tc><w:tcPr><w:tcW w:w="%d" w:type="dxa"/>%s'
             '<w:vAlign w:val="top"/></w:tcPr>%s</w:tc>' % (width, shade, body))
 
@@ -757,6 +883,11 @@ def markdown_to_docx(md_path, docx_path=None):
     if docx_path is None:
         docx_path = os.path.splitext(md_path)[0] + ".docx"
     lines = io.open(md_path, encoding="utf-8").read().splitlines()
+    # Image paths in the document are relative to the .md, the same convention
+    # _zone_image_md writes them with.
+    _IMG_STATE["base"] = os.path.dirname(os.path.abspath(md_path))
+    _IMG_STATE["items"] = []
+    _IMG_STATE["in_cell"] = False
 
     body, table = [], []
     header_row = [False]
@@ -811,12 +942,25 @@ def markdown_to_docx(md_path, docx_path=None):
                 '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
                 '<w:body>%s%s</w:body></w:document>' % ("".join(body), sect))
 
+    rels = _DOC_RELS
+    if _IMG_STATE["items"]:
+        extra = "".join(
+            '<Relationship Id="%s" Type="http://schemas.openxmlformats.org/'
+            'officeDocument/2006/relationships/image" Target="media/%s"/>'
+            % (i["rid"], i["name"]) for i in _IMG_STATE["items"])
+        rels = rels.replace("</Relationships>", extra + "</Relationships>")
+
     with zipfile.ZipFile(docx_path, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("[Content_Types].xml", _CONTENT_TYPES)
         z.writestr("_rels/.rels", _ROOT_RELS)
-        z.writestr("word/_rels/document.xml.rels", _DOC_RELS)
+        z.writestr("word/_rels/document.xml.rels", rels)
         z.writestr("word/styles.xml", _styles_xml())
         z.writestr("word/document.xml", document)
+        for i in _IMG_STATE["items"]:
+            if i.get("data") is not None:
+                z.writestr("word/media/%s" % i["name"], i["data"])
+            else:
+                z.write(i["path"], "word/media/%s" % i["name"])
     return docx_path
 
 

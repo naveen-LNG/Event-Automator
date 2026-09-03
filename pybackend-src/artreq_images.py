@@ -17,6 +17,7 @@ CLI payload (JSON file, same convention as the other backend scripts):
 
 import json
 import os
+import shutil
 import re
 import sys
 
@@ -49,6 +50,15 @@ def _vision_cfg(payload):
     if not payload.get("api_key"):
         return None
     return {"provider": "anthropic", "api_key": payload.get("api_key", "")}
+
+
+def _aspect_ratio_value(spec):
+    """"9:16" -> 0.5625. Returns None for "Auto" or anything unparseable."""
+    try:
+        w, h = str(spec).split(":")
+        return float(w) / float(h)
+    except Exception:
+        return None
 
 
 def _distiller(payload):
@@ -113,25 +123,51 @@ def generate_for_doc(payload):
     results = []
     for zone in (zones if do_scenes else []):
         zn = zone.get("zone_number", len(results) + 1)
-        prompt = art_reference.build_scene_prompt(
-            events_root, event_type, zone, doc_title=title,
-            art_direction=doc.get("art_direction_guidance"),
-            style_spec=spec, distil_fn=distil)
-        dest = os.path.join(out_dir, "zone%s_%s.png" % (zn, _slug(zone.get("zone_theme"), 32)))
+        # References are resolved BEFORE the prompt, because the prompt now has to
+        # say what is attached. This used to run after, which is how the scene
+        # pass ended up attaching two shipped scenes and never mentioning them -
+        # the model took the finish from them and invented the geometry.
         # Per-zone references when the type has been seeded with them, so a pad's
         # shape and proportions come from the shipped art rather than from prose.
         zrefs = art_reference.zone_reference_images(events_root, event_type, zn) or refs
+        prompt = art_reference.build_scene_prompt(
+            events_root, event_type, zone, doc_title=title,
+            art_direction=doc.get("art_direction_guidance"),
+            style_spec=spec, distil_fn=distil, reference_images=zrefs)
+        dest = os.path.join(out_dir, "zone%s_%s.png" % (zn, _slug(zone.get("zone_theme"), 32)))
         log("rendering zone %s - %s (refs: %s)"
             % (zn, zone.get("zone_theme", ""),
                ", ".join(os.path.basename(r) for r in zrefs) or "none"))
         # A zone may override the render aspect - a 2.12:1 pad has no room to be
         # itself inside a 3:4 frame - and crop_aspect brings the result back to
         # the shipped portrait framing afterwards.
-        z_aspect = (zone.get("render_aspect") or payload.get("aspect_ratio") or "Auto")
+        # A zone may override, then the caller, then the type's MEASURED aspect,
+        # and only then Auto. Auto used to be third and returned a near-square
+        # frame for a 9:16 scene, which is why this order matters.
+        z_aspect = (zone.get("render_aspect") or payload.get("aspect_ratio")
+                    or art_reference.scene_aspect(event_type) or "Auto")
         res = comfy_client.generate(
             comfy_url, prompt, dest, ref_paths=zrefs, log_fn=log,
             aspect_ratio=z_aspect,
             image_size=payload.get("image_size", "2K"))
+        # Verify the shape that came back. The renderer is asked for an aspect,
+        # not guaranteed one, and a wrong-shaped frame is the failure that looks
+        # most like success - it is a complete, pretty, unusable image.
+        want = _aspect_ratio_value(z_aspect)
+        if want and res.get("ok") and os.path.isfile(dest):
+            try:
+                from PIL import Image
+                with Image.open(dest) as _im:
+                    got = _im.width / float(_im.height)
+                if abs(got - want) / want > 0.05:
+                    msg = ("zone %s rendered at ratio %.3f but %s is %.3f - the frame "
+                           "shape is wrong, not just the content"
+                           % (zn, got, z_aspect, want))
+                    log("WARNING " + msg)
+                    out.setdefault("warnings", []).append(msg)
+            except Exception:
+                pass
+
         crop = zone.get("crop_aspect") or payload.get("crop_aspect")
         if res.get("ok") and crop:
             try:
@@ -434,6 +470,12 @@ def _generate_extra_passes(payload, doc, zones, out_dir, comfy_url, event_type):
         title = doc.get("title") or event_type
         spec = art_reference.load_style_spec(events_root, event_type)
         refs = art_reference.style_reference_images(events_root, event_type)
+        # The build-up frames must be the SAME SHAPE as the finished scene they
+        # build up to, and the scene's shape is the type's measured one. The old
+        # default here was "4:5", and since nothing passes aspect_ratio every
+        # frame rendered near-square while its own scene rendered 9:16.
+        prog_aspect = (payload.get("aspect_ratio")
+                       or art_reference.scene_aspect(event_type) or "4:5")
         distil = None
         made_any = False
         for z in zones:
@@ -445,21 +487,40 @@ def _generate_extra_passes(payload, doc, zones, out_dir, comfy_url, event_type):
             zdir = os.path.join(out_dir, "scene%s_%s" % (zn, _slug(z.get("zone_theme"), 24)))
             frames, labels = [], []
 
+            # reference_images so the prompt names what is attached and assigns
+            # it the geometry - without it the attachment is an unlabelled hint
+            # and the horizon gets invented, which is what happened on the scene
+            # pass for three rounds.
             base_prompt = art_reference.build_scene_prompt(
                 events_root, event_type,
                 dict(z, reference_notes="%s\n\n%s" % (
                     z.get("reference_notes", ""), asset_prompts.built_scene(steps))),
                 doc_title=title, art_direction=doc.get("art_direction_guidance"),
-                style_spec=spec, distil_fn=distil)
+                style_spec=spec, distil_fn=distil,
+                reference_images=art_reference.zone_reference_images(
+                    events_root, event_type, z.get("zone_number")) or refs)
             base = os.path.join(zdir, "%02d_F%d_complete.png" % (len(steps), len(steps) + 1))
-            log("scene %s: rendering the completed base" % zn)
-            r = _render_one(comfy_url, base_prompt, base, refs, "progression",
-                            payload.get("aspect_ratio", "4:5"), "2K")
-            out["images"].append(r); out["requested"] += 1
-            if not r["ok"]:
-                log("scene %s: base failed, skipping the rest of this sequence" % zn)
-                continue
-            out["generated"] += 1
+            # If this zone already has an ACCEPTED scene image, that is the
+            # completed frame - copy it rather than rendering a sibling of it.
+            # Rendering a second "finished scene" produced a strip whose last
+            # frame did not match the hero image above it in the document.
+            accepted = z.get("image_path") or ""
+            if accepted and os.path.isfile(accepted):
+                if not os.path.isdir(zdir):
+                    os.makedirs(zdir)
+                shutil.copyfile(accepted, base)
+                log("scene %s: using the accepted scene as the completed base" % zn)
+            else:
+                log("scene %s: rendering the completed base" % zn)
+                zrefs = art_reference.zone_reference_images(
+                    events_root, event_type, zn) or refs
+                r = _render_one(comfy_url, base_prompt, base, zrefs, "progression",
+                                prog_aspect, "2K")
+                out["images"].append(r); out["requested"] += 1
+                if not r["ok"]:
+                    log("scene %s: base failed, skipping the rest of this sequence" % zn)
+                    continue
+                out["generated"] += 1
 
             # steps 1..N-1, each the base minus everything not yet built.
             # Step 1 (the hero alone) and step 2 are cut from their OWN
@@ -497,7 +558,7 @@ def _generate_extra_passes(payload, doc, zones, out_dir, comfy_url, event_type):
                     % (zn, k + 1, len(steps) + 2,
                        "one change" if k <= chain_below else "cumulative"))
                 r = _render_one(comfy_url, instr, dest, [src], "progression",
-                                payload.get("aspect_ratio", "4:5"), "2K")
+                                prog_aspect, "2K")
                 out["images"].append(r); out["requested"] += 1
                 if r["ok"]:
                     out["generated"] += 1; per_step[k] = dest; prev = dest
@@ -506,7 +567,7 @@ def _generate_extra_passes(payload, doc, zones, out_dir, comfy_url, event_type):
             hero_src = per_step.get(1, base)
             log("scene %s: the restored-but-empty frame" % zn)
             r = _render_one(comfy_url, asset_prompts.remove_one(steps[0]), empty,
-                            [hero_src], "progression", payload.get("aspect_ratio", "4:5"), "2K")
+                            [hero_src], "progression", prog_aspect, "2K")
             out["images"].append(r); out["requested"] += 1
             if r["ok"]:
                 out["generated"] += 1
@@ -515,7 +576,7 @@ def _generate_extra_passes(payload, doc, zones, out_dir, comfy_url, event_type):
             log("scene %s: the derelict frame" % zn)
             r = _render_one(comfy_url, asset_prompts.derelict_prompt(z), derelict,
                             [empty if os.path.exists(empty) else base], "progression",
-                            payload.get("aspect_ratio", "4:5"), "2K")
+                            prog_aspect, "2K")
             out["images"].append(r); out["requested"] += 1
             if r["ok"]:
                 out["generated"] += 1
@@ -533,7 +594,7 @@ def _generate_extra_passes(payload, doc, zones, out_dir, comfy_url, event_type):
                                     chars[:i + 1], arriving=[c],
                                     scale=(z.get("character_scale") or "beside")),
                                 cf, [prev_frame], "progression",
-                                payload.get("aspect_ratio", "4:5"), "2K")
+                                prog_aspect, "2K")
                 out["images"].append(r); out["requested"] += 1
                 if r["ok"]:
                     out["generated"] += 1; prev_frame = cf
@@ -543,6 +604,31 @@ def _generate_extra_passes(payload, doc, zones, out_dir, comfy_url, event_type):
             labels = ["empty"] + ["+ %s" % steps[k][:24] for k in sorted(per_step)] + ["complete"]
             frames = [p for p in ordered if os.path.exists(p)]
             _review_progression_set(frames, base, derelict, labels, zn, out)
+
+            # Record the sequence ON THE ZONE so the document can show it. The
+            # frames were being written to disk and then forgotten: the generator
+            # printed the step LIST and none of the step ART.
+            #
+            # The derelict frame leads here although the review excludes it - the
+            # review needs diff-from-base to shrink along the build order and the
+            # derelict state breaks that, but an artist needs to see the start.
+            shown = ([(derelict, "F0 derelict")] if os.path.exists(derelict) else [])
+            shown += [(p, l) for p, l in zip(ordered, labels) if os.path.exists(p)]
+            # ...then the characters arriving, which the review set leaves out on
+            # purpose (they are added AFTER the scene is complete, so they break
+            # the shrinking-diff invariant it checks) but which the artist still
+            # has to draw. The document is not the review.
+            for i, c in enumerate(chars):
+                cf = os.path.join(zdir, "%02d_F%d_characters%d.png"
+                                  % (len(steps) + 1 + i, len(steps) + 2 + i, i + 1))
+                if os.path.exists(cf):
+                    shown.append((cf, "+ %s" % (c.get("name") or "character")))
+            z["progression_frames"] = [{"label": l, "path": p} for p, l in shown]
+            sheet = progression_sheet([p for p, _ in shown], [l for _, l in shown],
+                                      os.path.join(zdir, "progression_sheet.png"))
+            if sheet:
+                z["progression_sheet"] = sheet
+                log("scene %s: progression strip written (%d frames)" % (zn, len(shown)))
         if not made_any:
             log("no zone carries construction_steps, so there is no sequence to build")
 
@@ -643,6 +729,44 @@ def _generate_extra_passes(payload, doc, zones, out_dir, comfy_url, event_type):
                 out["generated"] += 1
         review(made, sign, "material")
 
+    # ---- UI panels -----------------------------------------------------------
+    # A re-skin, not an invention: the previous panel's own art goes in as the
+    # reference so the layout, the proportions and the part list survive, and
+    # the prompt changes only the theme over the top of them.
+    if "panel" in requested:
+        made, sign = [], {}
+        theme = ((doc.get("gameplay_overview") or {}).get("theme") or "").strip()
+        adg = doc.get("art_direction_guidance") or {}
+        lean = "; ".join(adg.get("lean_into") or [])
+        pal = ((doc.get("zones") or [{}])[0]).get("palette_or_mood", "")
+        panel_notes = {(e.get("panel") or "").strip().lower(): (e.get("note") or "")
+                       for e in (doc.get("ui_panels") or [])}
+        panels = _panels_with_art(event_type, events_root)
+        doc.setdefault("panel_images", {})
+        for name, asset, sheet in panels:
+            note = panel_notes.get(name.lower()) or panel_notes.get(asset.lower()) or ""
+            prompt = (
+                "The attached image is a contact sheet of every texture in the "
+                "shipped %s UI panel '%s'. RE-SKIN this exact set of parts for the "
+                "event theme '%s'. Keep every part, its shape, its proportion and "
+                "its role - a button stays that button, a frame stays that frame, "
+                "a badge stays that badge. Change ONLY the surface: material, "
+                "colour and motif. Palette: %s. Art direction: %s.%s "
+                "Lay the re-skinned parts out on the same grid as the reference, "
+                "on a plain mid-grey background, with no text, no lettering and no "
+                "numbers anywhere."
+                % (event_type, name, theme or "the event theme", pal or "as the scenes",
+                   lean or "match the scenes", (" " + note) if note else ""))
+            dest = os.path.join(out_dir, "panels", "panel_%s.png" % _slug(asset, 40))
+            log("rendering panel %s (ref: %s)" % (name, os.path.basename(sheet)))
+            r = _render_one(comfy_url, prompt, dest, [sheet], "panel", "Auto", "2K")
+            out["images"].append(r); out["requested"] += 1
+            if r["ok"]:
+                doc["panel_images"][asset] = dest
+                made.append(dest); sign[os.path.basename(dest)] = []
+                out["generated"] += 1
+        review(made, sign, "panel")
+
     # ---- characters ----------------------------------------------------------
     # Cut out but NOT normalised: icon_sheet forces a square canvas, and a
     # character ships as a tall portrait sprite (Dessert guests are 320x512).
@@ -687,6 +811,11 @@ def _generate_extra_passes(payload, doc, zones, out_dir, comfy_url, event_type):
         for i, t in enumerate([t for t in (ex.get("task_icons") or []) if str(t).strip()], 1):
             jobs.append(("task_%02d" % i, asset_prompts.task_icon_prompt(t, pal)))
         made, sign = [], {}
+        # Recorded on the doc, keyed the way the icon table asks for them. The
+        # materials, characters and panels all wrote their paths back; the extras
+        # were the one pass that rendered six icons and told nobody where they
+        # went, so the document's icon rows stayed on "_add reference_".
+        doc.setdefault("extra_images", {})
         for name, prompt in jobs:
             dest = os.path.join(out_dir, "icons", "extra_%s.png" % name)
             log("rendering extra: %s" % name)
@@ -694,10 +823,122 @@ def _generate_extra_passes(payload, doc, zones, out_dir, comfy_url, event_type):
                             post=_icon_post(1, 1, fraction=icon_sheet.SIZE_STEPS[-1]))
             out["images"].append(r); out["requested"] += 1
             if r["ok"]:
+                doc["extra_images"][name] = dest
                 made.append(dest); sign[os.path.basename(dest)] = []
                 out["generated"] += 1
+
+        # The task icons also go in as ONE strip. Four separate images in a single
+        # table cell came out at 260px each in the .docx - 1040px inside a column
+        # a third that wide - and they are judged as a set anyway: four icons that
+        # each read well while sharing no visual family is the failure this is for.
+        tasks = [(k, doc["extra_images"][k]) for k in sorted(doc["extra_images"])
+                 if k.startswith("task_")]
+        if len(tasks) > 1:
+            names = [t for t in (ex.get("task_icons") or []) if str(t).strip()]
+            strip = progression_sheet(
+                [p for _k, p in tasks],
+                [str(names[i])[:22] if i < len(names) else k
+                 for i, (k, _p) in enumerate(tasks)],
+                os.path.join(out_dir, "icons", "task_icons_set.png"), tile_h=170)
+            if strip:
+                doc["extra_images"]["task_sheet"] = strip
+                log("task icons composed into one strip (%d icons)" % len(tasks))
         review(made, sign, "extras")
     return out
+
+
+PROGRESSION_TILE_H = 300        # px per frame in the strip
+PROGRESSION_PER_ROW = 6         # wraps to a second row beyond this
+PROGRESSION_LABEL_H = 34
+
+
+def _progression_font(size=15):
+    """A real font if Windows has one, otherwise PIL's bitmap default.
+
+    Wrapped because a missing font must degrade the labels, never lose the sheet:
+    the frames are the deliverable and the captions are an aid to reading them.
+    """
+    from PIL import ImageFont
+    for name in ("arial.ttf", "segoeui.ttf", "calibri.ttf"):
+        try:
+            return ImageFont.truetype("C:/Windows/Fonts/" + name, size)
+        except Exception:
+            continue
+    try:
+        return ImageFont.load_default()
+    except Exception:
+        return None
+
+
+def _fit_label(draw, text, font, max_w):
+    """Trim text to fit max_w PIXELS, not to a character count.
+
+    Cutting at 30 characters is what made the first strip's captions overlap:
+    "+ a tall TIERED FRUIT SHELF" is 27 characters and far wider than the tile it
+    sat under. Falls back to a crude character estimate on any PIL without
+    textlength, because a slightly short caption beats a crash.
+    """
+    try:
+        if draw.textlength(text, font=font) <= max_w:
+            return text
+        while text and draw.textlength(text + "\u2026", font=font) > max_w:
+            text = text[:-1]
+        return text + "\u2026" if text else ""
+    except Exception:
+        return text[:max(4, int(max_w // 7))]
+
+
+def progression_sheet(frames, labels, dest, tile_h=PROGRESSION_TILE_H):
+    """One labelled strip showing a scene's build-up in order. Path, or "".
+
+    Returns "" rather than raising: a document with a scene image and no strip is
+    worth shipping, and a pass that dies here would lose the 58 frames it just
+    spent an hour rendering.
+    """
+    try:
+        import os
+        from PIL import Image, ImageDraw
+        live = [(l, p) for l, p in zip(labels, frames) if p and os.path.isfile(p)]
+        if len(live) < 2:
+            return ""
+        tiles = []
+        for label, p in live:
+            with Image.open(p) as im:
+                im = im.convert("RGB")
+                w = max(1, int(round(im.width * (tile_h / float(im.height)))))
+                tiles.append((label, im.resize((w, tile_h), Image.LANCZOS)))
+
+        per_row = min(PROGRESSION_PER_ROW, len(tiles))
+        rows = [tiles[i:i + per_row] for i in range(0, len(tiles), per_row)]
+        gap, pad = 10, 14
+        row_w = [sum(t[1].width for t in r) + gap * (len(r) - 1) for r in rows]
+        cell_h = tile_h + PROGRESSION_LABEL_H
+        sheet_w = max(row_w) + pad * 2
+        sheet_h = len(rows) * cell_h + gap * (len(rows) - 1) + pad * 2
+
+        sheet = Image.new("RGB", (sheet_w, sheet_h), (244, 243, 240))
+        draw = ImageDraw.Draw(sheet)
+        font = _progression_font()
+        y = pad
+        for r in rows:
+            x = pad
+            for label, im in r:
+                sheet.paste(im, (x, y))
+                draw.rectangle([x, y, x + im.width - 1, y + tile_h - 1],
+                               outline=(205, 202, 196))
+                if font is not None:
+                    text = _fit_label(draw, str(label), font, im.width - 6)
+                    draw.text((x + 3, y + tile_h + 8), text, fill=(60, 58, 55), font=font)
+                x += im.width + gap
+            y += cell_h + gap
+
+        d = os.path.dirname(os.path.abspath(dest))
+        if d and not os.path.isdir(d):
+            os.makedirs(d)
+        sheet.save(dest)
+        return dest
+    except Exception:
+        return ""
 
 
 def _review_progression_set(frames, base, derelict, labels, zn, out):
@@ -779,7 +1020,7 @@ def _review_chains(producers, out_dir, out):
 
 
 PASSES = ("scene", "progression", "building", "stage", "icon", "producer", "recipe",
-          "ingredient", "goods", "material", "character", "extras")
+          "ingredient", "goods", "material", "character", "extras", "panel")
 DEFAULT_PASSES = ("scene",)     # unchanged behaviour unless the caller asks for more
 
 
@@ -818,12 +1059,28 @@ def plan_passes(doc, passes, event_type=""):
                     # derelict + empty + one per build step + one per arriving
                     # character (they come in one by one over the last frames)
                     n += len(st) + 2 + len((doc.get("characters") or [])[:2])
+                    # ...minus the completed base, when the zone already has an
+                    # accepted scene image: the pass copies that instead of
+                    # rendering a second finished scene. Spelled the same way as
+                    # the check in the pass itself, and test_artreq_images pins
+                    # the two together - the cost line comes from this number.
+                    accepted = z.get("image_path") or ""
+                    if accepted and os.path.isfile(accepted):
+                        n -= 1
         elif name == "goods":
             n = sum(len(z.get("goods") or []) for z in zones)
         elif name == "material":
             n = len(doc.get("construction_materials") or [])
         elif name == "character":
             n = len(doc.get("characters") or [])
+        elif name == "panel":
+            # From the table, not the disk: plan_passes is the cost line and must
+            # not depend on whether a reference folder happens to be synced yet.
+            try:
+                import art_requirement_generator as _arg
+                n = len([p for p in (_arg.UI_PANELS_BY_TYPE.get(event_type) or []) if p[2]])
+            except Exception:
+                n = 0
         elif name == "extras":
             ex = doc.get("event_extras") or {}
             n = (1 if (ex.get("hot_air_balloon") or "").strip() else 0)                 + (1 if (ex.get("achievement_badge") or "").strip() else 0)                 + len([t for t in (ex.get("task_icons") or []) if str(t).strip()])
@@ -831,6 +1088,37 @@ def plan_passes(doc, passes, event_type=""):
             continue
         plan.append({"pass": name, "count": n})
     return {"passes": plan, "total": sum(p["count"] for p in plan)}
+
+
+def _panels_with_art(event_type, events_root):
+    """(panel name, shipped asset, reference sheet path) for re-skinnable panels.
+
+    Only panels that ship art of their own. The rest are built from the shared
+    chrome, so they change when it does and have nothing of their own to hold.
+    """
+    try:
+        import art_requirement_generator as arg
+    except Exception:
+        return []
+    panels = arg.UI_PANELS_BY_TYPE.get(event_type) or []
+    root = _panel_reference_dir(event_type, events_root)
+    out = []
+    for name, asset, tex in panels:
+        if not tex:
+            continue
+        sheet = os.path.join(root, "%s.jpg" % asset) if root else ""
+        if sheet and os.path.isfile(sheet):
+            out.append((name, asset, sheet))
+    return out
+
+
+def _panel_reference_dir(event_type, events_root):
+    """Where the shipped-panel contact sheets live, beside the documents."""
+    if not events_root:
+        return ""
+    import art_requirement_generator as arg
+    return os.path.join(events_root, event_type, "Art Requirements",
+                        arg.PANEL_REFERENCE_DIR)
 
 
 IMAGE_DOC_KIND = "image"        # keeps image lessons separate from document lessons

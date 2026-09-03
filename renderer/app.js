@@ -2149,6 +2149,10 @@
   function clearPickedOnePager() {
     ideationPickedOnePager = null;
     renderOnePagerList();
+    // The documents panel is filtered by the picked One-Pager, so it has to be
+    // told when there stops being one - otherwise it keeps showing one event's
+    // documents while the picker says nothing is selected.
+    loadArtReqDocs();
   }
 
   function applyIdeationMode() {
@@ -2272,6 +2276,9 @@
                                docPath: res.docPath || doc.path };
     renderOnePagerList();
     $('#artreq-trigger-card').style.display = 'block';
+    // Picking a One-Pager decides which event the documents panel is about.
+    artReqShowAllDocs = false;
+    loadArtReqDocs();
     artReqVariations = null;
     artReqDraftPaths = [];
     artReqPreviews = [];
@@ -2606,6 +2613,11 @@
   // Which asset passes to render. Scene is on by default and is the only one an
   // older document can satisfy; the rest need the buildings/producers the newer
   // schema carries, so each is disabled until the document actually has them.
+  // How many shipped panels carry art of their own, per event type. Mirrors
+  // BLOCKS_UI_PANELS in art_requirement_generator.py - the backend is the
+  // authority and plan_passes re-derives it; this is only for the cost line.
+  const PANEL_COUNTS = { Blocks: 18 };
+
   function passPickerHtml(idx, doc) {
     const zones = (doc && doc.zones) || [];
     const nb = zones.reduce((a, z) => a + ((z.buildings || []).length), 0);
@@ -2635,6 +2647,9 @@
     const nx = (String(ex.hot_air_balloon || '').trim() ? 1 : 0)
       + (String(ex.achievement_badge || '').trim() ? 1 : 0)
       + ((ex.task_icons || []).filter(t => String(t).trim()).length);
+    // Panels come from the shipped-build table the backend owns, not from the
+    // document - a document does not get to choose which panels the game has.
+    const npn = PANEL_COUNTS[$('#ideation-event-type').value] || 0;
     const rows = [
       ['scene', 'Scene overviews', zones.length, true],
       ['building', 'Building sheets', nb, nb > 0],
@@ -2651,7 +2666,12 @@
       ['goods', 'Goods icons', ng, ng > 0],
       ['material', 'Construction materials', nm, nm > 0],
       ['character', 'Characters', nc, nc > 0],
-      ['extras', 'Balloon, badge, task icons', nx, nx > 0]
+      ['extras', 'Balloon, badge, task icons', nx, nx > 0],
+      // A re-skin, not an invention: the previous panel's own art is attached as
+      // the reference, so the count is the number of shipped panels that HAVE
+      // art of their own. Panels built from the shared chrome have nothing to
+      // hold onto and are not rendered.
+      ['panel', 'UI panel re-skins', npn, npn > 0]
     ];
     const boxes = rows.map(([key, label, count, enabled]) => `
       <label class="pass-option${enabled ? '' : ' pass-option-off'}">
@@ -2885,27 +2905,69 @@
   // this event?" was "open Explorer and look". This is that answer, in the tab.
   let artReqDocs = [];
   let artReqOpenedDocPath = '';
+  let artReqShowAllDocs = false;
+  let artReqDocFilter = { event: null, hiddenByEvent: 0, hiddenAsDocx: 0 };
 
   async function loadArtReqDocs() {
     const eventType = $('#ideation-event-type').value;
     const card = $('#artreq-docs-card');
     if (!card) return;
     if (!eventType) { card.style.display = 'none'; return; }
-    const res = await window.api.artReqListDocs({ eventType });
+    const res = await window.api.artReqListDocs({
+      eventType,
+      onePagerName: ideationPickedOnePager ? ideationPickedOnePager.name : '',
+      showAll: artReqShowAllDocs,
+    });
     if (!res || !res.success) {
       card.style.display = 'none';
       log(`Could not list Art Requirement documents: ${res && res.output}`, 'console-log-error');
       return;
     }
     artReqDocs = res.docs || [];
-    card.style.display = artReqDocs.length ? '' : 'none';
+    artReqDocFilter = { event: res.filteredTo || null,
+                        hiddenByEvent: res.hiddenByEvent || 0,
+                        hiddenAsDocx: res.hiddenAsDocx || 0,
+                        matchedBySource: res.matchedBySource || 0 };
+    // Keep the card up when a filter is the reason it is empty, or the panel
+    // vanishes and looks like the folder is empty rather than filtered.
+    card.style.display = (artReqDocs.length || artReqDocFilter.hiddenByEvent) ? '' : 'none';
     renderArtReqDocList();
   }
 
   function renderArtReqDocList() {
     const box = $('#artreq-docs-list');
     if (!box) return;
-    box.innerHTML = artReqDocs.map((d, i) => {
+    const f = artReqDocFilter;
+    let banner = '';
+    if (f.event) {
+      const held = [];
+      if (f.hiddenByEvent) held.push(`${f.hiddenByEvent} from other events`);
+      if (f.hiddenAsDocx) held.push(`${f.hiddenAsDocx} exported .docx`);
+      // Say HOW the match was made. "Matched by recorded source" means the
+      // documents state which brief they came from; the filename fallback is a
+      // guess that happens to be right, and the difference matters when one of
+      // them stops working.
+      const how = f.matchedBySource
+        ? `${f.matchedBySource} matched by recorded source`
+        : 'matched by filename';
+      banner = `<div class="onepager-empty">Showing event <strong>${escapeHtml(f.event)}</strong>`
+        + ` <span class="onepager-meta">(${escapeHtml(how)})</span>`
+        + (held.length ? ` — hiding ${held.join(' and ')}.` : '.')
+        + ` <a href="#" id="artreq-showall-link">Show everything</a></div>`;
+    } else if (f.hiddenAsDocx) {
+      banner = `<div class="onepager-empty">Hiding ${f.hiddenAsDocx} exported .docx —`
+        + ` each one is reachable from its Markdown row.`
+        + (artReqShowAllDocs ? ` <a href="#" id="artreq-showall-link">Filter to this event</a>` : '')
+        + `</div>`;
+    }
+    if (!artReqDocs.length) {
+      box.innerHTML = banner + `<div class="onepager-empty">No Art Requirement filed for this`
+        + ` event yet.</div>`;
+      const link0 = box.querySelector('#artreq-showall-link');
+      if (link0) link0.addEventListener('click', toggleArtReqDocFilter);
+      return;
+    }
+    box.innerHTML = banner + artReqDocs.map((d, i) => {
       const when = new Date(d.modified).toLocaleString();
       const size = d.bytes < 1024 * 1024
         ? `${Math.round(d.bytes / 1024)} KB`
@@ -2945,14 +3007,118 @@
       b.addEventListener('click', () => exportArtReqDocx(b.dataset.path, b)));
     box.querySelectorAll('.artreq-reveal-btn').forEach(b =>
       b.addEventListener('click', () => revealArtReqDoc(b.dataset.path)));
+    const link = box.querySelector('#artreq-showall-link');
+    if (link) link.addEventListener('click', toggleArtReqDocFilter);
   }
 
+  function toggleArtReqDocFilter(e) {
+    if (e) e.preventDefault();
+    artReqShowAllDocs = !artReqShowAllDocs;
+    loadArtReqDocs();
+  }
+
+
+  // ---- generating art for a document that was opened, not just generated ----
+  // The Reference Images controls used to exist only on a freshly generated
+  // variation card, keyed to artReqVariations[idx]. Open a document filed last
+  // week and there was no way to render its art at all - the work had to be
+  // regenerated from scratch to get a button back.
+  //
+  // The structured document is now written as a .json sidecar on every save, so
+  // an opened document can drive the same pass picker, the same cost line and
+  // the same backend call. The index -1 keeps its DOM ids clear of the generated
+  // cards, which are numbered from zero.
+  const OPENED_DOC_IDX = -1;
+  let artReqOpenedDoc = null;          // the structured variation, when it exists
+
+  function openedDocArtHtml(info) {
+    if (!info || !info.variation) {
+      return `<p class="settings-hint">${escapeHtml((info && info.reason)
+        || 'No structured data beside this document, so its art cannot be generated here.')}</p>`;
+    }
+    return `
+      <div class="board-divider"></div>
+      <h3 class="card-title">Reference Art for this document</h3>
+      <p class="settings-hint">Renders straight from the document on disk and writes the
+        images back into it, so the file the Art team opens is the one carrying the
+        references. Pick the passes first — the cost line is the real count.</p>
+      ${passPickerHtml(OPENED_DOC_IDX, info.variation)}
+      <div class="execution-footer" style="justify-content:flex-end;">
+        <button id="artreq-doc-images-btn" class="primary-btn">Generate Reference Images</button>
+      </div>`;
+  }
+
+  async function generateOpenedDocImages() {
+    if (!artReqOpenedDoc || !artReqOpenedDocPath) return;
+    const eventType = $('#ideation-event-type').value;
+    // Scoped to the view: the button is created when a document is opened, so
+    // it is not in index.html and must not be queried as though it were.
+    const view = $('#artreq-doc-view');
+    const btn = view && view.querySelector('#artreq-doc-images-btn');
+    const passes = $$(`.artreq-pass[data-idx="${OPENED_DOC_IDX}"]`)
+      .filter(c => c.checked).map(c => c.value);
+    const chosen = passes.length ? passes : ['scene'];
+    if (btn) { btn.disabled = true; btn.textContent = 'Rendering…'; }
+
+    // The authoritative count, from the backend, logged before a long run starts
+    // so the log says what was actually asked for rather than what was intended.
+    try {
+      const pl = JSON.parse((await window.api.artReqPlan({
+        variation: artReqOpenedDoc, passes: chosen })).stdout);
+      if (pl.ok) log(`Plan: ${pl.passes.map(p => `${p.pass} ${p.count}`).join(', ')} — ${pl.total} render(s).`);
+    } catch (e) { /* informational only; never block the run on it */ }
+
+    const res = await window.api.artReqImages({
+      eventType, variation: artReqOpenedDoc, variationIndex: 0, passes: chosen });
+    if (btn) { btn.disabled = false; btn.textContent = 'Generate Reference Images'; }
+    if (!res.success) {
+      log(`Image generation failed: ${res.output}`, 'console-log-error');
+      toast('Image generation failed: ' + res.output, 'error');
+      return;
+    }
+    let parsed;
+    try { parsed = JSON.parse(res.stdout); }
+    catch (e) {
+      log(`Could not parse the image response: ${e.message}`, 'console-log-error');
+      toast('Could not parse the image response.', 'error');
+      return;
+    }
+    if (!parsed.ok) {
+      log(`Image generation failed: ${parsed.error}`, 'console-log-error');
+      toast(parsed.error || 'Image generation failed.', 'error');
+      return;
+    }
+    artReqOpenedDoc = parsed.doc || artReqOpenedDoc;
+    reportImageReview(parsed.review);
+    log(`Rendered ${parsed.generated}/${parsed.requested} image(s).`, 'console-log-success');
+
+    // Write the document back where it came from. Without this the renders sit
+    // on disk with nothing referencing them, which looks identical to failure.
+    const saved = await window.api.artReqSaveDoc({
+      eventType, docPath: artReqOpenedDocPath, variation: artReqOpenedDoc });
+    if (!saved.success) {
+      log(`Rendered, but saving the document failed: ${saved.output}`, 'console-log-error');
+      toast('Images rendered, but the document could not be updated: ' + saved.output, 'error');
+      return;
+    }
+    log(`Updated ${saved.data.path} — ${saved.data.zones_with_images} zone(s) now carry an image.`,
+        'console-log-success');
+    toast(`Rendered ${parsed.generated} image(s) into the document.`, 'success');
+
+    // Reopen so the reader sees the images that were just written.
+    const path = artReqOpenedDocPath;
+    artReqOpenedDocPath = '';
+    const i = artReqDocs.findIndex(d => d.path === path);
+    if (i >= 0) await toggleArtReqDoc(i);
+    await loadArtReqDocs();
+  }
   async function toggleArtReqDoc(i) {
     const doc = artReqDocs[i];
     const view = $('#artreq-doc-view');
     if (!doc || !view) return;
     if (artReqOpenedDocPath === doc.path) {
       artReqOpenedDocPath = '';
+      artReqOpenedDoc = null;
       view.innerHTML = '';
       renderArtReqDocList();
       return;
@@ -2970,7 +3136,16 @@
     // written last month reads exactly like one written a minute ago. The index
     // is negative so its section anchors cannot collide with a generated card's,
     // which are keyed by variation index from zero.
-    view.innerHTML = renderMarkdownDoc(res.data.markdown, -1 - i).html;
+    const dataRes = await window.api.artReqDocData({ eventType, docPath: doc.path });
+    const info = (dataRes && dataRes.success) ? dataRes.data : null;
+    artReqOpenedDoc = (info && info.variation) || null;
+    view.innerHTML = renderMarkdownDoc(res.data.markdown, -1 - i).html
+                   + openedDocArtHtml(info);
+    const gen = view.querySelector('#artreq-doc-images-btn');
+    if (gen) gen.addEventListener('click', generateOpenedDocImages);
+    view.querySelectorAll('.artreq-pass').forEach(cb =>
+      cb.addEventListener('change', () => refreshPlan(OPENED_DOC_IDX)));
+    refreshPlan(OPENED_DOC_IDX);
     renderArtReqDocList();
   }
 

@@ -447,14 +447,181 @@ FAILURES_BY_TYPE = {"Dessert": _DESSERT_FAILURES,
 NAMED_FAILURES = _DEFAULT_FAILURES          # kept for callers that import it
 
 
+# Composition rules for a SCENE. Deliberately not part of the failures block:
+# these say where the horizon goes and where the camera stands, which is
+# meaningless for a material icon, a character sprite or a UI panel re-skin, and
+# a constant named "failures" is the kind of thing that gets reused for those.
+# Only build_scene_prompt appends this.
+#
+# Stated as numbers because they are measured off the finished render -
+# "a low horizon" is an opinion, "43-50% down the frame" can be argued with.
+_BLOCKS_SCENE_COMPOSITION = (
+    "HORIZON - stated as an area because that is what you control: SKY fills "
+    "the TOP 43% to 50% of the frame. NOT MORE THAN 50% and NOT LESS THAN "
+    "43% - both are wrong and both happen. The horizon line therefore lands "
+    "just above the middle of the image, and the bottom 50-57% is ground and "
+    "the things standing on it. Check it: put a line halfway down the frame; "
+    "the sky should stop a little above that line. 30% sky crops the backdrop "
+    "that tells the player where they are; 60% sky makes a postcard instead "
+    "of a play space.\n"
+    "CAMERA: upfront and straight on. The camera faces the scene square, at "
+    "roughly standing eye level - no three-quarter rotation, no tilt, no dutch "
+    "angle, no top-down or bird's-eye view. Verticals stay vertical. This is a "
+    "proscenium view of a stage, not a diorama seen from a corner.\n"
+    "This applies just as much to an OPEN exterior. A yard, garden, field, "
+    "courtyard or plot is still shot square-on from standing height: you are "
+    "standing in it looking across it, NOT hovering above it looking down into "
+    "it. If the ground plane fans out towards the bottom corners, or you can "
+    "see down into a well, a trough or a crate, the camera has drifted upward "
+    "and is wrong.\n"
+    "WHERE THE CONTENT SITS: this is a play space, not a landscape view. The "
+    "built subject - the stall, mill, barn, kitchen, whatever this scene is about "
+    "- reads at a legible size in the MIDDLE GROUND, and the near ground carries "
+    "small and medium props: crates, baskets, sacks, tools, planting. A wide "
+    "sweep of empty ground, paving, grass or water in the bottom half is WRONG "
+    "even when the horizon and camera are right - in play the lower half of the "
+    "frame is where construction steps land, so a brief that shows it bare "
+    "describes a frame the built assets will not fit into. Equally, do not push "
+    "the subject back to the horizon.\n"
+    "SIZE BY DEPTH: the LARGEST objects sit in the far background or the middle "
+    "ground, never right at the camera. A big object in the near ground masks "
+    "everything behind it and swallows the changes each build step makes.\n"
+    "DISTRIBUTION: use the WHOLE frame and leave air between objects. They may "
+    "sit in front of one another but must NOT overlap drastically - every "
+    "silhouette has to read on its own. Where objects are piled together, the "
+    "step that adds one of them changes almost nothing on screen and the build "
+    "stops reading as construction.\n"
+    "SAFE AREAS: game UI covers the top and bottom edges of this frame in play. "
+    "Keep the things that carry the scene clear of roughly the top 15%% and the "
+    "bottom 20%%, and make every object recognisable from its SILHOUETTE and "
+    "overall shape rather than from one small detail - an object identifiable "
+    "only by its lettering or a single fine feature becomes unidentifiable the "
+    "moment a panel crosses it. Overlap with UI is to be avoided but it will "
+    "happen, so nothing may depend on being fully visible.\n"
+    "PRIMARY COLOUR: this scene owns ONE primary colour and the other scenes in "
+    "the event own different ones. It must come through in BOTH the time of day "
+    "and the built assets - a scene is not differentiated by tinting the same "
+    "midday light a new hue. Two scenes that read as the same colour at "
+    "thumbnail size have failed this, however different their content is."
+)
+
+SCENE_COMPOSITION_BY_TYPE = {"Blocks": _BLOCKS_SCENE_COMPOSITION}
+
+
+def scene_composition(event_type="", interior=False):
+    """Composition rules for a scene render of this type, or "" if it has none.
+
+    An interior has no horizon, so it is not given the horizon rule - asking a
+    barn for a horizon between 43% and 50% produces a barn with a landscape
+    painted on the back wall, and the measurement afterwards is meaningless.
+    """
+    rule = SCENE_COMPOSITION_BY_TYPE.get(event_type or "")
+    if not rule:
+        return ""
+    if interior:
+        rule = "\n".join(l for l in rule.split("\n") if not l.startswith("HORIZON"))   # prefix, not "HORIZON:" -
+                        # the rule line was reworded to "HORIZON - ..." and the
+                        # colon-exact test silently stopped matching, handing
+                        # interiors a horizon rule again
+        rule = ("This scene is an INTERIOR: it has no horizon, so the horizon rule "
+                "does not apply. The camera rule and the primary colour rule "
+                "still do.\n" + rule)
+    return "=== SCENE COMPOSITION - MEASURED OFF THE RENDER ===\n" + rule
+
+
+# The frame shape a scene renders at, per event type, measured off the shipped
+# scene backgrounds rather than assumed:
+#
+#   Blocks2601 / 2604 / 2607 / 2610   Texture/SceneN/img_bg_scene_N.png
+#                                     960x1708 = 0.5621, and 9:16 is 0.5625
+#
+# This exists because the fallback was "Auto", and Auto returned a near-square
+# 1115x994 for a scene the game shows at 960x1708 - a portrait composition
+# squeezed into a square, which reads as stretched and throws off every
+# composition rule measured on it afterwards. A default that silently produces
+# the wrong shape is worse than one that refuses.
+SCENE_ASPECT_BY_TYPE = {"Blocks": "9:16"}
+
+
+def scene_aspect(event_type=""):
+    """The render aspect for a scene of this type, or "" if it has no measured one."""
+    return SCENE_ASPECT_BY_TYPE.get(event_type or "", "")
+
+
 def named_failures(event_type=""):
     """The failure block for this type - see FAILURES_BY_TYPE for why it varies."""
     return ("=== NAMED FAILURES TO AVOID ===\n"
             + FAILURES_BY_TYPE.get(event_type or "", _DEFAULT_FAILURES))
 
 
+# What the attached reference image is FOR. Without this the attachment is
+# unlabelled, and the model reads it as "something about the finish" - which is
+# exactly why the render style tracked the shipped art while the horizon and
+# camera did not. Geometry is what prose controls worst and an example controls
+# best, so the example is told to carry it.
+#
+# The split matters as much as the instruction. A reference told to be copied
+# gets copied whole - one render came back containing an entire attached
+# reference - so GEOMETRY and FINISH are named as the job and SUBJECT is named
+# as the thing to discard, with the confusable case spelled out.
+SCENE_REFERENCE_USE = """=== THE ATTACHED REFERENCE IMAGE - READ BEFORE COMPOSING ===
+The attached image is a real shipped scene from this game. It is not a mood
+board and not a suggestion: it is the measuring stick for this render.
+
+COPY THESE THREE THINGS FROM IT:
+  1. HORIZON HEIGHT. Look at where its horizon sits - a little above the
+     middle of the frame, sky filling roughly the top 43-50%. Put your
+     horizon at that same height. If your sky is a thin strip along the top,
+     you have not looked at the reference.
+  2. CAMERA HEIGHT AND ANGLE. Square on, standing height, verticals
+     vertical, no downward tilt. Match it.
+  3. RENDER FINISH. The same soft shading, rounded forms and clean edges.
+
+DO NOT COPY ITS SUBJECT. Its location, season, time of day, palette, props,
+plants and characters belong to a different event and must not appear in your
+image. If the attached scene is a sunset beach and yours is an autumn orchard,
+you render the orchard - framed, angled and finished exactly like that beach.
+"""
+
+
+SCENE_REFERENCE_USE_INTERIOR = """=== THE ATTACHED REFERENCE IMAGE - READ BEFORE COMPOSING ===
+The attached image is a real shipped scene from this game. It is not a mood
+board and not a suggestion: it is the measuring stick for this render.
+
+The attached scene is an EXTERIOR and this one is an INTERIOR, so it has no
+horizon to match - yours has a back wall where its horizon is. Two things still
+transfer, and you should measure your frame against it for both:
+  1. CAMERA HEIGHT AND ANGLE. Square on to the back wall, standing height,
+     verticals vertical, no downward tilt. Match it exactly.
+  2. RENDER FINISH. The same soft shading, rounded forms and clean edges.
+
+DO NOT COPY ITS SUBJECT. Its location, season, time of day, palette, props,
+plants and characters belong to a different event and must not appear in your
+image.
+"""
+
+
+def scene_reference_use(reference_count=0, interior=False):
+    """The reference-use block, or "" when nothing is attached.
+
+    Conditional because the block is a lie when the render is prompt-only:
+    pointing at an attachment that is not there is worse than saying nothing,
+    and prompt-only is a real mode - style_reference_images returns [] for any
+    type whose StyleReference/images folder has not been seeded.
+
+    The interior form exists because the attached Blocks references are both
+    exteriors. Telling an interior to match their horizon is the same mistake
+    scene_composition already guards against, only louder: prose can be ignored,
+    an image being pointed at cannot.
+    """
+    if not reference_count:
+        return ""
+    return SCENE_REFERENCE_USE_INTERIOR if interior else SCENE_REFERENCE_USE
+
+
 def build_scene_prompt(events_root, event_type, zone, doc_title="",
-                       art_direction=None, style_spec=None, distil_fn=None):
+                       art_direction=None, style_spec=None, distil_fn=None,
+                       reference_images=None):
     """Assemble the image prompt for one zone/scene.
 
     Order is deliberate, per ROOM_RENDER_STYLE.md section 8:
@@ -468,6 +635,19 @@ def build_scene_prompt(events_root, event_type, zone, doc_title="",
 
     if spec:
         blocks.append("=== APPROVED RENDER SPEC - FOLLOW EXACTLY ===\n" + spec.strip())
+
+    comp = scene_composition(event_type, interior=bool(zone.get("interior")))
+    if comp:
+        blocks.append(comp)
+
+    # Directly after the composition rule, because it is the same subject -
+    # where the horizon goes and where the camera stands - stated as an example
+    # instead of a percentage. Three rounds of percentages lost while the
+    # attachment sat there unmentioned.
+    ref_use = scene_reference_use(len(reference_images or []),
+                                 interior=bool(zone.get("interior")))
+    if ref_use:
+        blocks.append(ref_use)
 
     blocks.append(named_failures(event_type))
 

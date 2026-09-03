@@ -140,6 +140,13 @@ def run_main():
         print("No steps selected — nothing to do.")
         sys.exit(1)
 
+    # Told to us by main.js, because the backend cannot find this out for
+    # itself: in an installed app package.json lives inside app.asar, so there
+    # is nothing on disk beside resources\pybackend that names the build.
+    # Without it a pasted log cannot answer "is this install current?".
+    if payload.get("app_version"):
+        chapter_core.APP_VERSION = str(payload["app_version"])
+
     cfg = Cfg(
         branch_root=branch_root,
         workspace=payload["workspace"],

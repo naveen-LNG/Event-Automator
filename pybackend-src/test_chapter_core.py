@@ -897,6 +897,49 @@ def main():
         check("2 levels processed" in joined,
               "the blank trailing CSV line is not counted as a level", joined)
 
+    # ── the bundled interpreter is never told to pip install ────────────────
+    # It has no pip ("No module named pip") and sits under Program Files, so
+    # that advice could not be followed. It was printed twice to a teammate.
+    print("\n--- dependency failure names the build and the real fix ---")
+    _saved = (chapter_core._bundled_python, chapter_core._python_exe,
+              chapter_core._script_imports, chapter_core._missing_modules,
+              chapter_core.APP_VERSION)
+    try:
+        chapter_core._bundled_python = lambda: r"C:\app\resources\pybackend\python.exe"
+        chapter_core._script_imports = lambda p: {"pandas"}
+        chapter_core._missing_modules = lambda exe, mods: set(mods)
+        chapter_core.APP_VERSION = "9.9.9"
+
+        chapter_core._python_exe = lambda: None          # bundled only
+        try:
+            chapter_core._resolve_interpreter("conf_fill_ex.py", lambda m, lvl="INFO": None)
+            msg = ""
+        except RuntimeError as exc:
+            msg = str(exc)
+        check("-m pip install" not in msg,
+              "the bundled interpreter is not told to pip install", msg[:200])
+        check("has no pip" in msg,
+              "and the message says why that is not the fix")
+        check("[bundled]" in msg,
+              "the failing interpreter is labelled bundled")
+        check("Event Automator v9.9.9" in msg,
+              "the build version main.js passed in is reported", msg[:200])
+
+        chapter_core._python_exe = lambda: r"C:\Python313\python.exe"
+        try:
+            chapter_core._resolve_interpreter("conf_fill_ex.py", lambda m, lvl="INFO": None)
+            msg = ""
+        except RuntimeError as exc:
+            msg = str(exc)
+        check('"C:\Python313\python.exe" -m pip install pandas' in msg,
+              "a real system Python still gets pip advice", msg[:300])
+        check("has no pip" in msg,
+              "while the bundled one in the same message still does not")
+    finally:
+        (chapter_core._bundled_python, chapter_core._python_exe,
+         chapter_core._script_imports, chapter_core._missing_modules,
+         chapter_core.APP_VERSION) = _saved
+
     print("")
     if FAILS:
         print(f"{len(FAILS)} CHECK(S) FAILED")

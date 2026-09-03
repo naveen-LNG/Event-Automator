@@ -140,7 +140,7 @@ one of them must be visible:
 *** FINAL CHECK ***
 1. Exactly ONE building, standing tall and taking most of the frame's height.
 2. A SMALL irregular soft-edged ground patch - no courtyard, no walls, no benches, no flanking trees.
-3. Three-quarter top-down camera. 4. Built from the scene's material, showing how it is made.
+3. Camera per the event type's composition rules - Merge and Dessert use a three-quarter top-down view, Blocks is upfront and straight on. 4. Built from the scene's material, showing how it is made.
 5. Every recognition point above is visible. 6. {text_rule}
 7. No outlines, no characters, no annotation of any kind.""".format(
         ground=GROUND_RULE, backdrop=BACKDROP_RULE, material=_material_block(zone),
@@ -422,27 +422,68 @@ HOLD = (
 # around the hero - the eye travelling makes each step land harder. The
 # subtractive method can only reveal an arrangement the base already has, so the
 # distribution has to be specified when the base is drawn, not later.
-PLACEMENT = ["at the bottom centre, nearest the camera",
-             "on the LEFT, level with the hero",
-             "on the RIGHT, further back than the hero",
-             "at the bottom LEFT, close to the camera",
-             "on the RIGHT, near the back of the scene",
-             "across the UPPER part of the scene, furthest back",
-             "at the bottom RIGHT, close to the camera",
-             "in the MIDDLE DISTANCE on the left"]
+# Where each build step lands, in build order. Two rules hold at once, and the
+# art lead asked for both: the sequence climbs the frame BOTTOM TO TOP, and it
+# ALTERNATES LEFT AND RIGHT as it climbs. A step that appears next to the one
+# before it is a small visible change; a step that jumps across the frame and up
+# is a large one, and the build sequence is the thing the player watches.
+#
+# The previous ladder alternated sides but zig-zagged in depth - slot 6 was
+# "furthest back" and slot 7 came back to "close to the camera" - so it was
+# rising and falling through the frame while claiming, in its own docstring, to
+# rise. Depth rank is recorded per slot now so the claim is checkable:
+# PLACEMENT_DEPTH must never decrease.
+_PLACEMENT_SLOTS = (
+    (0, "C", "at the bottom centre"),
+    (1, "L", "at the bottom LEFT, close to the camera"),
+    (1, "R", "at the bottom RIGHT, close to the camera"),
+    (2, "L", "on the LEFT, just above the near ground"),
+    (2, "R", "on the RIGHT, just above the near ground"),
+    (3, "L", "in the MIDDLE DISTANCE on the left"),
+    (3, "R", "in the MIDDLE DISTANCE on the right"),
+    (4, "C", "across the UPPER part of the scene, furthest back"),
+)
+PLACEMENT = [text for _d, _s, text in _PLACEMENT_SLOTS]
+PLACEMENT_DEPTH = [d for d, _s, _t in _PLACEMENT_SLOTS]
+PLACEMENT_SIDE = [s for _d, s, _t in _PLACEMENT_SLOTS]
+
+
+def placement_slots(n):
+    """Which ladder slots an n-step build uses, bottom to top.
+
+    The first n-1 slots then the topmost one, so the sequence always finishes at
+    the top of the frame however many steps a scene has - i % len(PLACEMENT) left
+    a seven-step scene ending in the middle distance. Both invariants survive at
+    every n: depth non-decreasing, sides alternating.
+    """
+    last = len(PLACEMENT) - 1
+    if n <= 1:
+        return [0]
+    if n > len(PLACEMENT):
+        return [min(i, last) for i in range(n)]
+    return list(range(n - 1)) + [last]
 
 
 def built_scene(steps):
     """The completed scene: everything present, hero first, distribution fixed.
 
-    Each item is given its own region of the frame, in build order, so the
-    sequence populates bottom-to-top and jumps side to side as it goes.
+    Each item gets its own region, assigned in build order, so the sequence
+    climbs the frame bottom to top while alternating left and right. Both halves
+    of that are checked - see PLACEMENT_DEPTH and PLACEMENT_SIDE.
     """
+    slots = placement_slots(len(steps))
     body = "\n".join("%d. %s - placed %s"
-                     % (i + 1, s, PLACEMENT[i % len(PLACEMENT)]) for i, s in enumerate(steps))
+                     % (i + 1, s, PLACEMENT[slots[i]]) for i, s in enumerate(steps))
     return ("*** THE COMPLETED SCENE ***\nEverything below is built and standing. The first item is "
             "the HERO. Each item sits in its own part of the frame, spread apart - do NOT cluster "
             "them together around the hero:\n%s\n"
+            "SIZE BY DEPTH: the LARGEST structures belong in the middle ground or further back. "
+            "The near ground takes small and medium props only. A big object sitting right at the "
+            "camera hides everything behind it and swallows the changes the build steps make.\n"
+            "SEPARATION: leave air between objects. They may sit in front of one another but must "
+            "NOT overlap drastically - each silhouette has to read on its own, because a step that "
+            "adds something largely hidden behind what is already there produces no visible change "
+            "and the sequence stops reading as construction.\n"
             "Each is chunky, rounded and slightly inflated, lit by the warm key with a cool "
             "ambient shadow and a soft rim on its silhouette. The scene should read as HUMANISED "
             "ACTIVITY spread across the whole frame, near to far." % body)
@@ -534,9 +575,38 @@ def derelict_prompt(zone):
 
 
 def _who(c):
-    base = (c.get("base_character") or "character").strip()
-    return ("a cute stylized anthropomorphic %s in %s"
-            % (base, (c.get("costume") or "this event's costume").strip()))
+    """Describe a character fully enough to draw it.
+
+    base_character + costume is the house convention - the animal is already
+    designed and only the costume is new - and wins when both are present. When
+    they are absent, design_notes carries the species and the costume in prose and
+    is used instead. Without that fallback this returned "a cute stylized
+    anthropomorphic character in this event's costume", and the arrival frames
+    rendered pale doughy figures with no species while the document plainly said
+    "a round marmot in a rust-red dungaree and a straw hat".
+    """
+    base = (c.get("base_character") or "").strip()
+    costume = (c.get("costume") or "").strip()
+    if base:
+        return ("a cute stylized anthropomorphic %s in %s"
+                % (base, costume or "this event's costume"))
+    notes = (c.get("design_notes") or "").strip()
+    if notes:
+        return "a cute stylized anthropomorphic character - %s" % notes
+    return "a cute stylized anthropomorphic character in this event's costume"
+
+
+def _who_short(c):
+    """Name a character just well enough to say "leave that one alone".
+
+    Held characters are already drawn in the source frame. Re-describing them in
+    full is an invitation to redraw them, which is the opposite of holding them.
+    """
+    for key in ("name", "base_character"):
+        v = (c.get(key) or "").strip()
+        if v:
+            return v
+    return "the character already there"
 
 
 CHARACTER_SCALES = ("beside", "foreground")
@@ -557,7 +627,7 @@ def add_characters(characters, arriving=None, scale="beside"):
     new = " and ".join(_who(c) for c in arriving)
     held = ("The character%s already in the picture - %s - stay%s exactly where they are, "
             "unchanged. " % ("s" if len(already) > 1 else "",
-                             " and ".join(_who(c) for c in already),
+                             " and ".join(_who_short(c) for c in already),
                              "" if len(already) > 1 else "s") if already else "")
     # Two scales, because they trade against each other and both are wanted.
     #
@@ -822,7 +892,13 @@ def character_prompt(character, palette=""):
     is reused. So the base animal is stated as a constraint, not invented here.
     """
     base = (character.get("base_character") or "").strip()
-    costume = (character.get("costume") or "").strip()
+    # design_notes is the fallback because it is the field these documents
+    # actually carry. Without it the subject line came out as "Cute stylized
+    # anthropomorphic character: in this event's costume" - no species, no
+    # costume, nothing of the marmot in a rust-red waistcoat that the document
+    # describes - and the renders were faithful to exactly that.
+    costume = ((character.get("costume") or "").strip()
+               or (character.get("design_notes") or "").strip())
     actions = [a for a in (character.get("scene_actions") or []) if str(a).strip()]
     who = ("Cute stylized anthropomorphic %s" % base) if base else "Cute stylized anthropomorphic character"
     reuse = ("\n\n*** THIS IS AN EXISTING CHARACTER IN A NEW COSTUME ***\n"

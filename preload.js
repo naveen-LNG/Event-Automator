@@ -58,6 +58,8 @@ contextBridge.exposeInMainWorld('api', {
   artReqReadDoc: (params) => ipcRenderer.invoke('artreq:readDoc', params),
   artReqExportDocx: (params) => ipcRenderer.invoke('artreq:exportDocx', params),
   artReqRevealDoc: (params) => ipcRenderer.invoke('artreq:revealDoc', params),
+  artReqDocData: (params) => ipcRenderer.invoke('artreq:docData', params),
+  artReqSaveDoc: (params) => ipcRenderer.invoke('artreq:saveDoc', params),
 
   ideationEntries: (params) => ipcRenderer.invoke('ideation:entries', params),
   ideationRetract: (params) => ipcRenderer.invoke('ideation:retract', params),

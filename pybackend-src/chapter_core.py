@@ -362,6 +362,37 @@ def _script_imports(script_path):
     return out
 
 
+# Set from the payload by chapter_update: main.js passes app.getVersion(), which
+# is the only reliable source. Searching the filesystem for package.json works
+# in the dev tree and NOT in an installed app, where package.json exists only
+# inside app.asar - i.e. it fails in the one place a version is actually needed.
+# The search below stays as a fallback for direct CLI runs.
+APP_VERSION = ""
+
+
+def _app_version():
+    """The app's version, so a pasted log says which build produced it.
+
+    Two reports of the same missing-pandas failure arrived with no way to tell
+    whether the install was old or a fix had not taken, because the log named
+    the interpreter but never the build. It names both now.
+
+    An unrecognised layout reports unknown rather than a guess - a wrong version
+    in a bug report is worse than no version.
+    """
+    if APP_VERSION:
+        return "v" + APP_VERSION.lstrip("v")
+    here = Path(__file__).resolve().parent
+    for cand in (here.parent.parent / "package.json",
+                 here.parent / "package.json",
+                 here.parent.parent / "EventAutomationDesktop" / "package.json"):
+        try:
+            return "v" + json.loads(cand.read_text("utf-8"))["version"]
+        except Exception:
+            continue
+    return "(version unknown)"
+
+
 def _missing_modules(py_exe, modules):
     """Which of `modules` the given interpreter cannot import.
 
@@ -420,7 +451,7 @@ def _resolve_interpreter(script_path, log, label=None):
         if not missing:
             log(f"  {name}: using {kind} Python ({exe})")
             return exe
-        shortfall[exe] = missing
+        shortfall[exe] = (kind, missing)
         log(f"  {name}: {kind} Python lacks {', '.join(sorted(missing))} - trying next", "WARN")
 
     if not shortfall:
@@ -433,13 +464,41 @@ def _resolve_interpreter(script_path, log, label=None):
         "part of Event Automator, and it imports packages the app does not "
         "bundle.",
         "",
+        f"This is Event Automator {_app_version()}.",
+        "",
     ]
-    for exe, missing in shortfall.items():
-        lines.append(f"{exe}")
+    bundled_short = False
+    for exe, (kind, missing) in shortfall.items():
+        lines.append(f"{exe}  [{kind}]")
         lines.append(f"  missing: {', '.join(sorted(missing))}")
-        lines.append(f'  fix:     "{exe}" -m pip install {" ".join(sorted(missing))}')
+        if kind == "bundled":
+            # "pip install into the bundled interpreter" was never a fix, and
+            # printing it cost a round trip: the embeddable distribution ships
+            # with no pip at all ("No module named pip"), and it lives under
+            # Program Files where a normal account cannot write anyway.
+            #
+            # A package the bundle is BUILT to carry being absent means one of
+            # two things, and neither is solved with pip: the install predates
+            # the release that added it, or the upgrade did not replace
+            # resources/pybackend. Both point at the installer.
+            bundled_short = True
+            lines.append("  fix:     install the current Event Automator release "
+                         "- the bundled interpreter has no pip and cannot be "
+                         "added to.")
+        else:
+            lines.append(f'  fix:     "{exe}" -m pip install {" ".join(sorted(missing))}')
         lines.append("")
-    lines.append("Install into whichever of those you maintain, then re-run.")
+    if bundled_short:
+        lines.append("The bundled interpreter is missing something it is built to "
+                     "carry, so this install is out of date. Install the latest "
+                     "release over this one and re-run.")
+        lines.append("")
+        lines.append("If the same packages are still reported missing after that, "
+                     "say so and include the version line above - it would mean "
+                     "the upgrade is not replacing the bundled interpreter, which "
+                     "is a different bug and needs a different fix.")
+    else:
+        lines.append("Install into whichever of those you maintain, then re-run.")
     raise RuntimeError("\n".join(lines))
 
 

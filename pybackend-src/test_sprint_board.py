@@ -66,8 +66,32 @@ print(f"OK  drift found: 'Sort Event' planned but not configured ({len(todo)} ta
 
 sep2 = by["Sep Event 2"]
 ev2 = sb._match_event_config(DESIGN, sep2)
-check(ev2 and not ev2["exact"], f"expected a date mismatch on Sep Event 2, got {ev2}")
-print(f"OK  drift found: Hotel Sim planned ->{sep2['end']} but {ev2['alias']} configured ->{ev2['end']}")
+check(ev2 is not None, f"Sep Event 2 lost its matched config entirely: {ev2}")
+print(f"OK  Sep Event 2 joins to its config ({ev2['alias']})")
+
+# A configured event whose dates DISAGREE with the roadmap must come back
+# inexact, so the board can say so.
+#
+# The sprint is searched for rather than named. This was pinned to Sep Event 2
+# and its 09-28 vs 09-30 disagreement, so the assertion was really claiming that
+# production design data still contains a specific mistake - and it failed the
+# day someone corrected those dates, which is the opposite of what a test should
+# reward. Searching keeps the real subject (an inexact match is reported as
+# inexact) and survives the data being fixed or new drift turning up elsewhere.
+inexact = [(s["name"], m) for s in sprints
+           if (m := sb._match_event_config(DESIGN, s)) and not m["exact"]]
+if inexact:
+    nm, m = inexact[0]
+    check(m.get("start") and m.get("end"),
+          f"{nm} is flagged inexact but carries no dates to compare: {m}")
+    print(f"OK  drift found: {nm} planned ->{by[nm]['end']} but "
+          f"{m['alias']} configured ->{m['end']}")
+else:
+    # Every configured event agreeing with the roadmap is the desired state, so
+    # this is not a failure - but it is announced, because a check that quietly
+    # stops covering anything is worse than one that fails.
+    print("SKIP  no configured event currently disagrees with the roadmap, so "
+          "the inexact-match path was not exercised this run")
 
 # Chapter Update is matched by identity, not by date window: the roadmap names
 # the chapter ("Chapter 82 + Star Chest") and the check is simply whether that

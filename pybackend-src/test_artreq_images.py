@@ -477,6 +477,11 @@ try:
             pdoc["zones"] = [dict(pdoc["zones"][0], zone_number=1, zone_theme="Cove",
                                   construction_steps=["a hero lantern", "a boat shed",
                                                       "a farm cart", "a hamper"])]
+            # No accepted scene image, so this run exercises the RENDERED base.
+            # Stated here rather than inherited from DOC: the two paths differ by
+            # a render and by where the completed frame comes from, and a fixture
+            # that drifts would silently test only one of them.
+            pdoc["zones"][0].pop("image_path", None)
             pdoc["characters"] = [{"name": "Keeper", "base_character": "turtle",
                                    "costume": "a teal coat"}]
             pout = os.path.join(tmp, "prog_out")
@@ -505,6 +510,37 @@ try:
                "the hero-adjacent frame is cut with a single blunt change, not a bulk list")
             ok("ONLY change" not in byname["03_F4.png"]["prompt"],
                "while a later step is cut from the base with a cumulative list")
+
+            # An accepted scene IS the completed frame - it is copied, not
+            # re-rendered. Two independent renders of "the finished scene" put a
+            # build-up strip in the document whose last frame did not match the
+            # hero image above it, which reads as an error in the brief.
+            calls.clear()
+            rdoc = json.loads(json.dumps(pdoc))
+            rdoc["zones"][0]["image_path"] = z1
+            rout = os.path.join(tmp, "prog_reuse")
+            rres = artreq_images._generate_extra_passes(
+                {"passes": ["progression"], "events_root": events},
+                rdoc, rdoc["zones"], rout, "http://stub", "Blocks")
+            rnames = [os.path.basename(c["dest"]) for c in calls]
+            ok(rres["requested"] == 4 + 2 + 1 - 1,
+               "an accepted scene saves the base render", "requested %s" % rres["requested"])
+            ok(rres["requested"] == artreq_images.plan_passes(
+                   rdoc, ["progression"], "Blocks")["total"],
+               "and the cost estimate still agrees with what was rendered",
+               "%s vs %s" % (rres["requested"], artreq_images.plan_passes(
+                   rdoc, ["progression"], "Blocks")["total"]))
+            ok(not any(n.endswith("_complete.png") for n in rnames),
+               "the completed frame was not rendered", str(rnames))
+            zdirs = [os.path.join(rout, d) for d in os.listdir(rout)
+                     if os.path.isdir(os.path.join(rout, d))]
+            complete = [os.path.join(d, f) for d in zdirs for f in os.listdir(d)
+                        if f.endswith("_complete.png")]
+            ok(len(complete) == 1 and os.path.getsize(complete[0]) == os.path.getsize(z1),
+               "but it exists on disk, byte-size identical to the accepted scene",
+               str(complete))
+            ok(any(n == "01_F2.png" for n in rnames),
+               "and the rest of the chain still renders from it", str(rnames))
 
             # blunt_steps forces a dedicated hop at a named step. Without it a
             # large structure or flat ground element further up the ladder is cut

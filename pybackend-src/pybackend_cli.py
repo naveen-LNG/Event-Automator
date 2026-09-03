@@ -115,6 +115,9 @@ def main():
     elif script == "artreq_save_final":
         import art_requirement_generator
         art_requirement_generator.save_final_main()
+    elif script == "artreq_save_doc":
+        import art_requirement_generator
+        art_requirement_generator.save_doc_main()
     elif script == "artreq_mcp_save":
         import art_requirement_generator
         art_requirement_generator.mcp_save_main()

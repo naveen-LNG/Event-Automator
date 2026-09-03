@@ -590,7 +590,14 @@ ipcMain.handle('chapter:get', async (evt, { designPath }) => {
 // a silent progress pane reads as a hang.
 ipcMain.handle('chapter:run', async (evt, { branchRoot, payload }) => {
   const tmp = tempJsonFile('chapter_payload');
-  fs.writeFileSync(tmp, JSON.stringify(payload), 'utf-8');
+  // The backend cannot work out its own version: in an installed app
+  // package.json only exists inside app.asar, so nothing next to
+  // resources\pybackend says which build this is. It has to be told.
+  //
+  // This is here because two reports of the same missing-dependency failure
+  // arrived with no way to tell whether the install was old or a fix had not
+  // taken - the log named the interpreter but never the build.
+  fs.writeFileSync(tmp, JSON.stringify({ ...payload, app_version: app.getVersion() }), 'utf-8');
 
   return new Promise((resolve) => {
     let output = '';
@@ -1239,10 +1246,37 @@ function insideArtReq(docPath, eventType) {
   return resolved.startsWith(base + path.sep) ? resolved : null;
 }
 
-ipcMain.handle('artreq:listDocs', async (evt, { eventType }) => {
+// The event number a filename is talking about: "Block2609 - Event One-Pager.md"
+// and "Blocks2609 Harvest Fair - Variation 1.md" both yield "2609".
+//
+// Matching on the number rather than the type word is deliberate: the studio
+// writes both "Block2609" and "Blocks2609" for the same event - the One-Pager
+// uses the singular, the shipped Art Requirements the plural - and a match that
+// insisted on the exact spelling would quietly filter everything out.
+// A One-Pager is picked as the file the designer sees - often "X.pdf" - while
+// what actually gets read, and therefore recorded, is the converted "X.md"
+// beside it. Comparing the full names would never match. The stem does.
+function onePagerStem(name) {
+  const n = String(name || '').trim();
+  if (!n) return '';
+  return n.replace(/\.(md|txt|docx|pdf)$/i, '').toLowerCase();
+}
+
+function eventNumberOf(name) {
+  const m = /(?:^|[^0-9])(\d{4})(?:[^0-9]|$)/.exec(String(name || ''));
+  return m ? m[1] : null;
+}
+
+ipcMain.handle('artreq:listDocs', async (evt, { eventType, onePagerName, showAll }) => {
   try {
     if (!eventType) return { success: true, docs: [] };
-    const docs = [];
+    // With a One-Pager picked, the panel answers "what exists for THIS event",
+    // not "what is in the folder". A Blocks folder accumulates every Blocks
+    // event ever run, so an unfiltered list buries the documents someone is
+    // working on under a dozen they are not.
+    const wanted = showAll ? null : eventNumberOf(onePagerName);
+
+    const all = [];
     for (const { dir, folder } of artReqDirs(eventType)) {
       if (!fs.existsSync(dir)) continue;
       for (const name of fs.readdirSync(dir)) {
@@ -1252,21 +1286,64 @@ ipcMain.handle('artreq:listDocs', async (evt, { eventType }) => {
         let st;
         try { st = fs.statSync(p); } catch { continue; }
         if (!st.isFile()) continue;
-        const isMd = ext === '.md';
-        docs.push({
-          name, path: p, folder, ext: ext.slice(1),
-          modified: st.mtimeMs, bytes: st.size,
-          // Only Markdown can be reopened or exported. A .docx or .pdf here is
-          // a finished artefact - very likely one the production team produced -
-          // so it is listed for context and otherwise left alone.
-          readable: isMd,
-          docxPath: isMd && fs.existsSync(p.slice(0, -3) + '.docx')
-            ? p.slice(0, -3) + '.docx' : null,
-        });
+        all.push({ name, path: p, folder, ext, st });
       }
     }
+
+    // A .docx exported from a listed .md is not a separate document - it is the
+    // same document in the format Word opens, and the .md row already carries a
+    // "Show .docx" button. Listing both doubled the panel and made people choose
+    // between two names for one thing. A .docx with no .md beside it still
+    // shows, because then it is the only copy there is.
+    const mdStems = new Set(all.filter(f => f.ext === '.md')
+                               .map(f => f.path.slice(0, -3).toLowerCase()));
+    const visible = all.filter(f => !(f.ext === '.docx'
+                                   && mdStems.has(f.path.slice(0, -5).toLowerCase())));
+    const hiddenAsDocx = all.length - visible.length;
+
+    const docs = [];
+    let hiddenByEvent = 0;
+    let matchedBySource = 0;
+    for (const f of visible) {
+      const num = eventNumberOf(f.name);
+      const isMd = f.ext === '.md';
+      // Provenance first, filename second. Every document saved by the tool now
+      // records the One-Pager it was written from, so the match can be a fact
+      // rather than a number scraped out of a filename. The number stays as the
+      // fallback for documents that predate the field or came from elsewhere.
+      let source = null;
+      if (isMd) {
+        const data = f.path.slice(0, -3) + '.json';
+        try {
+          if (fs.existsSync(data)) {
+            source = JSON.parse(fs.readFileSync(data, 'utf-8')).source_one_pager || null;
+          }
+        } catch { /* an unreadable sidecar just means falling back to the name */ }
+      }
+      if (wanted) {
+        const keep = source
+          ? onePagerStem(source) === onePagerStem(onePagerName)
+          : num === wanted;
+        if (!keep) { hiddenByEvent++; continue; }
+        if (source) matchedBySource++;
+      }
+      docs.push({
+        name: f.name, path: f.path, folder: f.folder, ext: f.ext.slice(1),
+        modified: f.st.mtimeMs, bytes: f.st.size,
+        eventNumber: num,
+        sourceOnePager: source,
+        // Only Markdown can be reopened, exported or have its art generated. A
+        // .pdf here is a finished artefact the production team produced, so it
+        // is listed for context and otherwise left alone.
+        readable: isMd,
+        hasData: isMd && fs.existsSync(f.path.slice(0, -3) + '.json'),
+        docxPath: isMd && fs.existsSync(f.path.slice(0, -3) + '.docx')
+          ? f.path.slice(0, -3) + '.docx' : null,
+      });
+    }
     docs.sort((a, b) => b.modified - a.modified);
-    return { success: true, docs };
+    return { success: true, docs, filteredTo: wanted, hiddenByEvent, hiddenAsDocx,
+             matchedBySource };
   } catch (e) {
     return { success: false, output: e.message };
   }
@@ -1310,6 +1387,63 @@ ipcMain.handle('artreq:exportDocx', async (evt, { eventType, docPath }) => {
 
 // Reveal the exported file in Explorer. Telling someone a path and leaving them
 // to find it is where a shared network folder turns into "I can't see it".
+// Generating art for a document that was OPENED rather than just generated.
+//
+// The image pass consumes the structured document, not the Markdown - it needs
+// zones, construction steps, materials and the art direction as data, and
+// several fields it relies on (blunt_steps, character_scale, render_aspect) are
+// never rendered into the Markdown at all. So a .json sidecar is written beside
+// every saved document, and these two channels read it back and save it again
+// once the renders have added image paths.
+//
+// A document with no sidecar - written by hand, or by a version of the tool that
+// predates this - simply does not offer the button. That is honest: the
+// alternative is parsing the Markdown back into a document and being wrong in
+// exactly the places nobody checks.
+
+ipcMain.handle('artreq:docData', async (evt, { eventType, docPath }) => {
+  try {
+    const resolved = insideArtReq(docPath, eventType);
+    if (!resolved) return { success: false, output: 'That file is outside the Art Requirements folder.' };
+    const data = resolved.replace(/\.md$/i, '.json');
+    if (!fs.existsSync(data)) {
+      return { success: true, data: { variation: null,
+        reason: 'This document has no structured data beside it, so its art cannot be '
+              + 'generated from here. Documents saved by the tool from now on will have it.' } };
+    }
+    return { success: true, data: { variation: JSON.parse(fs.readFileSync(data, 'utf-8')) } };
+  } catch (e) {
+    return { success: false, output: e.message };
+  }
+});
+
+// Save an opened document back in place after an image pass. Deliberately writes
+// to the SAME path rather than filing a new draft: the renders belong to the
+// document the reviewer already has open, and a second copy beside it is how a
+// shared folder fills with near-identical files nobody can choose between.
+ipcMain.handle('artreq:saveDoc', async (evt, { eventType, docPath, variation, status }) => {
+  try {
+    const resolved = insideArtReq(docPath, eventType);
+    if (!resolved) return { success: false, output: 'That file is outside the Art Requirements folder.' };
+    if (!fs.existsSync(resolved)) return { success: false, output: 'That document is no longer on disk.' };
+    const tmp = tempJsonFile('artreq_save_doc');
+    // No author_name and no default status: this is an in-place update of a
+    // document that already has a header. Sending the current user's name would
+    // reassign authorship of a colleague's document just for adding art, and
+    // forcing 'Draft' would erase a review state this call knows nothing about.
+    // Python carries both forward from the file unless a caller overrides them.
+    fs.writeFileSync(tmp, JSON.stringify({
+      md_path: resolved,
+      event_type: eventType,
+      variation,
+      status: status || '',
+    }), 'utf-8');
+    return parseJsonResult(await runPythonAndScrub('artreq_save_doc', tmp), 'document save');
+  } catch (e) {
+    return { success: false, output: e.message };
+  }
+});
+
 ipcMain.handle('artreq:revealDoc', async (evt, { eventType, docPath }) => {
   const resolved = insideArtReq(docPath, eventType);
   if (!resolved || !fs.existsSync(resolved)) {

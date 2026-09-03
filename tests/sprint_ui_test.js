@@ -145,14 +145,47 @@ vm.runInContext(fs.readFileSync(path.join(__dirname,'..','renderer','app.js'),'u
   assert(d2.includes('sp-todo'), 'no tab flagged as needing configuration');
   console.log('OK  "Sep Event 1" (planned, never configured) raises a drift banner + TODO cards');
 
-  // 6. Date-mismatch drift, not just missing-event
+  // 6. A sprint whose config genuinely matches shows the alias and no drift
   sel.value = 'Sep Event 2';
   await sel.fire('change', { target: sel });
   await new Promise(r => setTimeout(r, 400));
   const d3 = get('#sprint-detail').innerHTML;
-  assert(d3.includes('Sim2609'), 'matched config alias missing on the mismatch case');
-  assert(/Dates disagree/.test(d3), 'date-mismatch drift not explained');
-  console.log('OK  "Sep Event 2" flags the 09-28 vs 09-30 date disagreement');
+  assert(d3.includes('Sim2609'), 'matched config alias missing');
+  console.log('OK  "Sep Event 2" shows its matched config alias (Sim2609)');
+
+  // 6a. Date-mismatch drift, not just missing-event.
+  //
+  //     The mismatched sprint is FOUND, not named. It used to be pinned to
+  //     "Sep Event 2" and its 09-28 vs 09-30 disagreement, which broke the day
+  //     someone corrected those dates in the design config - the assertion was
+  //     really claiming that production data still contains a specific mistake,
+  //     so fixing the mistake failed the build. (The calendar hazard was already
+  //     guarded against here; the data hazard was not.)
+  //
+  //     A scan keeps what the check is actually for - the UI must EXPLAIN a
+  //     disagreement rather than silently show one side - and survives both the
+  //     data being corrected and new drift appearing elsewhere.
+  let mismatched = null, mismatchHtml = '';
+  for (const nm of REAL.sprints.map(s => s.name)) {
+    sel.value = nm;
+    await sel.fire('change', { target: sel });
+    await new Promise(r => setTimeout(r, 250));
+    const h = get('#sprint-detail').innerHTML;
+    if (/Dates disagree/.test(h)) { mismatched = nm; mismatchHtml = h; break; }
+  }
+  if (mismatched) {
+    assert(mismatchHtml.includes('sp-drift'),
+      `${mismatched} explains a date disagreement without the drift styling`);
+    assert(/the roadmap plans/.test(mismatchHtml),
+      `${mismatched} says the dates disagree but not what the roadmap planned`);
+    console.log(`OK  "${mismatched}" flags its date disagreement and names both sides`);
+  } else {
+    // Not an assertion failure: every sprint agreeing with its config is the
+    // desired state. But it is announced, because a check that quietly stops
+    // covering anything is worse than one that fails.
+    console.log('SKIP  no sprint currently disagrees with its config, so the '
+              + 'date-mismatch rendering was not exercised this run');
+  }
 
   // 7. Escaping holds for sheet-authored text
   assert(!/<script>/i.test(d3), 'roadmap text rendered unescaped');

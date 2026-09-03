@@ -698,6 +698,140 @@ regen = arg._regenerate_schema("Blocks")
 ok(regen["properties"]["variation"]["properties"]["zones"]["items"]
        ["properties"]["buildings"].get("maxItems") == 0,
    "a Blocks regeneration cannot reintroduce buildings either")
+
+# ---- construction-step counts are enforced, not suggested --------------------
+# Six Harvest Fair variations shipped at 6/6/6/6/6 = 30 when both shipped Blocks
+# events run 7/7/8/8/8 = 38. Nothing caught it: construction_steps had no
+# minItems or maxItems, so any count validated, and the hint led with the bottom
+# of the band. Both halves are checked here, because fixing only the prose would
+# leave the schema still accepting a three-step scene.
+
+for etype in ("Blocks", "Sort", "Sim"):
+    shape = arg.zone_shape(etype)
+    cs = (arg.schema_for(etype)["properties"]["zones"]["items"]
+             ["properties"]["construction_steps"])
+    ok(cs.get("minItems") == shape["steps_min"] and cs.get("maxItems") == shape["steps_max"],
+       "%s's step band reaches the schema as minItems/maxItems" % etype,
+       "schema %s-%s vs shape %s-%s" % (cs.get("minItems"), cs.get("maxItems"),
+                                        shape["steps_min"], shape["steps_max"]))
+    ok(cs["minItems"] >= 3 and cs["maxItems"] > cs["minItems"],
+       "and the %s band is a real range, not a fixed number" % etype)
+
+# A type that builds through discrete buildings has no step band to enforce.
+for etype in ("Merge", "Dessert"):
+    cs = (arg.schema_for(etype)["properties"]["zones"]["items"]
+             ["properties"]["construction_steps"])
+    ok(cs.get("maxItems") == 0,
+       "%s has no construction steps at all, so no band applies" % etype)
+
+# The profile is the default the prompt asks for, and it must match the table -
+# a hint that says one number while the schema enforces another is how the two
+# drift apart silently.
+blocks = arg.zone_shape("Blocks")
+ok(blocks["shipped_profile"] == (7, 7, 8, 8, 8),
+   "the Blocks shipped profile is 7/7/8/8/8, from Blocks2607 and blocks2604 data")
+ok(sum(blocks["shipped_profile"]) == 38, "which totals the 38 Blocks2607 states")
+hint = arg.TYPE_GAMEPLAY_HINTS["Blocks"]
+ok("7, 7, 8, 8, 8" in hint and "38" in hint,
+   "and the Blocks hint asks for that profile by name")
+ok(hint.index("7, 7, 8, 8, 8") < hint.index("6-8"),
+   "stated BEFORE the 6-8 band, so the floor does not read as the default")
+ok("FLOOR" in hint, "and the band's bottom is called a floor outright")
+
+for etype, shape in arg.ZONE_SHAPES.items():
+    p = shape.get("shipped_profile")
+    if p:
+        ok(all(shape["steps_min"] <= n <= shape["steps_max"] for n in p),
+           "%s's shipped profile sits inside its own band" % etype,
+           "%s vs %s-%s" % (list(p), shape["steps_min"], shape["steps_max"]))
+
+# A zone below the band must be unrepresentable, not merely discouraged.
+cs = (arg.schema_for("Blocks")["properties"]["zones"]["items"]
+         ["properties"]["construction_steps"])
+ok(cs["minItems"] == 6,
+   "a Blocks zone cannot be emitted with fewer than six steps")
+ok(cs["maxItems"] == 8,
+   "nor with more than eight")
+
+# ---- the asset classes a Blocks event actually ships -------------------------
+# Read off trunk/develop/client/Skipbo/Assets/ResourcesAb/Events/Blocks2607.
+# Generated documents used to describe scenes, steps, materials and characters
+# and stop there - no build-step icons, no block art, no board backgrounds, no
+# panel list, and section 8 deferred the VFX entirely. All of it ships.
+
+BLOCKS_DOC = {
+    "title": "[Artistic Requirement] Blocks2609 Shipped Asset Check",
+    "gameplay_overview": {"theme": "t", "duration_summary": "16 days",
+                          "narrative_packaging": "n", "loop_summary": "l",
+                          "resource_planning": "r", "major_changes": "None."},
+    "zones": [{"zone_number": i, "zone_theme": "Z%d" % i, "palette_or_mood": "warm",
+               "main_tone": "WARM", "scene_material": "timber",
+               "before_state": "bare", "buildings": [], "goods": [],
+               # The shipped profile, so the derived counts below are the real ones.
+               "construction_steps": ["s%d" % n for n in range((7, 7, 8, 8, 8)[i - 1])],
+               "reference_notes": "n"} for i in range(1, 6)],
+    "producers": [], "recipes": [], "ingredients": [],
+    "construction_materials": [{"name": "M%d" % i, "description": "d", "palette": "p"}
+                               for i in range(7)],
+    "characters": [{"name": "Gift", "role": "Gift NPC", "npc_id": "",
+                    "base_character": "squirrel", "costume": "apron",
+                    "design_notes": "d", "scene_actions": ["a"]}],
+    "event_motif": "m", "art_direction_guidance": {"lean_into": [], "avoid": []},
+    "event_extras": {}, "gameplay_specific_content": "", "ui_icon_refresh_notes": "",
+    "notes": "",
+}
+blocks_md = arg._render_markdown(BLOCKS_DOC, "Blocks", "Draft")
+
+ok("### UI Panels" in blocks_md,
+   "the document has a UI Panels section of its own")
+for col in ("Panel Name", "Previous UI Panel", "New Theme Reference"):
+    ok(col in blocks_md, "and its columns include %s" % col)
+ok(len(arg.BLOCKS_UI_PANELS) == 31,
+   "all 31 shipped Blocks2607 panels are listed",
+   "26 prefabs plus 5 that carry only a texture folder")
+ok("UIBlocks2607Panel" in blocks_md and "UIBlocks2607UndoConfirmPopPanel" in blocks_md,
+   "including both the biggest and the smallest")
+ok("69 textures" in blocks_md,
+   "with the texture count, so a re-skin estimate is not a guess",
+   "Main event board is 69 textures; Share is none - they cannot cost the same")
+
+# The panel list is data. A model asked for panel names produces plausible ones.
+schema_blob = json.dumps(arg.schema_for("Blocks"))
+# One panel name appears as an example in the ui_panels description, which is
+# fine and useful. The LIST must not be there - that is what would let a model
+# treat panel names as its own to choose.
+in_schema = [a for _n, a, _t in arg.BLOCKS_UI_PANELS if a in schema_blob]
+ok(len(in_schema) <= 1,
+   "the panel LIST is not in the generation schema - the tool supplies it",
+   "found: %s" % in_schema)
+ok("ui_panels" in arg.schema_for("Blocks")["properties"],
+   "though a model may add per-panel direction for panels this theme changes")
+
+for group in ("Build-step icons", "Material guide states", "Playable block art",
+              "Board backgrounds", "Scene photos", "Header backgrounds"):
+    ok(group in blocks_md, "section 5 lists %s" % group)
+
+ok("38 icons, one per construction step" in blocks_md,
+   "build-step icons are counted from the steps, not guessed",
+   "Icon/Building1..5 ships 7/7/8/8/8 = 38")
+ok("7 materials x 3 states = 21" in blocks_md,
+   "and material guide states from the materials",
+   "Icon/Book ships icon_mine_N_1..3")
+
+# Section 8 used to say "to be agreed with the Art Lead" for every type.
+ok("Build puff" in blocks_md and "Scene ambience" in blocks_md,
+   "section 8 names the VFX a Blocks event ships instead of deferring it",
+   "VX/Spine/Building_Cloud, Elf, Scene1..5")
+merge_md = arg._render_markdown(dict(BLOCKS_DOC, zones=[]), "Merge", "Draft")
+ok("Build puff" not in merge_md,
+   "but only for Blocks - the other types still defer, honestly")
+
+# Materials: the hint said 8-10, the builds say 6 and 7.
+cm = arg.schema_for("Blocks")["properties"]["construction_materials"]
+ok(cm.get("minItems") == 6 and cm.get("maxItems") == 7,
+   "the material count is banded to what shipped, not to the old 8-10 claim")
+ok("8-10" in arg.TYPE_GAMEPLAY_HINTS["Blocks"],
+   "and the hint names the wrong number it replaced, so it is not reintroduced")
 if fails:
     print("%d CHECK(S) FAILED" % len(fails)); sys.exit(1)
 print("ALL ARTREQ SCHEMA TESTS PASSED")

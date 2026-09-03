@@ -196,6 +196,14 @@ function saveTools() {
           type: 'string',
           description: 'File name stem, e.g. "Blocks2609 Harvest Fair - Variation 3".',
         },
+        source_one_pager: {
+          type: 'string',
+          description:
+            'The One-Pager file name this document was written from, exactly as '
+            + 'list_one_pagers reported it. Recorded in the document so a reviewer '
+            + 'can see which brief it came from and the tool can group documents '
+            + 'by event. Pass it whenever you read a One-Pager first.',
+        },
       },
       required: ['variation', 'ref_name'],
     },
@@ -263,6 +271,7 @@ async function callTool(name, args) {
       event_type: eventType,
       variation: args.variation,
       ref_name: args.ref_name,
+      source_one_pager: args.source_one_pager || '',
       events_root: eventsRoot(),
       author_name: authorName(),
     });

@@ -150,17 +150,34 @@ TYPE_GAMEPLAY_HINTS = {
         "Fill the STRUCTURED fields, not just prose:\n"
         "  - zones: 5 scene areas for a 14-day event, scaled by duration. Each "
         "is one place, restored from a before-state.\n"
-        "  - construction_steps: 6-8 per zone - 每个区域有6-8个建造步骤. These "
-        "ARE the buildable content: numbered, each one a visible change to the "
-        "scene, e.g. 'clear the dead wood, water appears -> plant the left-hand "
-        "trees -> flowers open in the foreground -> the birds arrive'. "
-        "blocks2604 ships 38 across five scenes: 7, 7, 8, 8, 8.\n"
+        "  - construction_steps: use 7, 7, 8, 8, 8 = 38 across five scenes. "
+        "That is what BOTH shipped events run - Blocks2607 states 'A total of "
+        "5 scenes & 38 construction steps are required to complete the full "
+        "event' with per-scene tables of 7/7/8/8/8, and blocks2604_scene.json's "
+        "buildingList is [7,7,8,8,8]. The documented band is 6-8 per area "
+        "(每个区域有6-8个建造步骤), but 6 is the FLOOR of that band and not "
+        "the default: a set of variations was once written at 6 throughout and "
+        "came out eight steps light of every shipped event. These steps ARE the "
+        "buildable content: numbered, each one a visible change to the scene, "
+        "e.g. 'clear the dead wood, water appears -> plant the left-hand trees "
+        "-> flowers open in the foreground -> the birds arrive'.\n"
+        "  - COMPOSITION, three rules measured off the finished frame: the "
+        "HORIZON sits between 43% and 50% down the frame, just above the "
+        "middle; the CAMERA is upfront and straight on at standing eye level "
+        "- no three-quarter, no tilt, no bird's-eye, verticals stay vertical; "
+        "and every scene owns a DIFFERENT PRIMARY COLOUR carried by both the "
+        "time of day and the built assets, not by tinting one midday light. "
+        "Name each zone's primary in its palette_or_mood.\n"
         "  - before_state: every zone needs one, and the five must differ in "
         "KIND - shut, bare, dormant, unlit, stripped - not merely in wording. A "
         "before-state must not carry the scene's finished light.\n"
-        "  - construction_materials: a themed icon set. Each step consumes 2-3 "
-        "of them - 每个建造步骤会用2-3种材料 - so 8-10 icons covers an event, and "
-        "they must share one palette and read as one family.\n"
+        "  - construction_materials: 6-7 icons. Blocks2604 ships 6 and "
+        "Blocks2607 ships 7 (Icon/Blocks2607Material material_1..7) - NOT the "
+        "8-10 an earlier version of this hint claimed, which produced sets a "
+        "third larger than anything shipped. Each step consumes 2-3 of them "
+        "(每个建造步骤会用2-3种材料), and they share one palette and read as one "
+        "family. Each is ALSO drawn in three states for the illustrated guide "
+        "(Icon/Book icon_mine_N_1..3), so 7 materials means 7 + 21 icons.\n"
         "  - characters: the gift NPCs. Blocks levels have a 赠礼机制 - every N "
         "clears an NPC appears with a gift - and the same NPC also appears in "
         "the restored scene, which is what ties the two halves together.\n"
@@ -481,6 +498,19 @@ ART_REQUIREMENT_SCHEMA = {
             "type": "string",
             "description": "Which existing UI icons/panels (achievement badge, entry icon, restock/currency icon, event pack art) need re-skinning to this event's palette - reuse existing icon shapes and positions, only the motif/color changes."
         },
+        "ui_panels": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "panel": {"type": "string", "description": "The panel name or its shipped asset name, e.g. 'Main event board' or 'UIBlocks2607Panel'."},
+                    "note": {"type": "string", "description": "What this event's theme does to that panel - the header motif, the frame material, the button colourway."}
+                },
+                "required": ["panel", "note"],
+                "additionalProperties": False
+            },
+            "description": "OPTIONAL per-panel art direction. The panel LIST is supplied by the tool from the shipped build - do not invent panel names. Add an entry only for a panel this theme changes in a specific way; anything not mentioned is rendered as a reference still to be attached."
+        },
         "notes": {"type": "string"}
     },
     "required": ["title", "gameplay_overview", "zones", "producers", "recipes", "ingredients", "construction_materials", "event_motif", "gameplay_specific_content", "characters", "event_extras", "art_direction_guidance", "ui_icon_refresh_notes", "notes"],
@@ -537,21 +567,27 @@ ART_REQUIREMENT_SCHEMA = {
 ZONE_SHAPES = {
     #            what one zone is   buildings levels  areas signage  steps  goods
     "Merge":   dict(unit="Scene",   buildings=True,  levels=True,  areas=True,
-                    signage=True,  steps=False, goods=False, verified=True),
+                    signage=True,  steps=False, goods=False, verified=True,
+                    steps_min=None, steps_max=None, shipped_profile=None),
     "Dessert": dict(unit="Zone",    buildings=True,  levels=False, areas=False,
-                    signage=False, steps=False, goods=False, verified=True),
+                    signage=False, steps=False, goods=False, verified=True,
+                    steps_min=None, steps_max=None, shipped_profile=None),
     "Blocks":  dict(unit="Scene",   buildings=False, levels=False, areas=False,
-                    signage=False, steps=True,  goods=False, verified=True),
+                    signage=False, steps=True,  goods=False, verified=True,
+                    steps_min=6, steps_max=8, shipped_profile=(7, 7, 8, 8, 8)),
     "Sim":     dict(unit="Room",    buildings=False, levels=False, areas=False,
-                    signage=False, steps=True,  goods=False, verified=True),
+                    signage=False, steps=True,  goods=False, verified=True,
+                    steps_min=3, steps_max=5, shipped_profile=None),
     "Sort":    dict(unit="Floor",   buildings=False, levels=False, areas=False,
-                    signage=False, steps=True,  goods=True,  verified=True),
+                    signage=False, steps=True,  goods=True,  verified=True,
+                    steps_min=8, steps_max=10, shipped_profile=(9, 9, 9, 9, 9)),
 }
 
 # An unknown type inherits nothing. Prose only, and section 9 carries the
 # INFERRED warning the schema already demands.
 DEFAULT_ZONE_SHAPE = dict(unit="Zone", buildings=False, levels=False, areas=False,
-                          signage=False, steps=True, goods=False, verified=False)
+                          signage=False, steps=True, goods=False, verified=False,
+                          steps_min=None, steps_max=None, shipped_profile=None)
 
 # Which top-level asset collections each type may fill. Same reasoning one level
 # up: `producers` is required at the top level too, so without this a Blocks
@@ -564,6 +600,10 @@ TYPE_COLLECTIONS = {
     "Sim":     set(),
 }
 ALL_COLLECTIONS = ("producers", "recipes", "ingredients", "construction_materials")
+
+# How many construction material icons a type ships, read off the builds:
+# blocks2604_material.json has 6 rows, Blocks2607 ships material_1..7.
+MATERIAL_COUNTS = {"Blocks": (6, 7)}
 
 
 def zone_shape(event_type):
@@ -625,6 +665,24 @@ def schema_for(event_type):
         if "buildings" in zreq:
             zreq.remove("buildings")
 
+    if shape["steps"] and shape.get("steps_min"):
+        # The band is enforced, not suggested. With no minItems at all, a zone
+        # with three steps validated cleanly - which is how six variations
+        # shipped eight steps light of both shipped events.
+        cs = dict(zp["construction_steps"])
+        cs["minItems"] = shape["steps_min"]
+        cs["maxItems"] = shape["steps_max"]
+        profile = shape.get("shipped_profile")
+        if profile:
+            cs["description"] = (
+                cs["description"]
+                + " %d-%d per zone. Both shipped %s events run %s = %d in total, so "
+                  "use that profile unless Production has confirmed a different "
+                  "scene count - the bottom of the band is a floor, not a default."
+                % (shape["steps_min"], shape["steps_max"], event_type,
+                   "/".join(str(n) for n in profile), sum(profile)))
+        zp["construction_steps"] = cs
+
     if not shape["steps"]:
         zp["construction_steps"] = _forbid(
             zp["construction_steps"],
@@ -638,6 +696,15 @@ def schema_for(event_type):
                               "Only Sort zones carry a goods catalogue. Leave this empty.")
 
     z["required"] = zreq
+
+    band = MATERIAL_COUNTS.get(event_type)
+    if band and "construction_materials" in TYPE_COLLECTIONS.get(event_type, set()):
+        cm = dict(s["properties"]["construction_materials"])
+        cm["minItems"], cm["maxItems"] = band
+        cm["description"] = (cm["description"]
+                             + " %d-%d icons: that is what the shipped events carry."
+                             % band)
+        s["properties"]["construction_materials"] = cm
 
     # The title example was a Merge one for every type, and an example is the
     # strongest instruction in a schema - it gets copied.
@@ -790,6 +857,66 @@ def _zone_image_md(doc, zone, md_dir):
     return "\n![%s](%s)\n" % (alt.replace("]", ")"), rel)
 
 
+def _progression_md(zone, md_dir):
+    """The build-up strip for one zone, plus where the full-res frames live.
+
+    Relative paths for the same reason _zone_image_md uses them: this folder is
+    synced to other designers' machines under a different OneDrive root, and an
+    absolute path breaks for every one of them.
+    """
+    sheet = (zone or {}).get("progression_sheet") or ""
+    frames = (zone or {}).get("progression_frames") or []
+    if not sheet or not os.path.exists(sheet):
+        return ""
+
+    def rel(p):
+        try:
+            return os.path.relpath(p, md_dir).replace("\\", "/")
+        except ValueError:                  # different drive - no relative path
+            return p.replace("\\", "/")
+
+    alt = "Zone %s build-up" % zone.get("zone_number", "?")
+    out = ["**Scene Progression** - %d frames, in build order:\n" % len(frames),
+           "![%s](%s)\n" % (alt, rel(sheet))]
+    if frames:
+        out.append("_Full-resolution frames: `%s`_\n"
+                   % rel(os.path.dirname(frames[0]["path"])))
+    return "\n".join(out)
+
+
+def _rel_to_md(path, md_dir):
+    """A path relative to the .md, so the document survives being synced.
+
+    Absolute paths break for every designer whose OneDrive root differs, which is
+    all of them. Falls back to the absolute path only when no relative one exists
+    (a different drive), where a broken-looking link is still better than none.
+    """
+    if not md_dir:
+        return str(path).replace("\\", "/")
+    try:
+        return os.path.relpath(path, md_dir).replace("\\", "/")
+    except ValueError:
+        return str(path).replace("\\", "/")
+
+
+def _art_cell(paths, md_dir, intent="", alt="art"):
+    """A table cell carrying generated art, or the untouched placeholder.
+
+    `paths` may be one path or several - task icons arrive as a set and belong in
+    one row. The intent text is kept above the image because the column is
+    "Visual Reference + Reference Intent": the picture answers "what should it
+    look like" and the words answer "why this reference", and dropping the words
+    to make room for the picture loses the half a reviewer argues with.
+    """
+    if isinstance(paths, str):
+        paths = [paths]
+    live = [p for p in (paths or []) if p and os.path.exists(p)]
+    if not live:
+        return intent or "_add reference_"
+    imgs = "".join("![%s](%s)" % (alt, _rel_to_md(p, md_dir)) for p in live)
+    return ("%s<br>%s" % (intent, imgs)) if intent else imgs
+
+
 def _zone_content_summary(zone, shape):
     """The "Required Content / Elements" cell in section 4's summary table.
 
@@ -882,7 +1009,7 @@ def _producers_md(doc):
     return "\n".join(out) + "\n"
 
 
-def _materials_md(doc):
+def _materials_md(doc, md_dir=None):
     """The construction material icon table - Blocks' mechanic-specific class.
 
     Merge's producers and Dessert's recipes each had a detail table; Blocks'
@@ -893,12 +1020,14 @@ def _materials_md(doc):
     if not mats:
         return ""
     out = ["**Construction material icons (%d)**\n" % len(mats),
-           "| # | Material | Description | Palette |", "|---|---|---|---|"]
+           "| # | Material | Description | Palette | Art |",
+           "|---|---|---|---|---|"]
     for i, m in enumerate(mats, 1):
-        out.append("| {i} | {n} | {d} | {p} |".format(
+        out.append("| {i} | {n} | {d} | {p} | {a} |".format(
             i=i, n=m.get("name", ""),
             d=str(m.get("description", "")).replace("|", "/"),
-            p=str(m.get("palette", "")).replace("|", "/")))
+            p=str(m.get("palette", "")).replace("|", "/"),
+            a=_art_cell(m.get("image_path"), md_dir, alt=str(m.get("name", "material")))))
     return "\n".join(out) + "\n"
 
 
@@ -1027,12 +1156,38 @@ def _asset_groups(doc, event_type):
     elif event_type == "Blocks":
         mats = doc.get("construction_materials") or []
         steps = sum(_n(z.get("construction_steps")) for z in zones)
+        nz = _n(zones)
         rows.append(("Construction material icons",
                      "Spent to complete a build step",
                      "%d materials" % _n(mats)))
         rows.append(("Scene build / reveal steps",
                      "Each step visibly changes the scene as the event progresses",
-                     "%d steps across %d scenes" % (steps, _n(zones))))
+                     "%d steps across %d scenes" % (steps, nz)))
+        # Everything below was missing from generated documents entirely, and all
+        # of it ships in Blocks2607. The counts follow from the structure above.
+        rows.append(("Build-step icons",
+                     "The small icon for each step in the build list - Blocks2607 "
+                     "ships Icon/Building1..5 icon_blocks_N_M at 7/7/8/8/8",
+                     "%d icons, one per construction step" % steps))
+        rows.append(("Material guide states",
+                     "Each material drawn for the illustrated guide - Blocks2607 "
+                     "ships Icon/Book icon_mine_N_1..3",
+                     "%d materials x 3 states = %d" % (_n(mats), _n(mats) * 3)))
+        rows.append(("Playable block art",
+                     "The pieces on the board: 8 colourways plus frozen, gift, "
+                     "second gift and shadow states, and a 6-stage ice block",
+                     "8 colours + 4 states + 6 ice stages = 18"))
+        rows.append(("Board backgrounds",
+                     "The chessboard behind the pieces, themed per scene "
+                     "(Texture/Chessboard img_bg_box_N)",
+                     "%d, one per scene" % nz))
+        rows.append(("Scene photos",
+                     "The finished-scene image used on the build and share panels "
+                     "(Texture/Blocks2607Photo img_photo_N)",
+                     "%d, one per scene" % nz))
+        rows.append(("Header backgrounds",
+                     "The panel header strip, themed per scene (Cell/MenuTopBgN)",
+                     "%d, one per scene" % nz))
 
     elif event_type == "Sort":
         goods = sum(_n(z.get("goods")) for z in zones)
@@ -1145,6 +1300,11 @@ def _render_markdown(doc, event_type, status_line, author_name="", md_dir=None):
         ("Event Type / Gameplay", event_type),
         ("Event Theme", theme),
         ("Event Duration", go.get("duration_summary") or ""),
+        # Provenance. Written by the tool from the file it actually read, so a
+        # reviewer can tell which brief this was built from without asking, and
+        # the documents panel can match documents to a One-Pager by fact rather
+        # than by parsing a number out of the filename.
+        ("Source One-Pager", doc.get("source_one_pager") or "_not recorded_"),
         ("Design Spec", "_add link_"),
         ("Design Owner", doc.get("design_owner") or STUDIO_DESIGN_OWNER),
         ("Art Owner", doc.get("art_owner") or STUDIO_ART_OWNER),
@@ -1223,6 +1383,9 @@ def _render_markdown(doc, event_type, status_line, author_name="", md_dir=None):
         img = _zone_image_md(doc, z, md_dir)
         if img:
             detail_lines.append(img.strip() + "\n")
+        prog = _progression_md(z, md_dir)
+        if prog:
+            detail_lines.append(prog)
     detail_md = "\n".join(detail_lines)
 
     element_rows = []
@@ -1273,7 +1436,24 @@ def _render_markdown(doc, event_type, status_line, author_name="", md_dir=None):
     # The one section that differs by event type, which is exactly what the
     # template intends: Merge's producers and chains, Dessert's recipes and
     # ingredients, Blocks' materials, Sort's goods.
-    asset_rows = [(g, fn, "see the detail below", qty, "_add reference_")
+    # The group row does not repeat the icons - they are in the detail table
+    # below it, at a size worth looking at - but it must not still say
+    # "_add reference_" once that art exists, or a reader stops at this table.
+    _grp_art = any((m.get("image_path") or "")
+                   for m in (doc.get("construction_materials") or []))
+
+    def _is_material_group(name):
+        """The one asset group whose icons the material pass actually renders.
+
+        Deliberately narrow. Anything this does not match keeps "_add reference_",
+        so a group with no generating pass - build-step icons, playable block art,
+        board backgrounds - never claims to have art it does not have.
+        """
+        return str(name).strip().lower().startswith("construction material")
+
+    asset_rows = [(g, fn, "see the detail below", qty,
+                   "_see the icon art in the detail table below_"
+                   if (_grp_art and _is_material_group(g)) else "_add reference_")
                   for g, fn, qty in _asset_groups(doc, event_type)]
     assets = _pipe_table(["Asset / Asset Group", "Gameplay Function",
                           "Detailed Art Requirement", "Quantity / Variants / States",
@@ -1282,7 +1462,9 @@ def _render_markdown(doc, event_type, status_line, author_name="", md_dir=None):
     # ---- 6. Characters -----------------------------------------------------
     chars = doc.get("characters") or []
     char_rows = [(c.get("name"), c.get("role"), c.get("design_notes"),
-                  ", ".join(c.get("scene_actions") or []), "_add reference_")
+                  ", ".join(c.get("scene_actions") or []),
+                  _art_cell(c.get("image_path"), md_dir,
+                            alt=str(c.get("name") or "character")))
                  for c in chars]
     char_table = _pipe_table(["Character / Role", "Function / Personality",
                               "Detailed Visual Direction",
@@ -1292,17 +1474,31 @@ def _render_markdown(doc, event_type, status_line, author_name="", md_dir=None):
     # ---- 7. UI / Icon ------------------------------------------------------
     icon_rows = []
     for group, _fn, qty in _asset_groups(doc, event_type):
-        icon_rows.append((group, "Gameplay", doc.get("event_motif") or "", qty, "_add reference_"))
+        # Section 5's equivalent row was pointed at the material detail table when
+        # the icons exist; this one was missed, so the same asset was described as
+        # both done and outstanding in one document.
+        icon_rows.append((group, "Gameplay", doc.get("event_motif") or "", qty,
+                          "_see the icon art in the material table in section 5_"
+                          if (_grp_art and _is_material_group(group))
+                          else "_add reference_"))
+    xi = doc.get("extra_images") or {}
     if ex.get("achievement_badge"):
         icon_rows.append(("Achievement badge", "Progress / Collection",
-                          ex["achievement_badge"], "1", "_add reference_"))
+                          ex["achievement_badge"], "1",
+                          _art_cell(xi.get("badge"), md_dir, alt="badge")))
     if ex.get("hot_air_balloon"):
         icon_rows.append(("Event entry art", "Entry / promo",
-                          ex["hot_air_balloon"], "1", "_add reference_"))
+                          ex["hot_air_balloon"], "1",
+                          _art_cell(xi.get("balloon"), md_dir, alt="entry art")))
     if ex.get("task_icons"):
+        # One strip if the image pass composed one, otherwise the individual
+        # icons. The strip exists because four images in a single .docx cell come
+        # out at 260px each and overflow the column - measured, not guessed.
+        tasks = ([xi["task_sheet"]] if xi.get("task_sheet")
+                 else [xi[k] for k in sorted(xi) if k.startswith("task_")])
         icon_rows.append(("Task icons", "Progress / Collection",
                           "; ".join(ex["task_icons"]), str(_n(ex["task_icons"])),
-                          "_add reference_"))
+                          _art_cell(tasks, md_dir, alt="task icon")))
     icons = _pipe_table(["Icon / Group", "Function", "Visual / Theme Direction",
                          "Quantity / Variants", "Visual Reference"], icon_rows)
 
@@ -1386,6 +1582,9 @@ shape language and content. They are not final production assets.
 ## 7. UI / Icon Requirements
 
 %s
+### UI Panels
+
+%s
 ## 8. Animation / VFX Requirements
 
 %s
@@ -1422,13 +1621,12 @@ not an approved spec.
         progression,
         detail_md,
         assets,
-        _producers_md(doc), _recipes_md(doc) + _materials_md(doc) + _goods_md(doc),
+        _producers_md(doc), _recipes_md(doc) + _materials_md(doc, md_dir) + _goods_md(doc),
         doc.get("gameplay_specific_content") or "",
         optional_chars,
         icons,
-        _pipe_table(["Asset / Character / Moment", "Trigger / State",
-                     "Animation / VFX Requirement", "Visual Reference"],
-                    [], empty="_Not specified in this draft - to be agreed with the Art Lead._"),
+        _ui_panels_md(doc, event_type, md_dir),
+        _vfx_md(doc, event_type),
         doc.get("notes") or "_None._",
         _pipe_table(["#", "Area / Requirement", "SKB Feedback",
                      "Design + Art Response / Action", "Owner", "Status"],
@@ -1448,6 +1646,7 @@ def _write_variation_draft(events_root, event_type, doc, index, author_name=""):
         f.write(_render_markdown(doc, event_type,
                                  f"Draft variation {index + 1} — under review, not yet selected",
                                  author_name, md_dir=draft_dir))
+    _write_doc_data(path, doc)
     return path
 
 
@@ -1602,6 +1801,14 @@ def generate_main():
         variations = _generate_variations(provider, payload, system_prompt, user_message,
                                           variation_count, event_type, images=ref_images)
 
+        # Stamp the source onto each variation. Not part of the schema: the model
+        # is describing art, and the name of the file it was handed is something
+        # only this process knows.
+        source_name = (payload.get("ideation_doc_name") or "").strip()
+        if source_name:
+            for v in variations:
+                v["source_one_pager"] = source_name
+
         draft_paths = []
         if events_root:
             for i, v in enumerate(variations):
@@ -1670,6 +1877,12 @@ def regenerate_main():
         result = _regenerate_variation(provider, payload, system_prompt, user_message,
                                        event_type)
         new_variation = result["variation"]
+        # A rewrite is the same document, so it keeps its provenance. The model
+        # never sees this field and so cannot carry it across on its own.
+        prior_source = ((payload.get("variation") or {}).get("source_one_pager")
+                        or (payload.get("ideation_doc_name") or "").strip())
+        if prior_source:
+            new_variation["source_one_pager"] = prior_source
 
         lesson = (result.get("extracted_lesson") or "").strip()
         draft_path = None
@@ -1732,6 +1945,7 @@ def save_final_main():
             status += f" · selected by {selector}"
         with open(path, "w", encoding="utf-8") as f:
             f.write(_render_markdown(variation, event_type, status, selector, md_dir=final_dir))
+        _write_doc_data(path, variation)
         print(json.dumps({"path": path}))
     except Exception as e:
         print(json.dumps({"error": str(e)}))
@@ -1824,6 +2038,9 @@ def mcp_save_main():
         events_root = payload.get("events_root", "")
         if not events_root:
             raise ValueError("No events_root configured.")
+        source = (payload.get("source_one_pager") or "").strip()
+        if source:
+            doc["source_one_pager"] = source
         ref = re.sub(r'[\\/:*?"<>|]', "_", payload.get("ref_name") or "Untitled")[:80]
         author = payload.get("author_name", "")
         draft_dir = os.path.join(events_root, event_type, "Art Requirements", "Drafts")
@@ -1836,14 +2053,28 @@ def mcp_save_main():
         md = _render_markdown(doc, event_type, status, author, md_dir=draft_dir)
         with open(path, "w", encoding="utf-8", newline="") as f:
             f.write(md)
+        _write_doc_data(path, doc)
 
         zones = doc["zones"]
-        summary = ("%s: %d zones, %d construction steps, %d buildings, %d characters, "
-                   "%d chars rendered."
-                   % (event_type, len(zones),
-                      sum(len(z.get("construction_steps") or []) for z in zones),
+        profile = [len(z.get("construction_steps") or []) for z in zones]
+        summary = ("%s: %d zones, %d construction steps %s, %d buildings, "
+                   "%d characters, %d chars rendered."
+                   % (event_type, len(zones), sum(profile),
+                      "/".join(str(n) for n in profile),
                       sum(len(z.get("buildings") or []) for z in zones),
                       len(doc.get("characters") or []), len(md)))
+        # Scope, reported rather than enforced. A different scene count can be a
+        # real Production decision - Block2609 runs 16 days where both shipped
+        # events ran 14 - but a document quietly eight steps light of every
+        # shipped event is exactly what this line exists to stop repeating.
+        shipped = shape.get("shipped_profile")
+        if shipped and sum(profile) < sum(shipped):
+            summary += ("\n\nSCOPE: %d steps against the shipped %s = %d. If the "
+                        "scene count is unchanged this document is %d steps light - "
+                        "add real reveal steps rather than leaving it short, or "
+                        "record why Production agreed a smaller scope."
+                        % (sum(profile), "/".join(str(n) for n in shipped),
+                           sum(shipped), sum(shipped) - sum(profile)))
         print(json.dumps({"path": path, "summary": summary}, ensure_ascii=False))
     except ValueError as e:
         print(json.dumps({"error": str(e)}, ensure_ascii=False))
@@ -1851,3 +2082,308 @@ def mcp_save_main():
     except Exception as e:
         print(json.dumps({"error": "%s: %s" % (e.__class__.__name__, e)}))
         sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# The structured document, written beside the Markdown.
+#
+# The Markdown is what people read; it is not what the image pass consumes. That
+# pass needs zones, construction_steps, buildings, materials, characters and the
+# art direction as DATA, and several fields it relies on - blunt_steps,
+# character_scale, render_aspect - are not rendered into the Markdown at all.
+# Parsing the .md back would therefore be lossy in exactly the places that
+# matter, and lossy in a way that shows up only when a render comes back wrong.
+#
+# So every save writes a .json sidecar. Opening a document in the tool can then
+# offer to generate its art, because the document is still a document rather
+# than a picture of one.
+
+def _doc_data_path(md_path):
+    return os.path.splitext(md_path)[0] + ".json"
+
+
+def _write_doc_data(md_path, doc):
+    """Write the structured variation beside its rendered Markdown."""
+    try:
+        with open(_doc_data_path(md_path), "w", encoding="utf-8") as f:
+            json.dump(doc, f, ensure_ascii=False, indent=1)
+        return _doc_data_path(md_path)
+    except Exception:
+        # A missing sidecar costs the art button, not the document. Never let it
+        # take down a save that has already produced the thing people asked for.
+        return None
+
+
+def save_doc_main():
+    """CLI: pybackend_cli.py artreq_save_doc payload.json
+
+    payload: {md_path, event_type, variation, author_name, status}
+
+    Re-renders an EXISTING document in place, Markdown and sidecar together.
+    Used after an image pass adds image_path entries to the zones: without this
+    the renders would sit on disk with nothing referencing them.
+    """
+    import sys
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if len(sys.argv) < 2:
+        print(json.dumps({"error": "Usage: artreq_save_doc <payload.json>"}))
+        sys.exit(1)
+    try:
+        with open(sys.argv[1], "r", encoding="utf-8-sig") as f:
+            payload = json.load(f)
+
+        md_path = payload.get("md_path") or ""
+        event_type = payload.get("event_type", "")
+        doc = payload.get("variation") or {}
+        if event_type not in KNOWN_TYPES:
+            raise ValueError("Unknown event type: %s" % event_type)
+        if not md_path or not os.path.isfile(md_path):
+            raise ValueError("No such document: %s" % md_path)
+        if not doc.get("zones"):
+            raise ValueError("The variation has no zones.")
+
+        # Carry the document's own header forward. Adding reference art to a
+        # colleague's document must not quietly reassign its authorship, and the
+        # status line records a review state this call knows nothing about.
+        existing = ""
+        try:
+            with open(md_path, "r", encoding="utf-8") as f:
+                existing = f.read(2000)
+        except Exception:
+            pass
+        found_by = re.search(r"^\*\*By:\*\* (.+)$", existing, re.M)
+        found_status = re.search(r"^\*\*Status:\*\* (.+)$", existing, re.M)
+        status = (payload.get("status")
+                  or (found_status.group(1).strip() if found_status else "")
+                  or "Draft")
+        author = (payload.get("author_name")
+                  or (found_by.group(1).strip() if found_by else ""))
+        md_dir = os.path.dirname(md_path)
+        md = _render_markdown(doc, event_type, status, author, md_dir=md_dir)
+        with open(md_path, "w", encoding="utf-8", newline="") as f:
+            f.write(md)
+        data_path = _write_doc_data(md_path, doc)
+        imgs = sum(1 for z in doc["zones"] if z.get("image_path"))
+        print(json.dumps({"path": md_path, "data_path": data_path,
+                          "zones_with_images": imgs, "chars": len(md)},
+                         ensure_ascii=False))
+    except ValueError as e:
+        print(json.dumps({"error": str(e)}, ensure_ascii=False))
+        sys.exit(1)
+    except Exception as e:
+        print(json.dumps({"error": "%s: %s" % (e.__class__.__name__, e)}))
+        sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# The UI panels a Blocks event actually ships, read off the shipped build:
+#   trunk/develop/client/Skipbo/Assets/ResourcesAb/Events/Blocks2607
+#
+# 26 panel prefabs plus 5 panels that carry their own texture folder without a
+# prefab in the event bundle - 31 panels, and every one of them is re-skinned
+# each event. None of that was in the generated document: it carried a free-text
+# "ui_icon_refresh_notes" line and left the panel list to somebody's memory.
+#
+# The list is DATA, stamped by the tool, for the same reason base_character is:
+# these are the names of things in the build, and a model asked to produce them
+# will produce plausible ones instead. `textures` is the count of PNGs in the
+# panel's own folder in Blocks2607 - it is the honest measure of how much art a
+# re-skin costs, and it is why "Main event board" and "Share" cannot be given
+# the same estimate.
+
+BLOCKS_UI_PANELS = [
+    # (human name, shipped asset in Blocks2607, own textures)
+    ("Main event board", "UIBlocks2607Panel", 69),
+    ("Race", "UIBlocks2607RacePanel", 32),
+    ("Build / scene view", "UIBlocks2607BuildPanel", 24),
+    ("Rewards track", "UIBlocks2607RewardPanel", 24),
+    ("Ranking", "UIBlocks2607RankingPanel", 22),
+    ("Daily tasks", "UIBlocks2607DailyTaskPanel", 17),
+    ("Ad / free boost offer", "UIBlocks2607AdPanel", 15),
+    ("Settlement", "UIBlocks2607SettlementPanel", 12),
+    ("Build step list", "UIBlocks2607BuildListPanel", 9),
+    ("Illustrated guide (book)", "UIBlocks2607BookPanel", 7),
+    ("Limited-time task", "UIBlocks2607LimitTaskPanel", 5),
+    ("Loading", "UIBlocks2607LoadingPanel", 2),
+    ("New recipe / unlock", "UIBlocks2607NewRecipePanel", 2),
+    ("Unlimited guide", "UIBlocks2607UnlimitedGuidePanel", 2),
+    ("Rocket / bomb booster", "UIBlocks2607BombPanel", 1),
+    ("Material gained", "UIBlocks2607GetMaterialPanel", 1),
+    ("Tool box", "UIBlocks2607ToolBoxPanel", 1),
+    ("Undo", "UIBlocks2607UndoPanel", 1),
+    ("Ad reward collected", "UIBlocks2607AdGotPanel", 0),
+    ("Daily task award", "UIBlocks2607DailyTaskAwardPanel", 0),
+    ("First-time gift", "UIBlocks2607FirstSendPanel", 0),
+    ("Make / craft", "UIBlocks2607MakePanel", 0),
+    ("Gift NPC", "UIBlocks2607NpcPanel", 0),
+    ("Race end", "UIBlocks2607RaceEndPanel", 0),
+    ("Race result", "UIBlocks2607RaceResultPanel", 0),
+    ("Race start", "UIBlocks2607RaceStartPanel", 0),
+    ("Ranking start", "UIBlocks2607RankingStartPanel", 0),
+    ("Settlement collected", "UIBlocks2607SettlementGotPanel", 0),
+    ("Share", "UIBlocks2607SharePanel", 0),
+    ("Stage loading", "UIBlocks2607StageLoadingPanel", 0),
+    ("Undo confirm", "UIBlocks2607UndoConfirmPopPanel", 0),
+]
+
+UI_PANELS_BY_TYPE = {"Blocks": BLOCKS_UI_PANELS}
+
+
+# What Blocks2607 ships under VX/Spine, so section 8 can name the work instead
+# of deferring it. Per-scene spine sets are the animated parts of each scene -
+# smoke, water, foliage, lights - which is why they scale with the scene count.
+def _vfx_md(doc, event_type):
+    if event_type != "Blocks":
+        return _pipe_table(["Asset / Character / Moment", "Trigger / State",
+                            "Animation / VFX Requirement", "Visual Reference"],
+                           [], empty="_Not specified in this draft - to be agreed "
+                                     "with the Art Lead._")
+    nz = _n(doc.get("zones"))
+    chars = doc.get("characters") or []
+    rows = [
+        ("Build puff", "Fires when a construction step completes",
+         "A dust/cloud burst that hides the swap between step frames - "
+         "Blocks2607 ships VX/Spine/Building_Cloud",
+         "_add reference_"),
+        ("Gift NPC", "Appears in level after every N clears, and in the restored scene",
+         "Spine character with an arrive, an idle and a gift-hand-over - "
+         "Blocks2607 ships VX/Spine/Elf. Re-costumed from the existing cast: %s"
+         % (", ".join(c.get("base_character", "") for c in chars if c.get("base_character"))
+            or "cast member to be named"),
+         "_add reference_"),
+        ("Scene ambience", "Loops while a scene is on screen",
+         "One spine set per scene for the moving parts - smoke, water, foliage, "
+         "lights - Blocks2607 ships VX/Spine/Scene1..5",
+         "_add reference_"),
+    ]
+    return _pipe_table(["Asset / Character / Moment", "Trigger / State",
+                        "Animation / VFX Requirement", "Visual Reference"], rows)
+
+
+PANEL_REFERENCE_DIR = "_panel_reference"
+PANEL_SCREEN_DIR = "screens"
+
+# Assembled screenshots pulled out of the shipped Art Requirement PDF, mapped to
+# the panel they show. ONLY entries confirmed by looking at the image are here -
+# a wrong reference is worse than none, because an artist will work to it. The
+# unmapped screens stay in the folder as general reference rather than being
+# guessed onto a panel.
+# Screenshots come from tools/unity/CapturePanels.cs, which renders each panel
+# prefab through a Canvas at the game's own reference resolution and names the
+# PNG after the prefab. That name is the same string the panel table already
+# carries as "Previous UI Panel", so the lookup is a file test and there is no
+# mapping table to keep in step.
+#
+# Images from the shipped Art Requirement PDFs are deliberately NOT used, though
+# they do contain assembled screens: they are the previous DOCUMENT's images,
+# annotated with callout arrows, sometimes showing base-game offer panels rather
+# than this event's, and re-compressed. A marked-up page is worse as an art
+# reference than the real textures.
+
+
+def _panel_screenshot_md(event_type, asset, md_dir):
+    """A rendered screenshot of the assembled panel, if one has been captured."""
+    if not md_dir:
+        return ""
+    for base in (os.path.dirname(md_dir), md_dir):
+        for ext in (".png", ".jpg"):
+            path = os.path.join(base, PANEL_REFERENCE_DIR, PANEL_SCREEN_DIR, asset + ext)
+            if os.path.isfile(path):
+                try:
+                    rel = os.path.relpath(path, md_dir).replace("\\", "/")
+                except ValueError:
+                    rel = path.replace("\\", "/")
+                return "![%s assembled](%s)" % (asset, rel)
+    return ""
+
+
+def _panel_image_md(asset, md_dir):
+    """A relative image link to this panel's shipped-art contact sheet.
+
+    There is no screenshot of an assembled panel anywhere in the build - a panel
+    is a prefab plus a folder of loose sprites - so the sheet is every texture
+    the panel ships, laid out on a grey checker so pale edges stay visible. It
+    is the art being re-skinned, which is what a comparison needs.
+    """
+    if not md_dir:
+        return ""
+    for base in (os.path.dirname(md_dir), md_dir):
+        path = os.path.join(base, PANEL_REFERENCE_DIR, "%s.jpg" % asset)
+        if os.path.isfile(path):
+            try:
+                rel = os.path.relpath(path, md_dir).replace("\\", "/")
+            except ValueError:
+                rel = path.replace("\\", "/")
+            return "![%s](%s)" % (asset, rel)
+    return ""
+
+
+def _ui_panels_md(doc, event_type, md_dir=None):
+    """The UI Panels table: what to re-skin, from what, and against which reference.
+
+    A panel with no textures of its own is not exempt - it is built from the
+    shared UIBlocks2607Common chrome, so it changes when that chrome does. Saying
+    so in the row is more useful than omitting it and letting someone assume it
+    was forgotten.
+    """
+    panels = UI_PANELS_BY_TYPE.get(event_type)
+    if not panels:
+        return ""
+    notes = {}
+    for entry in (doc.get("ui_panels") or []):
+        key = (entry.get("panel") or "").strip().lower()
+        if key:
+            notes[key] = (entry.get("note") or "").strip()
+
+    rows = []
+    shown = shots = 0
+    for name, asset, tex in panels:
+        note = notes.get(name.lower()) or notes.get(asset.lower())
+        if note:
+            reference = note
+        elif tex:
+            reference = "_add reference_ — %d texture%s to re-skin" % (tex, "" if tex == 1 else "s")
+        else:
+            reference = "_add reference_ — no textures of its own; follows the shared chrome"
+        # The re-skin this event generated for that panel, if the panel pass ran.
+        # This column is called "New Theme Reference" and was designed for it;
+        # until now the art was rendered into a panels/ folder and never linked,
+        # so an artist comparing old against new had only the old.
+        new_art = (doc.get("panel_images") or {}).get(asset)
+        if new_art and os.path.exists(new_art):
+            # The row is no longer awaiting a reference - it is showing one. The
+            # texture count survives because it says where the work is; only the
+            # "_add reference_" claim goes, or a reader counts 31 panels needing
+            # art when 18 of them have it.
+            reference = "**New theme art generated:**" + reference.replace(
+                "_add reference_ —", "").replace("_add reference_", "")
+            reference = "%s<br>![%s re-skin](%s)" % (
+                reference.rstrip(" —"), asset, _rel_to_md(new_art, md_dir))
+        shot = _panel_screenshot_md(event_type, asset, md_dir)
+        img = shot or _panel_image_md(asset, md_dir)
+        if shot:
+            shots += 1
+            label = "assembled screen"
+        elif img:
+            label = "texture sheet"
+        else:
+            label = ""
+        if img:
+            shown += 1
+            previous = "%s — _%s_<br>%s" % (asset, label, img)
+        else:
+            previous = asset
+        rows.append((name, previous, reference))
+
+    total = sum(t for _n, _a, t in panels)
+    return ("**UI Panels (%d)** — every panel in the shipped Blocks2607 build, which is "
+            "the set this event re-skins. %d panel textures in total; the counts say "
+            "where the work actually is. Each Previous UI Panel cell carries a contact "
+            "sheet of that panel's shipped textures (%d of %d panels have art of their "
+            "own) so the new theme can be held against it. %d of those are ASSEMBLED "
+            "SCREENS from the shipped Art Requirement document - the panel as it "
+            "actually appears; the rest are contact sheets of the panel's own "
+            "textures, because no screenshot of an assembled panel exists in the "
+            "build. Rendering the remaining prefabs in Unity would close that gap.\n\n%s\n"
+            % (len(panels), total, shown, len(panels), shots,
+               _pipe_table(["Panel Name", "Previous UI Panel", "New Theme Reference"], rows)))
