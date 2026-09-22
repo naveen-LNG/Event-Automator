@@ -71,6 +71,19 @@ contextBridge.exposeInMainWorld('api', {
   artReqPlan: (params) => ipcRenderer.invoke('artreq:plan', params),
   artReqRegenImage: (params) => ipcRenderer.invoke('artreq:regenImage', params),
 
+  locTranslate: (params) => ipcRenderer.invoke('loc:translate', params),
+  locBrief: (params) => ipcRenderer.invoke('loc:brief', params),
+  locQueue: (params) => ipcRenderer.invoke('loc:queue', params),
+  locQueueResult: (params) => ipcRenderer.invoke('loc:queueResult', params),
+  locOpenClaudeDesktop: () => ipcRenderer.invoke('loc:openClaudeDesktop'),
+  locExportXlsx: (params) => ipcRenderer.invoke('loc:exportXlsx', params),
+  locLatestResult: (params) => ipcRenderer.invoke('loc:latestResult', params),
+  onLocProgress: (cb) => ipcRenderer.on('loc:progress', (evt, p) => cb(p)),
+
+  xlsxMergeDefaults: () => ipcRenderer.invoke('xlsxmerge:defaults'),
+  xlsxMergeRun: (params) => ipcRenderer.invoke('xlsxmerge:run', params),
+  xlsxMergeReveal: (params) => ipcRenderer.invoke('xlsxmerge:reveal', params),
+
   sprintBoard: (params) => ipcRenderer.invoke('sprint:board', params),
 
   profileSave: (params) => ipcRenderer.invoke('profile:save', params),

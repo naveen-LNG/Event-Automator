@@ -166,6 +166,7 @@ $knownUntracked = @{
     "README.md"        = "repo-managed docs"
     "githooks"         = "repo-managed hooks"
     "pybackend-src"    = "mirror of the authoritative PythonBackend folder"
+    "event-automator.mcpb" = "build output (zip of mcp\extension, attached to releases)"
 }
 $classifiedTracked = @("main.js", "preload.js", "package.json", "renderer", "build", "scripts", "tests", "ideationData", ".claude", "lib", "mcp")
 Get-ChildItem $liveDesktop -Force | ForEach-Object {

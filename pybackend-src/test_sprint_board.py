@@ -14,6 +14,12 @@ def check(c, m):
 
 if not os.path.exists(ROADMAP):
     print("SKIP: roadmap export not present"); sys.exit(0)
+# The design side is an SVN working copy that only the design machines have.
+# Guarded so this suite can be wired into npm test: it was left out of it
+# precisely because it would fail on a machine without this checkout, and being
+# outside npm test is how three stale assertions in it went unnoticed.
+if not os.path.isdir(DESIGN):
+    print(f"SKIP: design working copy not present at {DESIGN}"); sys.exit(0)
 
 sprints = sb.read_roadmap(ROADMAP, 2026)
 check(len(sprints) >= 20, f"expected ~22 sprint columns, got {len(sprints)}")
@@ -56,18 +62,37 @@ check(counts["full_screen_gift"] <= 2,
       f"full_screen_gift not filtered to 栏位归属=16 (got {counts['full_screen_gift']})")
 print(f"OK  per-tab counts sane (minigames=5, full-screen gift={counts['full_screen_gift']} after slot-16 filter)")
 
-# Drift the board must surface.
-sep1 = by["Sep Event 1"]
-check(sb._match_event_config(DESIGN, sep1) is None,
-      "Sep Event 1 unexpectedly has a configured event")
-todo = [t["label"] for t in sb.sprint_status(DESIGN, sep1)["tabs"] if t["status"] == "todo"]
-check(len(todo) >= 6, f"expected many TODOs for the unconfigured sprint, got {todo}")
-print(f"OK  drift found: 'Sort Event' planned but not configured ({len(todo)} tabs outstanding)")
+# Drift the board must surface: a planned sprint with no configured event comes
+# back unmatched and with its tabs outstanding.
+#
+# The sprint is searched for, not named. This was pinned to Sep Event 1 and
+# broke the day somebody configured Sep Event 1 - which is precisely the work
+# the board exists to prompt, so the test was penalising its own success. A
+# roadmap always has unconfigured sprints ahead of today.
+unconfigured = [s for s in sprints
+                if not s.get("is_milestone")
+                and sb._match_event_config(DESIGN, s) is None]
+if unconfigured:
+    sp_u = unconfigured[0]
+    todo = [t["label"] for t in sb.sprint_status(DESIGN, sp_u)["tabs"]
+            if t["status"] == "todo"]
+    check(len(todo) >= 6,
+          f"expected many TODOs for unconfigured {sp_u['name']}, got {todo}")
+    print(f"OK  drift found: '{sp_u['name']}' planned but not configured "
+          f"({len(todo)} tabs outstanding)")
+else:
+    print("SKIP  every sprint in the roadmap is configured, so the "
+          "unconfigured-drift path was not exercised this run")
 
-sep2 = by["Sep Event 2"]
-ev2 = sb._match_event_config(DESIGN, sep2)
-check(ev2 is not None, f"Sep Event 2 lost its matched config entirely: {ev2}")
-print(f"OK  Sep Event 2 joins to its config ({ev2['alias']})")
+# Some sprint must still JOIN to a configured event, or the date-join logic has
+# stopped working entirely. Searched, not named, for the same reason as above -
+# I pinned this one to Sep Event 2 while fixing the previous pinning, and it
+# broke one run later when that sprint's config moved.
+joined = [(s["name"], m) for s in sprints
+          if (m := sb._match_event_config(DESIGN, s)) is not None]
+check(joined, "no sprint in the roadmap joins to a configured event at all")
+print(f"OK  {len(joined)} sprint(s) join to a config, e.g. "
+      f"{joined[0][0]} -> {joined[0][1]['alias']}")
 
 # A configured event whose dates DISAGREE with the roadmap must come back
 # inexact, so the board can say so.
@@ -105,10 +130,22 @@ check(ch_aug["status"] == "done",
       f"chapter 82 exists in pve_chapter.xlsx, expected done, got {ch_aug['status']}")
 check(all("hapter" not in o for o in st["other_updates"]),
       f"chapter line still listed as unactionable: {st['other_updates']}")
-ch_sep1 = [t for t in sb.sprint_status(DESIGN, sep1)["tabs"] if t["tab"] == "chapter"][0]
-check(ch_sep1["planned"], "Sep Event 1 should plan a chapter")
+# The other direction: a sprint whose roadmap line names a chapter must have
+# its chapter tab marked planned. Any such sprint will do - naming one is what
+# broke three assertions in this file already. (Aug Event 1 above stays pinned
+# on purpose: it is a past sprint in a committed roadmap export, and chapter 82
+# cannot stop existing, so neither side of it can move under the test.)
+planners = [s for s in sprints if sb._planned_chapters(s)]
+check(planners, "no sprint in the roadmap plans a chapter at all")
+sp_c = planners[-1]
+ch_other = [t for t in sb.sprint_status(DESIGN, sp_c)["tabs"]
+            if t["tab"] == "chapter"][0]
+check(ch_other["planned"],
+      f"{sp_c['name']} names chapter {sb._planned_chapters(sp_c)} but its "
+      f"chapter tab is not marked planned")
 print(f"OK  chapter tab: Aug=ch82 {ch_aug['status']}, "
-      f"Sep1=ch{sb._planned_chapters(sep1)} {ch_sep1['status']}, no longer unactionable")
+      f"{sp_c['name']}=ch{sb._planned_chapters(sp_c)} {ch_other['status']}, "
+      f"no longer unactionable")
 
 # A line mentioning chapters without naming one must NOT be claimed, or it
 # becomes a permanent TODO the tab can never satisfy.

@@ -148,6 +148,24 @@ def main():
     elif script == "update_chapter":
         import chapter_update
         chapter_update.run_main()
+    elif script == "loc_translate":
+        import localization_translate
+        localization_translate.translate_main()
+    elif script == "loc_mcp_brief":
+        import localization_translate
+        localization_translate.brief_main()
+    elif script == "loc_mcp_save":
+        import localization_translate
+        localization_translate.mcp_save_main()
+    elif script == "loc_pending":
+        import localization_translate
+        localization_translate.pending_main()
+    elif script == "loc_export_xlsx":
+        import localization_translate
+        localization_translate.export_main()
+    elif script == "xlsx_merge":
+        import xlsx_merge
+        xlsx_merge.main()
     else:
         print(f"Unknown script: {script}")
         sys.exit(1)

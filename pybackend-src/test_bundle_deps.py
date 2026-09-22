@@ -24,6 +24,12 @@ REQUIRED = [
     ("numpy", "art reference + generated-image processing"),
     ("pandas", "the Level Builder's conf_fill_ex.py (Chapter Update step 2)"),
     ("rapidocr_onnxruntime", "text_detect.py - baked-in text in generated art"),
+    # pywin32 also needs three ._pth lines added by build-pybackend.ps1, because
+    # the embeddable interpreter never runs site.py and so never processes
+    # pywin32's own .pth. Importing win32com checks the wiring, not just the
+    # files: a bundle with the package present and the ._pth lines missing fails
+    # here exactly as it would on the Merge to Trunk tab.
+    ("win32com", "Merge to Trunk (xlsx_merge.py) writes trunk workbooks via Excel COM"),
 ]
 
 def main():

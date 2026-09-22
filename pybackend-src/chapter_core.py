@@ -2159,6 +2159,139 @@ def check_level_conflicts(cfg, log):
             log(f"  ⚠  Could not pre-check {name}: {e}", "WARN")
 
 
+def check_source_pool(cfg, log, conf_data):
+    """Predict conf_complex_gen's ERRCODE=6/7 before anything has been written.
+
+    Magic Builder builds a chapter by drawing 200 existing levels out of a pool
+    and re-skinning them, and it draws to a fixed difficulty distribution
+    (hard_num_list against hard_ratio_group). Two things make that pool shrink
+    every single chapter:
+
+      * layout_diff gains the previous chapter's 200 ids each run - and it
+        excludes by LAYOUT, not by id, so every level sharing a layout with a
+        level in that range leaves the pool with it;
+      * from_levels only grows when a person adds to it by hand.
+
+    So the pool is a burn-down. It ran to zero in three difficulty bands on
+    chapter 87, after the ten-minute step had already rewritten
+    CondFilterConf.json - the generator's own message is
+    "ERRCODE=7, The number of levels that meet the conditions is insufficient",
+    which says nothing about which bands, by how much, or what to change.
+
+    This is deliberately a prediction, not a guess: it repeats the exact filter
+    conf_complex_gen.read_layout_conf applies, against the same workbook, with
+    layout_diff as this run is about to leave it. Every number below is counted,
+    so if it disagrees with reality the numbers say where.
+
+    It cannot over-report. play_mode is ignored here because play_mode_stat is
+    all-zero in practice ("any playstyle"), and a real play-mode filter would
+    only narrow the pool further - so a shortfall reported here is a floor.
+    """
+    need = conf_data.get("hard_num_list") or []
+    groups = conf_data.get("hard_ratio_group") or []
+    target = conf_data.get("target_level_count") or 0
+    if not need or len(need) != len(groups):
+        log("  ⚠  hard_num_list/hard_ratio_group missing or mismatched - "
+            "skipping the source-pool check", "WARN")
+        return
+
+    layout_path = Path(cfg.design()) / "pve_layout.xlsx"
+    if not layout_path.exists():
+        log(f"  ⚠  pve_layout.xlsx not found in {cfg.design()} - skipping the "
+            f"source-pool check", "WARN")
+        return
+
+    def expand(mix):
+        out = []
+        for it in mix or []:
+            if isinstance(it, list) and len(it) == 2:
+                out += list(range(it[0], it[1] + 1))
+            elif isinstance(it, int):
+                out.append(it)
+        return out
+
+    # layout_diff as it will be AFTER this run's append, because that is what
+    # the generator will read a moment later.
+    old_range = [cfg.old_ch * 1000 + 1, cfg.old_ch * 1000 + 200]
+    diff_src = list(conf_data.get("layout_diff") or [])
+    if old_range not in diff_src:
+        diff_src.append(old_range)
+
+    try:
+        import openpyxl as _oxl
+        wb = _oxl.load_workbook(str(layout_path), read_only=True, data_only=True)
+        if "layout" not in wb.sheetnames:
+            wb.close()
+            log("  ⚠  pve_layout.xlsx has no 'layout' sheet - skipping the "
+                "source-pool check", "WARN")
+            return
+        rows = [(r[0], r[2], r[3]) for r in wb["layout"].values][1:]
+        wb.close()
+    except Exception as e:
+        log(f"  ⚠  Could not read pve_layout.xlsx for the source-pool check: {e}",
+            "WARN")
+        return
+
+    from_levels = set(expand(conf_data.get("from_levels")))
+    diff_levels = set(expand(diff_src))
+    excluded_layouts = {lay for lid, lay, _ in rows if lid in diff_levels}
+    pool = [(lid, hr) for lid, lay, hr in rows
+            if lid in from_levels and lay not in excluded_layouts]
+
+    chapters_diffed = len({d[0] // 1000 for d in diff_src if isinstance(d, list)})
+    log(f"  Source pool: {len(pool)} of {len(from_levels)} from_levels survive "
+        f"layout_diff ({chapters_diffed} chapters excluded)")
+
+    shortfalls = []
+    for (lo, hi), want in zip(groups, need):
+        have = sum(1 for _, hr in pool
+                   if isinstance(hr, (int, float)) and lo <= hr < hi)
+        if have < want:
+            shortfalls.append((lo, hi, want, have))
+
+    if not shortfalls and len(pool) >= target:
+        log("  ✓ Every difficulty band has enough source levels")
+        return
+
+    lines = [f"Magic Builder cannot build chapter {cfg.disp_new}: the source "
+             f"pool no longer holds enough levels.", ""]
+    if len(pool) < target:
+        lines += [f"Only {len(pool)} levels survive the layout_diff filter, and "
+                  f"{target} are needed at minimum (the generator raises "
+                  f"ERRCODE=6 here).", ""]
+    if shortfalls:
+        total = sum(w - h for _, _, w, h in shortfalls)
+        lines.append(f"Short in {len(shortfalls)} difficulty band(s), "
+                     f"{total} level(s) in total (ERRCODE=7):")
+        lines.append("")
+        for lo, hi, want, have in shortfalls:
+            band = f"[{lo}, {hi})"
+            lines.append(f"    {band:<14} needs {want:>3}, has {have:>3}"
+                         f"   short {want - have}")
+        lines.append("")
+    lines += [
+        "Nothing has been changed - CondFilterConf.json has not been written "
+        "and no design file has been touched, so there is nothing to revert.",
+        "",
+        f"This is the pool running out, not a fault: layout_diff now excludes "
+        f"{chapters_diffed} chapters' worth of layouts, and it grows by one "
+        f"chapter every time a chapter is built. from_levels only grows when "
+        f"someone adds to it. Three levers, all in CondFilterConf.json at:",
+        f"  {cfg.lvl_py / 'CondFilterConf.json'}",
+        "",
+        "  1. Add source chapters to from_levels. This is the real fix - the "
+        "pool needs refilling, and it is the only lever that does not cost "
+        "something elsewhere.",
+        "  2. Drop the oldest ranges from layout_diff, if reusing a layout from "
+        "that long ago is acceptable. That is a level-design call, not a "
+        "technical one.",
+        "  3. Change hard_num_list to a distribution the pool can actually "
+        "serve. This changes the chapter's difficulty curve, so it is the last "
+        "resort rather than the easiest edit.",
+    ]
+    raise RuntimeError("\n".join(lines))
+
+
 def run_step1_magic_builder(cfg: AppConfig, log):
     """Update CondFilterConf.json and run conf_fill_ex.py directly."""
     conf_path = cfg.lvl_py / "CondFilterConf.json"
@@ -2170,6 +2303,11 @@ def run_step1_magic_builder(cfg: AppConfig, log):
     log(f"Loading {conf_path.name}…")
     raw = conf_path.read_text("utf-8")
     data = json.loads(raw)
+
+    # Before the write, not after: the generator only discovers an exhausted
+    # pool once it has failed, by which point this function has already
+    # rewritten CondFilterConf.json and the operator is told to svn revert.
+    check_source_pool(cfg, log, data)
 
     # Add old chapter range to layout_diff (exclude from source pool)
     old_range = [cfg.old_ch * 1000 + 1, cfg.old_ch * 1000 + 200]

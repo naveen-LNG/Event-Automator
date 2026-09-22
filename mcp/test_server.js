@@ -12,6 +12,7 @@
 'use strict';
 const { spawn } = require('child_process');
 const path = require('path');
+const fs = require('fs');
 
 let fails = 0;
 function ok(cond, msg, detail) {
@@ -118,6 +119,36 @@ async function main() {
     { name: 'read_one_pager', arguments: { event_type: 'Blocks', name: '../../../../etc/passwd' } });
   ok(bad.isError === true && /outside/.test(bad.content[0].text),
      'a traversing path is refused rather than read', bad.content[0].text.slice(0, 120));
+
+  // ---- a big save must not blow the response ------------------------------
+  // save_translations used to echo every row back, so the response grew with
+  // the input until it exceeded execFile's stdout buffer at exactly 32MiB.
+  // Worse, that failure landed AFTER the .tsv/.md were written: a 40,000-row
+  // call left 57MB in the shared folder while telling the caller it failed.
+  // The echo is capped now; this pins that so it cannot creep back.
+  const LANGS = ['DE', 'ES', 'NL', 'SV', 'FR', 'DA'];
+  const many = Array.from({ length: 600 }, (_, i) => {
+    const row = { en: `MCP selftest row ${i}` };
+    for (const l of LANGS) row[l] = `MCP selftest ${l} ${i}`;
+    return row;
+  });
+  const big = await rpc(child, pending, 'tools/call', {
+    name: 'save_translations',
+    arguments: { rows: many, ref_name: 'ZZ_MCP_SELFTEST_echo_cap' },
+  });
+  const bigSc = big.structuredContent || {};
+  ok(!big.isError, 'a 600-row save succeeds', (big.content[0] || {}).text);
+  ok(bigSc.rows_total === 600, 'it reports all 600 rows filed', bigSc.rows_total);
+  ok((bigSc.rows || []).length <= 500,
+     `the response echoes at most 500 rows (got ${(bigSc.rows || []).length})`);
+  ok(bigSc.rows_truncated === true, 'and says so rather than looking complete');
+  // Leave nothing in the shared folder.
+  for (const key of ['tsv_path', 'md_path']) {
+    if (bigSc[key]) {
+      try { fs.unlinkSync(bigSc[key]); }
+      catch (e) { console.error('WARN could not remove ' + bigSc[key] + ': ' + e.message); }
+    }
+  }
 
   child.kill();
   console.log('');

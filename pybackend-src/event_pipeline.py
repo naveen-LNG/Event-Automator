@@ -5841,9 +5841,17 @@ def update_sys_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
 # for the upcoming 答题挑战 cycle using freshly-authored question data supplied as JSON.
 
 def get_quiz_prefix_from_mini_mgr(proj_root):
-    """Reads mini_mgr.xlsx's 活动数据 sheet and finds the upcoming (控制开关=True)
-    答题挑战 cycle's start date, returning an ID prefix like 'QUIZ260827'.
-    Returns None if no such row is found."""
+    """Reads mini_mgr.xlsx's 活动数据 sheet and picks the 答题挑战 cycle to key the
+    quiz content on, returning an ID prefix like 'QUIZ260827'.
+
+    Preference order (dated rows only — the dateless template row never counts):
+      1. a row that is switched on (控制开关=True): the next one on/after today,
+         else the most recent one;
+      2. otherwise the nearest upcoming row that is still switched off — the
+         next cycle is normally scheduled before it is enabled, and refreshing
+         its quiz content ahead of time is exactly the point of this step;
+      3. otherwise None, with a message that says what to do about it.
+    Returns None if no usable row is found."""
     import openpyxl
     from datetime import datetime, date
 
@@ -5859,22 +5867,46 @@ def get_quiz_prefix_from_mini_mgr(proj_root):
         return None
     ws = wb["活动数据"]
 
-    for r in range(1, ws.max_row + 1):
-        event_type = ws.cell(r, 6).value  # type: ignore
-        enabled = ws.cell(r, 2).value  # type: ignore
-        start_time = ws.cell(r, 3).value  # type: ignore
-        if event_type != "答题挑战" or enabled is not True or start_time is None:
-            continue
-        if isinstance(start_time, (datetime, date)):
-            dt = start_time
-        else:
-            dt = datetime.strptime(str(start_time).split(" ")[0], "%Y-%m-%d")
-        prefix = f"QUIZ{dt.strftime('%y%m%d')}"
-        log(f"mini_mgr.xlsx: current 答题挑战 cycle starts {dt.strftime('%Y-%m-%d')} -> prefix {prefix}")
-        return prefix
+    def as_date(v):
+        if isinstance(v, datetime):
+            return v.date()
+        if isinstance(v, date):
+            return v
+        return datetime.strptime(str(v).split(" ")[0], "%Y-%m-%d").date()
 
-    log("Error: no enabled (控制开关=True) 答题挑战 row with a start date found in mini_mgr.xlsx")
-    return None
+    dated = []  # (start_date, enabled, row)
+    for r in range(1, ws.max_row + 1):
+        if ws.cell(r, 6).value != "答题挑战" or ws.cell(r, 3).value is None:  # type: ignore
+            continue
+        try:
+            dated.append((as_date(ws.cell(r, 3).value), ws.cell(r, 2).value is True, r))  # type: ignore
+        except ValueError:
+            log(f"Warning: mini_mgr.xlsx row {r}: unreadable 答题挑战 start date {ws.cell(r, 3).value!r}, skipped")  # type: ignore
+
+    if not dated:
+        log("Error: mini_mgr.xlsx has no dated 答题挑战 rows at all — add the next minigame set (Minigame Configs tab) first")
+        return None
+
+    today = date.today()
+    enabled = [d for d in dated if d[1]]
+    if enabled:
+        upcoming = [d for d in enabled if d[0] >= today]
+        chosen = min(upcoming) if upcoming else max(enabled)
+        note = "current"
+    else:
+        upcoming = [d for d in dated if d[0] >= today]
+        if not upcoming:
+            latest = max(dated)[0].strftime("%Y-%m-%d")
+            log(f"Error: no upcoming 答题挑战 cycle scheduled in mini_mgr.xlsx — the latest is {latest} (already over, switched off). "
+                f"Add the next minigame set (Minigame Configs tab) first, then run this again")
+            return None
+        chosen = min(upcoming)
+        note = "upcoming, still switched off (控制开关=False)"
+
+    dt, _, row = chosen
+    prefix = f"QUIZ{dt.strftime('%y%m%d')}"
+    log(f"mini_mgr.xlsx: {note} 答题挑战 cycle starts {dt.strftime('%Y-%m-%d')} (row {row}) -> prefix {prefix}")
+    return prefix
 
 
 # Column 9 of localization_quiz.xlsx's Quiz / Quiz_备份 sheets was always unused

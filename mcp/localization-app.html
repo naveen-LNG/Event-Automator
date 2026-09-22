@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Localization</title>
+<!--
+  The Localization panel, rendered inside the host conversation as an MCP App.
+
+  WHY THIS EXISTS as well as the Electron panel: the Electron panel calls a
+  provider API directly, so it needs an Anthropic key. Here the HOST is the
+  model, so a designer translates on their claude.ai subscription with no key
+  at all. Same memory, same rules, same table - different window.
+
+  The loop, and the one thing worth understanding about it:
+
+    1. tools/call localization_brief   -> the memory answers what it can
+                                          (approved text, already-shipped text).
+                                          No model involved in this step.
+    2. ui/message                      -> asks the HOST MODEL to translate only
+                                          what memory could not, then call
+                                          save_translations. This is the step
+                                          that needs no API key.
+    3. ui/notifications/tool-result    -> save_translations declares this same
+                                          ui:// template, so the host re-renders
+                                          the finished table back into here.
+
+  Zero dependencies and no external origins, matching the rest of this
+  codebase - the postMessage JSON-RPC dialect is about 30 lines by hand, and
+  loading a framework would mean declaring CSP domains for it.
+-->
+<style>
+  :root {
+    --void:#0b0e17; --card:rgba(24,30,52,.6); --line:rgba(138,163,255,.18);
+    --line-hot:rgba(150,180,255,.34); --fg:#eaf0ff; --fg-muted:#9fabd0;
+    --fg-faint:#6a7699; --accent:#5b8cff; --good:#3ddc97; --warn:#ffc857;
+    --bad:#ff6b81;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  * { box-sizing:border-box; }
+  body {
+    margin:0; padding:14px; background:var(--void); color:var(--fg);
+    font:13px/1.5 "Segoe UI",system-ui,-apple-system,sans-serif;
+  }
+  h1 { font-size:14px; margin:0 0 2px; letter-spacing:.02em; }
+  .sub { color:var(--fg-muted); font-size:11.5px; margin:0 0 12px; }
+  .card {
+    background:var(--card); border:1px solid var(--line); border-radius:12px;
+    padding:12px; margin-bottom:12px;
+  }
+  label.field { display:block; font-size:10.5px; letter-spacing:.06em;
+    text-transform:uppercase; color:var(--fg-muted); margin-bottom:5px; }
+  textarea {
+    width:100%; min-height:120px; resize:vertical; padding:9px 11px;
+    border-radius:8px; background:rgba(4,7,18,.7); border:1px solid var(--line);
+    color:var(--fg); font-family:var(--mono); font-size:12px; line-height:1.5;
+  }
+  textarea:focus { outline:none; border-color:var(--accent); }
+  .langs { display:flex; flex-wrap:wrap; gap:6px; margin:10px 0; }
+  .chip {
+    display:inline-flex; align-items:center; gap:5px; padding:4px 9px;
+    border:1px solid var(--line); border-radius:7px; background:rgba(4,7,18,.5);
+    font-family:var(--mono); font-size:11px; color:var(--fg-muted); cursor:pointer;
+  }
+  .chip:has(input:checked) { border-color:var(--line-hot); color:var(--fg); }
+  .row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .grow { margin-right:auto; }
+  button {
+    padding:7px 14px; border-radius:8px; border:1px solid var(--line-hot);
+    background:linear-gradient(180deg,#3f6ae0,#2f51ba); color:#fff;
+    font-size:12px; font-weight:600; cursor:pointer;
+  }
+  button.ghost { background:rgba(4,7,18,.5); color:var(--fg-muted); }
+  button:disabled { opacity:.5; cursor:default; }
+  .note { font-family:var(--mono); font-size:10.5px; color:var(--fg-faint); }
+  .banner {
+    border:1px solid rgba(255,107,129,.45); border-left:3px solid var(--bad);
+    background:rgba(255,107,129,.08); border-radius:8px; padding:9px 11px;
+    margin-bottom:10px; font-size:12px;
+  }
+  .wrap { overflow-x:auto; }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  th {
+    text-align:left; padding:6px 8px; border-bottom:1px solid var(--line-hot);
+    font-family:var(--mono); font-size:10.5px; color:var(--fg-muted);
+    white-space:nowrap;
+  }
+  td { padding:7px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  td.en { min-width:170px; max-width:300px; }
+  td.t { min-width:140px; max-width:280px; }
+  .src {
+    display:inline-block; margin-top:3px; padding:1px 5px; border-radius:4px;
+    font-family:var(--mono); font-size:9px; letter-spacing:.04em;
+    text-transform:uppercase;
+  }
+  .src-approved  { background:rgba(61,220,151,.16); color:var(--good); }
+  .src-memory    { background:rgba(91,140,255,.16); color:#9db6ff; }
+  .src-generated { background:rgba(255,200,87,.14); color:var(--warn); }
+  .src-failed    { background:rgba(255,107,129,.16); color:var(--bad); }
+  .warn {
+    margin-top:3px; font-size:10.5px; color:var(--warn);
+    border-left:2px solid var(--warn); padding-left:5px;
+  }
+</style>
+</head>
+<body>
+<h1>English to six languages</h1>
+<p class="sub">Approved and already-shipped text is reused verbatim. Only genuinely
+new strings are translated, and typography is applied by rule afterwards.</p>
+
+<div class="card">
+  <label class="field" for="input">English — one string per line</label>
+  <textarea id="input" spellcheck="false"
+    placeholder="Chocolates&#10;The Chocolate Factory Needs You!"></textarea>
+  <div class="langs" id="langs"></div>
+  <div class="row">
+    <span class="note grow" id="note">Connecting to the host…</span>
+    <button class="ghost" id="check">Check memory</button>
+    <button id="go">Translate</button>
+  </div>
+</div>
+
+<div id="out"></div>
+
+<script>
+'use strict';
+const LANGS = ['DE', 'ES', 'NL', 'SV', 'FR', 'DA'];
+const PROTOCOL = '2026-01-26';
+
+// ---- postMessage JSON-RPC, by hand ---------------------------------------
+let nextId = 1;
+const pending = new Map();
+
+function send(msg) { window.parent.postMessage(msg, '*'); }
+
+function request(method, params) {
+  const id = nextId++;
+  send({ jsonrpc: '2.0', id, method, params });
+  return new Promise((resolve, reject) => {
+    // A host that never answers must not hang the panel silently.
+    const timer = setTimeout(() => {
+      pending.delete(id);
+      reject(new Error(method + ' timed out'));
+    }, 120000);
+    pending.set(id, { resolve, reject, timer });
+  });
+}
+
+window.addEventListener('message', (event) => {
+  const msg = event.data;
+  if (!msg || msg.jsonrpc !== '2.0') return;
+
+  if (msg.id !== undefined && pending.has(msg.id)) {
+    const { resolve, reject, timer } = pending.get(msg.id);
+    pending.delete(msg.id);
+    clearTimeout(timer);
+    if (msg.error) reject(new Error(msg.error.message || 'host error'));
+    else resolve(msg.result);
+    return;
+  }
+
+  // save_translations declares this same template, so the host pushes its
+  // finished table in here as a tool result rather than only into the chat.
+  if (msg.method === 'ui/notifications/tool-result') {
+    const data = (msg.params || {}).structuredContent;
+    if (data && data.rows) render(data);
+    setBusy(false);
+  }
+  if (msg.method === 'ui/notifications/tool-input') {
+    const args = (msg.params || {}).arguments || {};
+    if (Array.isArray(args.strings) && args.strings.length) {
+      $('input').value = args.strings.join('\n');
+    }
+  }
+});
+
+// ---- helpers -------------------------------------------------------------
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? '' : s)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;');
+
+function picked() {
+  const on = LANGS.filter((l) => $('c' + l).checked);
+  return on.length ? on : LANGS;
+}
+
+function lines() {
+  return $('input').value.split('\n').map((s) => s.trim()).filter(Boolean);
+}
+
+function setBusy(busy, label) {
+  $('go').disabled = busy;
+  $('check').disabled = busy;
+  $('go').textContent = busy ? (label || 'Working…') : 'Translate';
+}
+
+function banner(text) {
+  $('out').innerHTML = '<div class="banner">' + esc(text) + '</div>';
+}
+
+// ---- rendering -----------------------------------------------------------
+function render(data) {
+  const langs = data.languages && data.languages.length ? data.languages : LANGS;
+  const counts = data.counts || {};
+  const summary = [
+    data.rows.length + ' string(s)',
+    (counts.approved || 0) + ' translator-approved',
+    (counts.memory || 0) + ' already shipped',
+    (counts.generated || 0) + ' newly translated',
+  ];
+  if (counts.failed) summary.push(counts.failed + ' not translated');
+
+  const head = ['<th>English</th>'].concat(langs.map((l) => '<th>' + l + '</th>')).join('');
+  const body = data.rows.map((row) => {
+    const cells = langs.map((l) => {
+      const cell = (row.targets || {})[l] || { text: '', source: 'failed', warnings: [] };
+      const warns = (cell.warnings || [])
+        .map((w) => '<div class="warn">' + esc(w) + '</div>').join('');
+      return '<td class="t"><div>' + (esc(cell.text) || '—') + '</div>'
+        + '<span class="src src-' + esc(cell.source) + '">' + esc(cell.source) + '</span>'
+        + warns + '</td>';
+    }).join('');
+    return '<tr><td class="en">' + esc(row.en) + '</td>' + cells + '</tr>';
+  }).join('');
+
+  $('out').innerHTML =
+    '<div class="card"><div class="note" style="margin-bottom:8px">'
+    + esc(summary.join('  ·  ')) + '</div>'
+    + '<div class="wrap"><table><thead><tr>' + head + '</tr></thead>'
+    + '<tbody>' + body + '</tbody></table></div>'
+    + (data.tsv_path ? '<div class="note" style="margin-top:8px">Filed: '
+        + esc(data.tsv_path) + '</div>' : '')
+    + '</div>';
+}
+
+// ---- the two actions -----------------------------------------------------
+async function callBrief() {
+  const strings = lines();
+  if (!strings.length) { banner('Paste at least one English string first.'); return null; }
+  const result = await request('tools/call', {
+    name: 'localization_brief',
+    arguments: { strings: strings, languages: picked() },
+  });
+  const data = (result || {}).structuredContent;
+  if (!data) throw new Error('The brief came back without structured data.');
+  return data;
+}
+
+$('check').addEventListener('click', async () => {
+  setBusy(true, 'Checking…');
+  try {
+    const data = await callBrief();
+    if (data) {
+      // Memory-only view: no model, so anything it cannot answer is left blank
+      // rather than guessed at.
+      render({ rows: data.rows, languages: data.languages, counts: data.counts });
+      $('note').textContent = data.counts.settled + ' of ' + data.rows.length
+        + ' fully answered by memory · ' + data.memory.approved_entries
+        + ' approved, ' + data.memory.shipped_entries + ' shipped';
+    }
+  } catch (e) {
+    banner(e.message);
+  }
+  setBusy(false);
+});
+
+$('go').addEventListener('click', async () => {
+  setBusy(true, 'Asking Claude…');
+  try {
+    const data = await callBrief();
+    if (!data) { setBusy(false); return; }
+
+    if (!data.counts.gaps) {
+      render({ rows: data.rows, languages: data.languages, counts: data.counts });
+      $('note').textContent = 'Every string was already in memory — nothing needed translating.';
+      setBusy(false);
+      return;
+    }
+
+    // The step that needs no API key: hand the work to the host's model.
+    // The brief is passed inline so the model does not have to re-fetch it,
+    // and save_translations is named explicitly because that tool is what
+    // applies the typography rules and files the result.
+    await request('ui/message', {
+      role: 'user',
+      content: {
+        type: 'text',
+        text: 'Translate the strings below into ' + picked().join(', ')
+          + ', then call save_translations with ref_name "'
+          + (new Date().toISOString().slice(0, 10)) + ' panel batch" and one row '
+          + 'per English string — including the already-settled ones, unchanged.\n\n'
+          + data.text,
+      },
+    });
+    $('note').textContent = 'Sent to Claude. The finished table will appear here.';
+    // Busy stays on until ui/notifications/tool-result arrives from
+    // save_translations, which is what actually ends this operation.
+  } catch (e) {
+    banner(e.message);
+    setBusy(false);
+  }
+});
+
+// ---- start ---------------------------------------------------------------
+$('langs').innerHTML = LANGS.map((l) =>
+  '<label class="chip"><input type="checkbox" id="c' + l + '" checked />'
+  + '<span>' + l + '</span></label>').join('');
+
+request('ui/initialize', {
+  capabilities: {},
+  clientInfo: { name: 'skipbo-localization', version: '1.0.0' },
+  protocolVersion: PROTOCOL,
+  appCapabilities: { availableDisplayModes: ['inline', 'fullscreen'] },
+}).then(() => {
+  $('note').textContent = 'Ready. "Check memory" answers with no model at all.';
+}).catch((e) => {
+  $('note').textContent = 'Host did not answer ui/initialize: ' + e.message;
+});
+</script>
+</body>
+</html>

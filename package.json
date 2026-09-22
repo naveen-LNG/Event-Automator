@@ -1,6 +1,6 @@
 {
   "name": "event-automation-desktop",
-  "version": "1.22.0",
+  "version": "1.23.0",
   "description": "Standalone desktop version of the SkipBo Event Automation Tool (no Unity Editor, no Python install required).",
   "main": "main.js",
   "author": "SkipBo Event Automation",
@@ -13,7 +13,7 @@
     "build:icon": "python scripts/make-icon.py",
     "check:drift": "powershell -ExecutionPolicy Bypass -File scripts/check-drift.ps1",
     "test": "node tests/onepager_test.js && node tests/ui_contract_test.js && node tests/sprint_ui_test.js && node mcp/test_server.js && npm run test:py",
-    "test:py": "pybackend_dist\\python\\python.exe pybackend_dist/python/test_bundle_deps.py && pybackend_dist\\python\\python.exe pybackend_dist/python/test_interpreter_resolve.py && pybackend_dist\\python\\python.exe pybackend_dist/python/test_chapter_core.py && pybackend_dist\\python\\python.exe pybackend_dist/python/test_doc_convert.py && pybackend_dist\\python\\python.exe pybackend_dist/python/test_prompt_images.py && pybackend_dist\\python\\python.exe pybackend_dist/python/test_artreq_template.py",
+    "test:py": "pybackend_dist\\python\\python.exe pybackend_dist/python/test_bundle_deps.py && pybackend_dist\\python\\python.exe pybackend_dist/python/test_interpreter_resolve.py && pybackend_dist\\python\\python.exe pybackend_dist/python/test_chapter_core.py && pybackend_dist\\python\\python.exe pybackend_dist/python/test_doc_convert.py && pybackend_dist\\python\\python.exe pybackend_dist/python/test_prompt_images.py && pybackend_dist\\python\\python.exe pybackend_dist/python/test_artreq_template.py && pybackend_dist\\python\\python.exe pybackend_dist/python/localization_translate.py --selfcheck && pybackend_dist\\python\\python.exe pybackend_dist/python/test_sprint_board.py",
     "dist": "npm run build:py && electron-builder",
     "mcp": "node mcp/server.js"
   },

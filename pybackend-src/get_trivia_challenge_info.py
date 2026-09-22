@@ -28,7 +28,9 @@ def main():
     prefix = ep.get_quiz_prefix_from_mini_mgr(proj_root)
     result["prefix"] = prefix
     if not prefix:
-        result["error"] = "Could not find an enabled 答题挑战 cycle with a start date in mini_mgr.xlsx"
+        result["error"] = ("No upcoming 答题挑战 cycle is scheduled in mini_mgr.xlsx (活动数据) for this branch/workspace — "
+                           "add the next minigame set on the Minigame Configs tab first, then refresh here. "
+                           "See the Pipeline Output for the latest cycle found.")
         print(json.dumps(result, ensure_ascii=False))
         sys.exit(1)
 

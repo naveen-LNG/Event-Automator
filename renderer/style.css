@@ -1624,3 +1624,584 @@ select.text-input option { background: #121834; color: var(--fg); }
   .artreq-section-fb-row { flex-direction: column; gap: 4px; }
   .artreq-section-fb-label { flex: none; padding-top: 0; }
 }
+
+/* ---------------- Localization panel ----------------
+   Six languages side by side, so the table is the layout and it has to be
+   allowed to scroll sideways on a narrow window rather than squeezing the
+   English column to nothing. */
+.loc-input { flex: 1 1 100%; min-height: 150px; resize: vertical; line-height: 1.5; }
+
+.loc-lang-picker { display: flex; flex-wrap: wrap; gap: 7px; }
+.loc-lang-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 10px; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--card-2); font-family: var(--font-mono); font-size: 11.5px;
+  color: var(--fg-muted); cursor: pointer; user-select: none;
+  transition: border-color var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.loc-lang-chip:hover { border-color: var(--line-hot); color: var(--fg); }
+.loc-lang-box { accent-color: var(--accent-1); cursor: pointer; }
+.loc-lang-chip:has(.loc-lang-box:checked) { border-color: var(--line-hot); color: var(--fg); }
+
+.loc-memory-note {
+  font-family: var(--font-mono); font-size: 11px; color: var(--fg-faint);
+  margin-right: auto;
+}
+.loc-summary {
+  font-family: var(--font-mono); font-size: 11.5px; color: var(--fg-muted);
+  margin-bottom: 10px;
+}
+.loc-actions { display: flex; gap: 8px; margin-bottom: 10px; }
+
+.loc-table-wrap { overflow-x: auto; }
+.loc-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.loc-table th {
+  text-align: left; padding: 7px 9px; border-bottom: 1px solid var(--line-hot);
+  color: var(--fg-muted); font-family: var(--font-mono); font-size: 11px;
+  font-weight: 600; white-space: nowrap;
+}
+.loc-table td { padding: 8px 9px; border-bottom: 1px solid var(--line); vertical-align: top; }
+/* pre-wrap, not normal: 162 cells in localization.xlsx carry a real line
+   break, and HTML would render those as a space. The value was already
+   correct - the table just showed a different string than it held. */
+.loc-en-cell {
+  color: var(--fg); min-width: 180px; max-width: 320px; white-space: pre-wrap;
+}
+.loc-cell { min-width: 150px; max-width: 300px; }
+.loc-cell-text { color: var(--fg); margin-bottom: 4px; white-space: pre-wrap; }
+
+/* Where the text came from. Reused text is the good outcome, so approved and
+   memory are the calm colours and "generated" is the one worth a second look. */
+.loc-src {
+  display: inline-block; padding: 1px 6px; border-radius: 4px;
+  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.04em;
+  text-transform: uppercase; cursor: default;
+}
+.loc-src-approved  { background: rgba(61, 220, 151, 0.16); color: var(--good); }
+.loc-src-memory    { background: rgba(79, 125, 255, 0.16);  color: #9db6ff; }
+.loc-src-generated { background: rgba(255, 200, 87, 0.14);  color: var(--warn); }
+.loc-src-failed    { background: rgba(255, 107, 129, 0.16); color: var(--bad); }
+
+.loc-warn {
+  margin-top: 4px; font-size: 11px; color: var(--warn);
+  border-left: 2px solid var(--warn); padding-left: 6px;
+}
+
+/* A batch-level failure gets one explanation, not one per cell. */
+.loc-banner {
+  display: flex; flex-direction: column; gap: 5px;
+  padding: 11px 14px; margin-bottom: 12px;
+  border: 1px solid rgba(255, 107, 129, 0.45);
+  border-left: 3px solid var(--bad);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 107, 129, 0.08);
+  font-size: 12px; color: var(--fg);
+}
+.loc-banner-reason {
+  font-family: var(--font-mono); font-size: 11px; color: var(--bad);
+}
+
+/* Waiting on Claude Desktop is a normal state, not a failure — same layout as
+   the error banner, calmer colour, and the trigger phrase shown as code. */
+.loc-banner-wait {
+  border-color: rgba(91, 140, 255, .45);
+  border-left-color: var(--accent-1);
+  background: rgba(79, 125, 255, .08);
+}
+.loc-banner-wait code {
+  font-family: var(--font-mono); font-size: 11px;
+  background: rgba(0, 0, 0, .3); padding: 1px 5px; border-radius: 4px;
+}
+
+/* Input rows: one string each, added and removed individually. The delete
+   button sits inside the row rather than in a toolbar, so it is unambiguous
+   which string it removes. */
+.loc-rows { display: flex; flex-direction: column; gap: 6px; flex: 1 1 100%; }
+.loc-row { display: flex; align-items: flex-start; gap: 6px; }
+/* A row is a textarea so one string can span lines. It grows to fit (see
+   locAutoGrow), so its own scrollbar and drag-handle would both be noise. */
+.loc-row-input {
+  flex: 1 1 auto; min-width: 0; resize: none; overflow: hidden;
+  line-height: 1.5; padding-top: 7px; padding-bottom: 7px;
+}
+.loc-row-del {
+  flex: 0 0 auto; margin-top: 4px; width: 28px; height: 28px; line-height: 1;
+  border-radius: var(--radius-sm); border: 1px solid var(--line);
+  background: rgba(4, 7, 18, 0.5); color: var(--fg-faint);
+  font-size: 16px; cursor: pointer;
+  transition: border-color var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.loc-row-del:hover { border-color: var(--bad); color: var(--bad); }
+.loc-rows-actions { display: flex; align-items: center; gap: 10px; flex: 1 1 auto; }
+.loc-rows-hint { font-size: 11px; color: var(--fg-faint); }
+
+/* A batch that finished unattended. Not an error — good news that arrived late. */
+.loc-recover {
+  border-color: rgba(61, 220, 151, .45);
+  border-left-color: var(--good);
+  background: rgba(61, 220, 151, .08);
+}
+.loc-wait-elapsed { font-family: var(--font-mono); font-size: 11px; color: var(--fg-faint); }
+
+/* ------------------------------------------------------ Merge to Trunk ---- */
+.chip-copper  { --hue-a: #e0864a; --hue-b: #f5b98a; --hue-glow: rgba(224,134,74,0.42); }
+[data-accent="copper"]  { --hue-a: #e0864a; --hue-b: #f5b98a; --hue-glow: rgba(224,134,74,0.42); }
+.xm-options { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 4px 0 10px; }
+.xm-check { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--fg-muted); cursor: pointer; }
+.xm-check input { accent-color: var(--hue-a, var(--accent-1)); }
+.xm-remap { width: 100%; min-height: 96px; resize: vertical; line-height: 1.5; }
+.xm-mode { font-size: 10px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; color: var(--hue-a, var(--accent-1)); margin-left: 8px; }
+.xm-filter { flex: 0 1 260px; }
+.xm-table-wrap { max-height: 320px; overflow: auto; margin-top: 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.xm-table { margin-top: 0; }
+.xm-table td { padding: 6px 10px; vertical-align: top; font-family: var(--font-mono); font-size: 11.5px; border-top: 1px solid var(--line); word-break: break-word; }
+.xm-kind { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 10px; font-weight: 700; letter-spacing: 0.06em; white-space: nowrap; background: rgba(255,255,255,0.06); color: var(--fg-muted); }
+.xm-pre { margin: 0; max-height: 420px; overflow: auto; font-family: var(--font-mono); font-size: 11.5px; line-height: 1.5; white-space: pre-wrap; color: var(--fg-muted); }
+.xm-hidden { display: none !important; }
+
+/* ############################################################################
+   THE TABLE - layout re-architecture + motion layer (appended; overrides the
+   rail layout above by cascade order, leaves every component rule intact).
+
+   - Nav is a HAND OF CARDS fanned along the bottom edge. The active card is
+     lifted and lit; a card name floats above it on hover/focus. The rank
+     pips (A K Q J 10 ... 2) the deck already carried are now literal.
+   - The branch/workspace HUD pins to the top of the scrolling area.
+   - Views lay out as a bento grid of dealt cards (two-up, heavy cards span).
+   - The pipeline checklist is a quest log with an XP progress bar (ui-fx.js).
+   - The console is a docked log drawer: a ticker at rest, expanded on hover,
+     when pinned (click its title), or while a step is running.
+   Motion curves follow Remotion guidance: expo-out for entrances
+   (cubic-bezier(.16,1,.3,1)), a small overshoot for emphasis
+   (cubic-bezier(.34,1.56,.64,1)), and staggered sequence offsets.
+   ######################################################################### */
+
+:root {
+  --ease-out: cubic-bezier(.16, 1, .3, 1);
+  --ease-pop: cubic-bezier(.34, 1.56, .64, 1);
+  --hand-h: 116px;            /* dock height incl. lift headroom */
+  --tile-w: 54px;
+  --tile-h: 64px;
+}
+
+/* ------------------------------------------------------------ app shell -- */
+.app-container { flex-direction: column; }
+.content-area { order: 1; padding: 14px 22px 0; }
+.sidebar-wrapper { order: 2; }
+
+/* =============================================================== HAND ==== */
+.sidebar-wrapper {
+  width: 100%; height: var(--hand-h); flex: 0 0 var(--hand-h);
+  padding: 30px 18px 10px;
+  z-index: 60; position: relative;
+}
+.sidebar-board {
+  height: auto; min-height: 76px;
+  flex-direction: row; align-items: flex-end; gap: 6px;
+  padding: 7px 14px 7px 12px;
+  border-radius: 18px;
+  overflow: visible;
+  background:
+    linear-gradient(180deg, rgba(34, 43, 82, 0.72), rgba(10, 14, 30, 0.9)),
+    var(--card);
+  box-shadow:
+    0 -14px 50px rgba(0,0,0,0.5),
+    0 20px 40px rgba(0,0,0,0.5),
+    inset 0 1px 0 rgba(255,255,255,0.1);
+}
+/* felt lip along the top edge of the tray */
+.sidebar-board::before {
+  content: "";
+  position: absolute; left: 14px; right: 14px; top: -1px; height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent-1), var(--accent-2), #22d3ee, transparent);
+  background-size: 300% 100%;
+  animation: seam-slide 12s linear infinite;
+  opacity: 0.7;
+}
+.sidebar-board::after {
+  right: 6px; bottom: -34px;
+  font-size: 118px;
+  color: rgba(255,255,255,0.03);
+}
+
+/* dealer chip */
+.brand { padding: 0 14px 0 2px; margin-right: 6px; gap: 10px; align-self: center; }
+.brand::after { display: none; }
+.brand-mark { width: 44px; height: 44px; border-radius: 50%; animation: chip-idle 6s ease-in-out infinite; }
+.brand-mark::after { border-radius: 50%; inset: 4px; border-style: dashed; animation: orb-spin 30s linear infinite; }
+.brand-title { font-size: 14px; }
+.brand-subtitle { font-size: 9px; }
+
+/* -------------------------------------------------------------- a card --- */
+.menu-btn {
+  width: var(--tile-w); height: var(--tile-h);
+  flex: 0 0 var(--tile-w);
+  flex-direction: column; justify-content: center; gap: 0;
+  padding: 0; margin: 0;
+  border-radius: 11px;
+  border: 1px solid rgba(255,255,255,0.09);
+  background: linear-gradient(170deg, rgba(255,255,255,0.075), rgba(255,255,255,0.025));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 3px 10px rgba(0,0,0,0.35);
+  transition:
+    transform 320ms var(--ease-pop),
+    background var(--dur) var(--ease),
+    border-color var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease);
+  transform-origin: 50% 100%;
+}
+.menu-btn::after {
+  right: 6px; top: auto; bottom: 4px; transform: none;
+  font-size: 8.5px; opacity: 0.55;
+}
+.menu-btn:hover {
+  transform: translateY(-10px);
+  background: linear-gradient(170deg, var(--hue-glow, var(--accent-glow)), rgba(255,255,255,0.03) 70%);
+  border-color: var(--hue-a, var(--accent-1));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.14), 0 14px 28px rgba(0,0,0,0.5), 0 0 22px var(--hue-glow, var(--accent-glow));
+}
+.menu-btn:active { transform: translateY(-6px) scale(0.97); }
+
+.icon-chip { width: 30px; height: 30px; border-radius: 8px; }
+.icon-chip svg { width: 16px; height: 16px; }
+
+/* floating name tag */
+.btn-text {
+  position: absolute; left: 50%; bottom: calc(100% + 12px);
+  transform: translate(-50%, 8px) scale(0.92);
+  flex: none; padding: 5px 10px;
+  border-radius: 8px;
+  background: rgba(8, 11, 24, 0.94);
+  border: 1px solid var(--hue-a, var(--accent-1));
+  box-shadow: 0 10px 26px rgba(0,0,0,0.55), 0 0 16px var(--hue-glow, var(--accent-glow));
+  font-size: 11.5px; font-weight: 700; letter-spacing: 0.02em;
+  color: var(--fg);
+  white-space: nowrap; overflow: visible;
+  opacity: 0; pointer-events: none;
+  transition: opacity 160ms var(--ease), transform 260ms var(--ease-pop);
+}
+.btn-text::after {          /* tag tail */
+  content: ""; position: absolute; left: 50%; top: 100%;
+  width: 8px; height: 8px; margin-left: -4px; margin-top: -4px;
+  background: inherit; border-right: 1px solid var(--hue-a, var(--accent-1)); border-bottom: 1px solid var(--hue-a, var(--accent-1));
+  transform: rotate(45deg);
+}
+.menu-btn:hover .btn-text, .menu-btn:focus-visible .btn-text, .active-btn .btn-text {
+  opacity: 1; transform: translate(-50%, 0) scale(1);
+}
+
+/* the lifted, lit card */
+.active-btn, .active-btn:hover {
+  transform: translateY(-16px);
+  background: linear-gradient(170deg, var(--hue-b, var(--accent-2)), var(--hue-a, var(--accent-1)));
+  border-color: rgba(255,255,255,0.55);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.55),
+    0 18px 34px rgba(0,0,0,0.55),
+    0 0 28px var(--hue-glow, var(--accent-glow));
+  animation: card-breathe 3.2s ease-in-out infinite;
+}
+.active-btn::before {           /* spotlight on the felt beneath the card */
+  left: 50%; top: auto; bottom: -14px; width: 70px; height: 14px;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: radial-gradient(50% 100% at 50% 100%, var(--hue-glow, var(--accent-glow)), transparent 70%);
+  box-shadow: none; filter: blur(3px);
+}
+.active-btn::after { color: #0a0e1c; opacity: 0.85; }
+.active-btn .icon-chip, .active-btn:hover .icon-chip {
+  background: rgba(10,14,28,0.22); border-color: rgba(255,255,255,0.4);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.3);
+}
+.active-btn .icon-chip svg { color: #fff; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.4)); }
+.menu-btn-primary .icon-chip { box-shadow: none; }
+
+/* ------------------------------------------------------- the deck group -- */
+.nav-group { flex-direction: row; align-items: flex-end; gap: 6px; margin: 0 2px; }
+.nav-group-header {
+  width: 30px; height: var(--tile-h); flex: 0 0 30px;
+  flex-direction: column; justify-content: space-between; align-items: center;
+  padding: 6px 0 5px;
+  border-radius: 9px;
+  border: 1px dashed var(--line-hot);
+  background: rgba(255,255,255,0.03);
+  transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.nav-group-header:hover { border-color: var(--accent-2); background: rgba(157,107,255,0.1); }
+.nav-group-rule { display: none; }
+.nav-group-label {
+  writing-mode: vertical-rl; transform: rotate(180deg);
+  font-size: 7.5px; letter-spacing: 0.16em;
+  order: 2;
+}
+.nav-group-count { order: 1; padding: 0 5px; font-size: 8.5px; }
+.nav-group-chevron { order: 3; margin: 0; width: 11px; height: 11px; transform: rotate(90deg); }
+.nav-group.collapsed .nav-group-chevron { transform: rotate(-90deg); }
+
+.nav-group-items {
+  flex-direction: row; align-items: flex-end; gap: 6px;
+  max-height: none; max-width: 900px; opacity: 1;
+  overflow: visible;
+  clip-path: inset(-80px -6px -30px -6px);
+  transition: max-width var(--dur-slow) var(--ease), opacity var(--dur) var(--ease), clip-path var(--dur-slow) var(--ease);
+}
+.nav-group.collapsed .nav-group-items {
+  max-height: none; max-width: 0; opacity: 0;
+  clip-path: inset(-80px 100% -30px 0);
+  pointer-events: none;
+}
+.nav-group-items::before { display: none; }
+.nav-group-items .menu-btn { margin-left: 0; }
+
+.sidebar-spacer { flex: 1 1 10px; min-height: 0; }
+.profile-btn { margin: 0; }
+.profile-btn .profile-avatar { width: 30px; height: 30px; font-size: 11px; }
+.profile-btn .btn-text { font-weight: 700; }
+
+/* ============================================================ HUD pin ==== */
+.context-bar { position: sticky; top: 0; z-index: 8; margin-bottom: 14px; }
+
+/* ============================================================ BENTO ====== */
+/* .view receives display:flex inline from app.js; only the flow changes. */
+.view {
+  flex-direction: row; flex-wrap: wrap; align-content: flex-start; align-items: stretch;
+  gap: 16px;
+  padding-bottom: 8px;
+}
+.view > .header-section,
+.view > #sprint-detail, .view > #ideation-results, .view > #artreq-results,
+.view > #loc-results, .view > #ideation-lessons-panel, .view > .presence-bar { flex: 1 1 100%; margin-bottom: 0; }
+.view > .stacked-card {
+  flex: 1 1 calc(50% - 8px); min-width: 420px;
+  margin-bottom: 0;
+  display: flex; flex-direction: column;
+}
+.view > .stacked-card > .execution-footer:last-child { margin-top: auto; padding-top: 16px; }
+/* Cards that carry a table, an editor or a long list take the full row. */
+.view > .stacked-card:has(.mg-preview-table),
+.view > .stacked-card:has(.xm-table-wrap),
+.view > .stacked-card:has(.xm-remap),
+.view > .stacked-card:has(.loc-rows),
+.view > .stacked-card:has(#chapter-steps),
+.view > .stacked-card:has(.onepager-list),
+.view > .stacked-card:has(#branch-paths-container),
+.view > .stacked-card:has(#team-roster) { flex-basis: 100%; }
+.placeholder-outer { align-content: center; }
+.placeholder-outer .huge-blue-board { flex: 0 1 520px; }
+
+/* Quest log: a scrolling column so it can sit beside Configuration. */
+.checklist-container { max-height: 520px; overflow-y: auto; padding-right: 4px; }
+
+/* ---------------------------------------------------------- quest bar ---- */
+.quest-progress { margin: -6px 0 14px; }
+.quest-progress-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  margin-bottom: 7px;
+}
+.quest-progress-label {
+  font-size: 9px; font-weight: 800; letter-spacing: 0.18em; text-transform: uppercase;
+  color: var(--fg-faint);
+}
+.quest-progress-count {
+  font-family: var(--font-mono); font-size: 12px; font-weight: 700;
+  font-variant-numeric: tabular-nums; color: var(--hue-b, var(--accent-2));
+}
+.quest-progress-track {
+  position: relative; height: 10px; border-radius: 999px;
+  background: rgba(4,7,18,0.7);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.quest-progress-fill {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 0;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--hue-a, var(--accent-1)), var(--hue-b, var(--accent-2)));
+  box-shadow: 0 0 14px var(--hue-glow, var(--accent-glow));
+  transition: width 700ms var(--ease-out), background var(--dur) var(--ease);
+}
+.quest-progress-fill::after {          /* travelling sheen */
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.45) 50%, transparent 100%);
+  background-size: 40% 100%; background-repeat: no-repeat;
+  animation: sheen 2.2s var(--ease) infinite;
+}
+.quest-progress-ticks i {
+  position: absolute; top: 0; bottom: 0; width: 1px;
+  background: rgba(4,7,18,0.75);
+}
+.quest-progress[data-state="running"] .quest-progress-fill { animation: quest-pulse 1.2s ease-in-out infinite; }
+.quest-progress[data-state="error"] .quest-progress-fill { background: linear-gradient(90deg, var(--bad), #ffb0bc); box-shadow: 0 0 14px var(--bad-glow); }
+.quest-progress[data-state="complete"] .quest-progress-fill { background: linear-gradient(90deg, var(--good), #a6ffd9); box-shadow: 0 0 18px var(--good-glow); }
+.quest-progress[data-state="complete"] .quest-progress-count { color: var(--good); }
+
+/* ====================================================== log drawer ======= */
+.console-section {
+  position: sticky; bottom: 26px; z-index: 7;
+  margin-top: auto; margin-bottom: 0;
+  padding: 12px 18px 12px;
+  transition: box-shadow var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+.console-title { margin-bottom: 8px; cursor: pointer; user-select: none; }
+.console-title::after {
+  content: "hover / click to pin";
+  margin-left: auto;
+  font-size: 8.5px; letter-spacing: 0.14em; font-weight: 700;
+  color: var(--fg-faint); opacity: 0.7;
+  transition: opacity var(--dur) var(--ease);
+}
+.console-section.console-pinned .console-title::after { content: "pinned"; color: var(--good); }
+.console-section.console-live .console-title::after { content: "live"; color: var(--warn); }
+.console-scroll-container {
+  height: 44px;
+  transition: height var(--dur-slow) var(--ease-out), box-shadow var(--dur) var(--ease);
+}
+.console-section:hover .console-scroll-container,
+.console-section:focus-within .console-scroll-container,
+.console-section.console-pinned .console-scroll-container,
+.console-section.console-live .console-scroll-container { height: 200px; }
+.console-section.console-live {
+  border-color: rgba(255,200,87,0.45);
+  box-shadow: 0 14px 38px rgba(0,0,0,0.38), 0 0 30px var(--warn-glow), inset 0 1px 0 rgba(255,255,255,0.06);
+}
+.console-section.console-live .console-title::before { background: var(--warn); box-shadow: 0 0 10px var(--warn-glow); animation-duration: 0.9s; }
+
+/* ====================================================== MOTION =========== */
+/* Deal-in: every direct child of a view enters when the view is shown.
+   Views flip from display:none, which restarts these animations each time. */
+.view > * { animation: deal-in 560ms var(--ease-out) both; }
+.view > :nth-child(1) { animation-delay: 0ms; }
+.view > :nth-child(2) { animation-delay: 70ms; }
+.view > :nth-child(3) { animation-delay: 140ms; }
+.view > :nth-child(4) { animation-delay: 210ms; }
+.view > :nth-child(5) { animation-delay: 280ms; }
+.view > :nth-child(6) { animation-delay: 350ms; }
+.view > :nth-child(7) { animation-delay: 420ms; }
+.view > :nth-child(n+8) { animation-delay: 480ms; }
+@keyframes deal-in {
+  from { opacity: 0; transform: translateY(22px) scale(0.985) rotateX(5deg); filter: blur(2px); }
+  to   { opacity: 1; transform: none; filter: none; }
+}
+
+/* Hero glyph floats. */
+.view-glyph { animation: glyph-float 7s ease-in-out infinite; }
+@keyframes glyph-float {
+  0%, 100% { transform: translateY(-50%) rotate(-6deg); }
+  50%      { transform: translateY(-58%) rotate(6deg); }
+}
+
+/* Arcade key shimmer. */
+.primary-btn { overflow: hidden; }
+.primary-btn::after {
+  content: ""; position: absolute; top: -40%; bottom: -40%; left: -60%; width: 40%;
+  background: linear-gradient(100deg, transparent, rgba(255,255,255,0.55), transparent);
+  transform: skewX(-18deg);
+  opacity: 0; pointer-events: none;
+}
+.primary-btn:hover::after { animation: key-shimmer 900ms var(--ease-out); }
+@keyframes key-shimmer { 0% { left: -60%; opacity: 0; } 15% { opacity: 1; } 100% { left: 130%; opacity: 0; } }
+
+/* Lamps: success pops, error shakes. */
+.status-success { animation: lamp-pop 520ms var(--ease-pop); }
+.status-error   { animation: lamp-shake 420ms var(--ease-out); }
+@keyframes lamp-pop   { 0% { transform: scale(0.5); } 60% { transform: scale(1.25); } 100% { transform: none; } }
+@keyframes lamp-shake { 0%, 100% { transform: none; } 25% { transform: translateX(-3px); } 75% { transform: translateX(3px); } }
+.checklist-item:has(.status-running) { border-color: rgba(255,200,87,0.45); background: rgba(255,200,87,0.06); }
+.checklist-item:has(.status-success) .checklist-item-text { color: var(--good); }
+
+/* Shared keyframes */
+@keyframes sheen        { 0% { background-position: -40% 0; } 100% { background-position: 140% 0; } }
+@keyframes quest-pulse  { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.35); } }
+@keyframes card-breathe { 0%, 100% { box-shadow: inset 0 1px 0 rgba(255,255,255,0.55), 0 18px 34px rgba(0,0,0,0.55), 0 0 22px var(--hue-glow, var(--accent-glow)); }
+                          50%      { box-shadow: inset 0 1px 0 rgba(255,255,255,0.55), 0 18px 34px rgba(0,0,0,0.55), 0 0 40px var(--hue-glow, var(--accent-glow)); } }
+@keyframes chip-idle    { 0%, 100% { transform: translateY(0) rotate(0); } 50% { transform: translateY(-3px) rotate(4deg); } }
+
+/* Drifting suits behind everything (layer injected by ui-fx.js). */
+.fx-suits { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
+.fx-suit {
+  position: absolute; bottom: -60px;
+  color: rgba(160, 180, 255, 0.10);
+  text-shadow: 0 0 18px rgba(120, 140, 255, 0.25);
+  animation-name: suit-rise; animation-timing-function: linear; animation-iteration-count: infinite;
+  will-change: transform, opacity;
+}
+.fx-suit:nth-child(2n)   { color: rgba(255, 120, 160, 0.09); }
+.fx-suit:nth-child(3n)   { color: rgba(80, 220, 240, 0.09); }
+@keyframes suit-rise {
+  0%   { transform: translate(0, 0) rotate(0deg); opacity: 0; }
+  10%  { opacity: 1; }
+  90%  { opacity: 0.7; }
+  100% { transform: translate(var(--fx-drift, 0px), -110vh) rotate(160deg); opacity: 0; }
+}
+
+/* ================================================== responsive (table) === */
+@media (max-width: 1240px) { .brand-text { display: none; } .brand { padding-right: 6px; } }
+@media (max-width: 1100px) {
+  :root { --tile-w: 46px; --tile-h: 58px; }
+  .menu-btn::after { display: none; }
+  .nav-group-header { width: 24px; flex-basis: 24px; }
+  .nav-group-label { display: none; }
+}
+@media (max-width: 1000px) {
+  /* keep every destination reachable on a narrow window - never hide the group */
+  .nav-group.collapsed .nav-group-items { max-width: 900px; opacity: 1; clip-path: none; pointer-events: auto; }
+  .nav-group-count { display: inline-block; }
+  .menu-btn { padding: 0; }
+  .sidebar-wrapper { padding-left: 10px; padding-right: 10px; }
+}
+@media (max-width: 900px) {
+  .view > .stacked-card { min-width: 100%; }
+  .sidebar-board { overflow-x: auto; overflow-y: visible; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .view > * { animation: none; }
+  .active-btn, .active-btn:hover, .menu-btn:hover { transform: none; animation: none; }
+  .fx-suits { display: none; }
+}
+
+/* ---- table fixups (from live review) ------------------------------------ */
+/* The drawer is sticky over the scroll area; give the view clearance so the
+   end of its content can always scroll above the collapsed ticker, and more
+   when the drawer is held open (pinned) or lit (a step is running). */
+.view { padding-bottom: 104px; }
+.content-area:has(.console-pinned) .view,
+.content-area:has(.console-live) .view { padding-bottom: 270px; }
+
+/* .mg-time is a flex item of a COLUMN label, so its old flex-basis set its
+   height, not its width. Size it explicitly. */
+.mg-time { flex: 0 0 auto; width: 190px; height: auto; }
+
+/* Group header: the name floats above as a tag (like the cards) instead of
+   running vertically inside a 64px tile, where it clipped. */
+.nav-group-header { position: relative; overflow: visible; justify-content: center; gap: 8px; }
+.nav-group-label {
+  position: absolute; left: 50%; bottom: calc(100% + 12px);
+  writing-mode: horizontal-tb; transform: translate(-50%, 8px) scale(0.92);
+  order: 0; padding: 5px 10px; border-radius: 8px;
+  background: rgba(8, 11, 24, 0.94);
+  border: 1px solid var(--line-hot);
+  box-shadow: 0 10px 26px rgba(0,0,0,0.55);
+  font-size: 11px; letter-spacing: 0.1em; color: var(--fg);
+  white-space: nowrap; opacity: 0; pointer-events: none;
+  transition: opacity 160ms var(--ease), transform 260ms var(--ease-pop);
+}
+.nav-group-header:hover .nav-group-label, .nav-group-header:focus-visible .nav-group-label {
+  opacity: 1; transform: translate(-50%, 0) scale(1);
+}
+.nav-group-count { order: 1; }
+.nav-group-chevron { order: 2; }
+@media (max-width: 1100px) { .nav-group-label { display: block; } }
+
+/* ---- table fixups, round 2 ---------------------------------------------- */
+/* Drawer sits flush on the hand: no see-through gutter beneath it. */
+.console-section { bottom: 0; padding: 10px 18px 10px; }
+.console-title { margin-bottom: 6px; }
+/* A name tag is wider than its card; do not let the group clip it. */
+.nav-group-items { clip-path: inset(-80px -140px -40px -140px); }
+.nav-group.collapsed .nav-group-items { clip-path: inset(-80px 100% -40px 0); }
+/* Explainer cards are one-line disclosures: full row, natural height. */
+.view > details.stacked-card { flex-basis: 100%; align-self: flex-start; }
+/* Fit all 17 cards in the default 1300px window. */
+:root { --tile-w: 50px; }
+.sidebar-board { gap: 5px; }
+.nav-group, .nav-group-items { gap: 5px; }
+@media (max-width: 1360px) { .brand-text { display: none; } .brand { padding-right: 4px; margin-right: 2px; } }

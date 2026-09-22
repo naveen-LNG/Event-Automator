@@ -1,0 +1,21 @@
+{
+  "manifest_version": "0.3",
+  "name": "event-automator",
+  "display_name": "Event Automator",
+  "version": "1.0.0",
+  "description": "Skip-Bo event tooling: write Art Requirements from approved One-Pagers, and translate UI strings using the professional translator's own corrections.",
+  "long_description": "Exposes the Skip-Bo Event Automator's backend to Claude Desktop.\n\nArt Requirements: list and read the One-Pager briefs on file, then save a complete Art Requirement rendered into the production team's template. One save tool per event type, each carrying that type's own schema, so another event type's mechanics cannot be expressed.\n\nLocalization: an interactive panel (English in, six languages out) backed by a translation memory built from the third-party translator's delivered corrections. Text the translator has already approved, or that the game already ships, is reused verbatim; only genuinely new strings are translated, and per-language typography is applied by rule afterwards.",
+  "author": {
+    "name": "Liquidnitro Games"
+  },
+  "server": {
+    "type": "node",
+    "entry_point": "server.js",
+    "mcp_config": {
+      "command": "node",
+      "args": [
+        "${__dirname}/server.js"
+      ]
+    }
+  }
+}

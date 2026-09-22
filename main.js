@@ -580,6 +580,116 @@ ipcMain.handle('trivia:run', async (evt, { branchRoot, workspace }) => {
   });
 });
 
+// ---- IPC: Merge to Trunk (xlsx_merge) ----
+// Row-level 3-way merge of a sprint workspace's xlsx changes into trunk/WorkSpcae3.
+// The backend is the same xlsx_merge.py as tools/XlsxMerge; it streams progress
+// and leaves report.md / conflicts.csv / remap_suggest.csv / summary.json in a
+// per-run folder under the shared data dir (shared with the CLI so both see the
+// same state.json, i.e. the same "last merged revision").
+const XLSX_MERGE_DATA_DIR = path.join(process.env.LOCALAPPDATA || app.getPath('userData'), 'XlsxMerge');
+
+function workspaceRoot(branchRoot, workspace) {
+  return path.join(branchRoot, 'design', 'DesignData', workspace);
+}
+
+ipcMain.handle('xlsxmerge:defaults', () => {
+  const cfg = loadConfig();
+  const activeRoot = (cfg.branchPaths || {})[cfg.activeBranch] || '';
+  const trunkRoot = (cfg.branchPaths || {}).trunk || defaultBranchPath('trunk');
+  return {
+    branchWs: activeRoot ? workspaceRoot(activeRoot, cfg.activeWorkspace) : '',
+    trunkWs: workspaceRoot(trunkRoot, 'WorkSpcae3')
+  };
+});
+
+// Minimal RFC4180 reader for the CSVs the backend writes (utf-8-sig, CRLF,
+// quoted fields that may contain commas). Returns one object per row keyed
+// by the header line.
+function parseCsv(text) {
+  text = (text || '').replace(/^﻿/, '');
+  if (!text.trim()) return [];
+  const rows = []; let row = [], field = '', quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (quoted) {
+      if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else quoted = false; }
+      else field += c;
+    } else if (c === '"') quoted = true;
+    else if (c === ',') { row.push(field); field = ''; }
+    else if (c === '\n' || c === '\r') {
+      if (c === '\r' && text[i + 1] === '\n') i++;
+      row.push(field); rows.push(row); row = []; field = '';
+    } else field += c;
+  }
+  if (field !== '' || row.length) { row.push(field); rows.push(row); }
+  const [hdr, ...body] = rows;
+  if (!hdr) return [];
+  return body.filter(r => r.length > 1 || r[0]).map(r => Object.fromEntries(hdr.map((h, i) => [h, r[i] ?? ''])));
+}
+
+ipcMain.handle('xlsxmerge:run', async (evt, p) => {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const ts = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+  const outDir = path.join(XLSX_MERGE_DATA_DIR, 'out', ts);
+  fs.mkdirSync(outDir, { recursive: true });
+
+  const args = ['--branch-ws', p.branchWs, '--trunk-ws', p.trunkWs, '--out', outDir, '--data-dir', XLSX_MERGE_DATA_DIR];
+  if (p.base) args.push('--base', String(p.base));
+  if (p.files) args.push('--files', p.files);
+  if (p.onCollision && p.onCollision !== 'conflict') args.push('--on-collision', p.onCollision);
+  if (p.scope) args.push('--scope', p.scope);
+  if (p.scopeInclude) args.push('--scope-include', p.scopeInclude);
+  if (p.preferBranch) args.push('--prefer-branch', p.preferBranch);
+  if (p.preferTrunk) args.push('--prefer-trunk', p.preferTrunk);
+  if (p.yieldTrunk) args.push('--yield-trunk', p.yieldTrunk);
+  if (p.autoIds) args.push('--auto-ids');
+  if (p.switchOff) args.push('--switch-off');
+  if (p.applyDeletes) args.push('--apply-deletes');
+  if (p.addMissing) args.push('--add-missing');
+  if (p.noText) args.push('--no-text');
+  if (p.apply) {
+    args.push('--apply');
+    if (p.unlockLocal) args.push('--unlock-local');
+  }
+  if (p.remapCsv && p.remapCsv.trim()) {
+    const remapPath = path.join(outDir, 'remap.csv');
+    fs.writeFileSync(remapPath, p.remapCsv, 'utf-8');
+    args.push('--remap', remapPath);
+  }
+
+  // Streamed like the pipeline steps: the first run pulls ~45 base workbooks
+  // out of SVN and an apply drives Excel for minutes; a silent pane reads as a hang.
+  return new Promise((resolve) => {
+    let output = '';
+    const proc = spawn(PYTHON_EXE, [PYBACKEND_SCRIPT, 'xlsx_merge', ...args], {
+      cwd: PYBACKEND_CWD, env: { ...process.env, PYTHONUTF8: '1' }
+    });
+    proc.stdout.on('data', (d) => { output += d.toString(); evt.sender.send('pipeline:log-line', d.toString()); });
+    proc.stderr.on('data', (d) => { output += d.toString(); evt.sender.send('pipeline:log-line', d.toString()); });
+    proc.on('close', (code) => {
+      const readIf = (f) => { const fp = path.join(outDir, f); return fs.existsSync(fp) ? fs.readFileSync(fp, 'utf-8') : ''; };
+      let summary = null;
+      try { summary = JSON.parse(readIf('summary.json') || 'null'); } catch (e) { summary = null; }
+      resolve({
+        success: code === 0, code, output, outDir, summary,
+        report: readIf('report.md'),
+        conflicts: parseCsv(readIf('conflicts.csv')),
+        suggest: parseCsv(readIf('remap_suggest.csv')),
+        svnAfter: readIf('svn_after.txt')
+      });
+    });
+    proc.on('error', (err) => resolve({ success: false, code: 1, output: `Failed to launch Python: ${err.message}`, outDir }));
+  });
+});
+
+ipcMain.handle('xlsxmerge:reveal', async (evt, { outDir }) => {
+  const inside = outDir && path.resolve(outDir).toLowerCase().startsWith(XLSX_MERGE_DATA_DIR.toLowerCase());
+  if (!inside || !fs.existsSync(outDir)) return { success: false, output: 'That is not a merge report folder.' };
+  const err = await shell.openPath(outDir);
+  return { success: !err, output: err || '' };
+});
+
 // ---- IPC: Chapter Update (new PVE chapter roll-forward) ----
 
 ipcMain.handle('chapter:get', async (evt, { designPath }) => {
@@ -1613,6 +1723,241 @@ ipcMain.handle('profile:list', async () => {
   const tmp = tempJsonFile('profiles_read');
   fs.writeFileSync(tmp, JSON.stringify({ events_root: ideationEventsRoot() }), 'utf-8');
   return parseJsonResult(await runPythonAndScrub('profiles_read', tmp), 'profiles');
+});
+
+// ---- LOCALIZATION ---------------------------------------------------------
+// Paste English, get the six shipped languages back. The memory it draws on
+// lives beside the ideation data in the shared folder, because it is the same
+// kind of thing: knowledge the whole design team accumulates, not per-branch
+// config. loc_corrections_import.py populates it from the translator's
+// delivered workbooks.
+function localizationDataRoot() {
+  return path.join(ideationDataRoot(), 'Localization');
+}
+
+// Read from WorkSpcae3, NOT from the workspace picked in the context bar.
+// WorkSpcae3 is the master that pipeline step 5 clones into the others, so it is
+// where the translator's corrections land first — against WorkSpcae_Design, 464
+// of the same corrections read as unmerged purely because that clone is behind.
+// The memory is reference knowledge, not per-workspace config, so it must not
+// change under the user when they switch workspace to do unrelated work.
+const MEMORY_WORKSPACE = 'WorkSpcae3';
+
+function localizationDesignPath() {
+  const cfg = loadConfig();
+  const branch = (cfg.branchPaths || {})[cfg.activeBranch] || '';
+  return branch ? resolveDesignPath(branch, MEMORY_WORKSPACE) : '';
+}
+
+// ---- Claude Desktop handoff -----------------------------------------------
+// The panel cannot make Claude Desktop translate. An MCP server only answers
+// the host, and no claude:// deep link carries a prompt (the app's own route
+// table is claude://claude, resume, code/new, code/continue, code/needs-input,
+// cowork/shared-artifact - none of them take text). So ONE human action is
+// unavoidable: send one message over there.
+//
+// Everything else is automated. Translate queues a job, opens Claude Desktop,
+// and starts watching for the answer; the model picks the job up with
+// localization_pending and save_translations files the result beside it, which
+// is what the renderer is polling for.
+function pendingDir() {
+  return path.join(localizationDataRoot(), 'pending');
+}
+
+ipcMain.handle('loc:queue', async (evt, { strings, languages }) => {
+  const cfg = loadConfig();
+  const designPath = localizationDesignPath();
+  if (!designPath) {
+    return { success: false, output: 'Set the branch path in Settings first.' };
+  }
+  // Second resolution in the id so two clicks in the same second cannot
+  // collide - the same bug ideation_store had to fix for feedback entries.
+  const jobId = `${new Date().toISOString().replace(/[-:.]/g, '').slice(0, 15)}Z_`
+    + `${(cfg.authorName || 'unknown').replace(/[^A-Za-z0-9]+/g, '-')}_`
+    + `${Math.random().toString(36).slice(2, 6)}`;
+  try {
+    fs.mkdirSync(pendingDir(), { recursive: true });
+    fs.writeFileSync(path.join(pendingDir(), `${jobId}.json`), JSON.stringify({
+      strings, languages, design_path: designPath,
+      author_id: cfg.authorId, author_name: cfg.authorName,
+      queued_at: new Date().toISOString()
+    }, null, 2), 'utf-8');
+  } catch (e) {
+    return { success: false, output: `Could not queue the batch: ${e.message}` };
+  }
+  return { success: true, jobId };
+});
+
+// Polled by the renderer rather than pushed: the result is written by another
+// process into a OneDrive folder, and fs.watch on a synced folder misses and
+// double-fires often enough that a 2-second poll is both simpler and steadier.
+ipcMain.handle('loc:queueResult', async (evt, { jobId }) => {
+  const done = path.join(pendingDir(), `${jobId}.result.json`);
+  try {
+    if (!fs.existsSync(done)) {
+      const stillQueued = fs.existsSync(path.join(pendingDir(), `${jobId}.json`));
+      return { success: true, ready: false, queued: stillQueued };
+    }
+    return { success: true, ready: true, result: JSON.parse(fs.readFileSync(done, 'utf-8')) };
+  } catch (e) {
+    // A half-synced file reads as invalid JSON for a moment; that is not a
+    // failure, it is "not ready yet".
+    return { success: true, ready: false, queued: true };
+  }
+});
+
+// Buffered stdout (the JSON result) but STREAMED stderr (progress lines), so a
+// long batch can say where it is. runPythonAndScrub uses execFile, which only
+// resolves at the end — fine for a 2-second call, useless for a 5-minute one.
+function runPythonStreamed(scriptId, tmpPath, evt, channel) {
+  return new Promise((resolve) => {
+    let stdout = '';
+    let stderr = '';
+    let pending = '';
+    const proc = spawn(PYTHON_EXE, [PYBACKEND_SCRIPT, scriptId, tmpPath],
+      { cwd: PYBACKEND_CWD });
+
+    proc.stdout.on('data', (d) => { stdout += d.toString(); });
+    proc.stderr.on('data', (d) => {
+      stderr += d.toString();
+      // Line-buffer: a chunk boundary can land mid-line and a half-parsed
+      // progress line would render as garbage.
+      pending += d.toString();
+      let nl;
+      while ((nl = pending.indexOf('\n')) >= 0) {
+        const line = pending.slice(0, nl).trim();
+        pending = pending.slice(nl + 1);
+        const m = /^PROGRESS (\S+) (\d+)\/(\d+) ?(.*)$/.exec(line);
+        if (m && evt && !evt.sender.isDestroyed()) {
+          evt.sender.send(channel, {
+            stage: m[1], done: Number(m[2]), total: Number(m[3]), detail: m[4]
+          });
+        }
+      }
+    });
+    proc.on('close', (code) => {
+      fs.unlink(tmpPath, () => {});
+      resolve({
+        success: code === 0, code, stdout, stderr,
+        output: stdout + (stderr ? '\n' + stderr : '')
+      });
+    });
+    proc.on('error', (err) => {
+      fs.unlink(tmpPath, () => {});
+      resolve({ success: false, code: 1, stdout: '', stderr: String(err),
+                output: `Failed to launch Python: ${err.message}` });
+    });
+  });
+}
+
+// Recovering a batch the panel stopped waiting for.
+//
+// This exists because of a real loss: a 124-string batch was queued, answered
+// correctly 33 minutes later (all 744 cells, nothing failed), and never
+// reached the designer — the panel had given up polling at 10 minutes and had
+// no way to pick the result up afterwards. The work was sitting on disk the
+// whole time. A finished result must be recoverable, including after the app
+// has been closed and reopened.
+ipcMain.handle('loc:latestResult', async (evt, { since }) => {
+  const dir = pendingDir();
+  try {
+    if (!fs.existsSync(dir)) return { success: true, found: false };
+    const done = fs.readdirSync(dir)
+      .filter((n) => n.endsWith('.result.json'))
+      .map((n) => ({ name: n, jobId: n.slice(0, -'.result.json'.length),
+                     mtime: fs.statSync(path.join(dir, n)).mtimeMs }))
+      .sort((a, b) => b.mtime - a.mtime);
+    if (!done.length) return { success: true, found: false };
+    const newest = done[0];
+    if (since && newest.jobId === since) return { success: true, found: false };
+    return {
+      success: true, found: true, jobId: newest.jobId, mtime: newest.mtime,
+      result: JSON.parse(fs.readFileSync(path.join(dir, newest.name), 'utf-8'))
+    };
+  } catch (e) {
+    return { success: false, output: e.message };
+  }
+});
+
+ipcMain.handle('loc:exportXlsx', async (evt, { rows, languages, suggestedName }) => {
+  const picked = await dialog.showSaveDialog({
+    title: 'Export translations to Excel',
+    defaultPath: path.join(app.getPath('downloads'), suggestedName || 'translations.xlsx'),
+    filters: [{ name: 'Excel Workbook', extensions: ['xlsx'] }]
+  });
+  if (picked.canceled || !picked.filePath) return { success: true, canceled: true };
+
+  const tmp = tempJsonFile('loc_export');
+  fs.writeFileSync(tmp, JSON.stringify({
+    rows, languages, out_path: picked.filePath
+  }), 'utf-8');
+  const res = await runPythonAndScrub('loc_export_xlsx', tmp);
+  if (res.success) {
+    // Reveal rather than open: the designer usually wants to attach or move
+    // the file, and opening Excel over the top of the app is in the way.
+    shell.showItemInFolder(picked.filePath);
+  }
+  return res;
+});
+
+ipcMain.handle('loc:openClaudeDesktop', async () => {
+  // claude://claude just brings the app up. There is no route that can carry
+  // the prompt, which is exactly why the user still has to send one message.
+  try {
+    await shell.openExternal('claude://claude');
+    return { success: true };
+  } catch (e) {
+    return { success: false, output: e.message };
+  }
+});
+
+// No provider check here, deliberately: the brief is the whole prompt built
+// from the memory, with no model involved. It is the route for a designer with
+// no API key — they paste it into Claude Desktop and paste the table back.
+ipcMain.handle('loc:brief', async (evt, { strings, languages }) => {
+  const designPath = localizationDesignPath();
+  if (!designPath) {
+    return { success: false, output: 'Set the branch path in Settings first.' };
+  }
+  const tmp = tempJsonFile('loc_brief');
+  fs.writeFileSync(tmp, JSON.stringify({
+    strings,
+    languages,
+    design_path: designPath,
+    corrections_root: localizationDataRoot(),
+    cache_dir: path.join(app.getPath('userData'), 'loc-cache')
+  }), 'utf-8');
+  return runPythonAndScrub('loc_mcp_brief', tmp);
+});
+
+ipcMain.handle('loc:translate', async (evt, { strings, languages }) => {
+  const cfg = loadConfig();
+  const { provider } = resolveIdeationProvider(cfg);
+  const designPath = localizationDesignPath();
+  if (!designPath) {
+    return { success: false, output: 'Set the branch path in Settings first.' };
+  }
+  // Missing provider is NOT an error here: the memory tiers need no model, so
+  // the run goes ahead and reports what it could answer. Refusing outright
+  // would throw away the approved and already-shipped text too, which is the
+  // part that works without a key.
+  const tmp = tempJsonFile('loc_translate');
+  fs.writeFileSync(tmp, JSON.stringify({
+    strings,
+    languages,
+    design_path: designPath,
+    corrections_root: localizationDataRoot(),
+    // Per-machine, NOT the synced folder: this is a ~6MB derived snapshot of
+    // localization.xlsx that rebuilds itself in seconds, so syncing it would
+    // cost every designer bandwidth for something none of them shares.
+    cache_dir: path.join(app.getPath('userData'), 'loc-cache'),
+    provider,
+    skip_generation: !provider,
+    api_key: cfg.anthropicApiKey,
+    ollama_base_url: cfg.ollamaBaseUrl,
+    ollama_model: cfg.ollamaModel || 'qwen3:32b'
+  }), 'utf-8');
+  return runPythonStreamed('loc_translate', tmp, evt, 'loc:progress');
 });
 
 // Settings: pick the shared ideationData folder (OneDrive / network share).

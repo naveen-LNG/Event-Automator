@@ -4,7 +4,7 @@
 $ErrorActionPreference = "Stop"
 
 $desktopRoot = Split-Path -Parent $PSScriptRoot
-$backendSrc = Join-Path $desktopRoot "pybackend-src"
+$backendSrc = Join-Path (Split-Path -Parent $desktopRoot) "EventAutomation\PythonBackend"
 $dist = Join-Path $desktopRoot "pybackend_dist\python"
 $pyVersion = "3.14.6"
 $zipUrl = "https://www.python.org/ftp/python/$pyVersion/python-$pyVersion-embed-amd64.zip"
@@ -52,6 +52,9 @@ New-Item -ItemType Directory -Force -Path $pkgDir | Out-Null
 #                         copy-on-write, removed APIs) could change its output
 #                         silently. 2.3.x has a cp314 wheel, so the pin costs
 #                         nothing.
+#   pywin32             - Merge to Trunk tab (xlsx_merge.py) writes into trunk workbooks
+#                         through Excel COM so formatting/formula caches survive; the
+#                         dry run works without it. Needs the ._pth lines added below.
 #   rapidocr_onnxruntime- text_detect.py (catches baked-in text in generated art).
 #                         Pulls onnxruntime + opencv + shapely: ~90MB of wheels,
 #                         ~230MB installed. That is the bulk of the bundle size.
@@ -65,13 +68,20 @@ New-Item -ItemType Directory -Force -Path $pkgDir | Out-Null
 # writing (pydantic-core 2.46.4). If a future transitive dep drops win_amd64/py314
 # wheels, this download step fails loudly here rather than at runtime.
 Write-Host "Fetching backend dependencies (openpyxl, et_xmlfile, anthropic + tree, pypdf)..."
-python -m pip download --only-binary=:all: --python-version 314 --platform win_amd64 -d $pkgDir openpyxl et_xmlfile anthropic pypdf pillow numpy "pandas<3" rapidocr_onnxruntime
+python -m pip download --only-binary=:all: --python-version 314 --platform win_amd64 -d $pkgDir openpyxl et_xmlfile anthropic pypdf pillow numpy "pandas<3" rapidocr_onnxruntime pywin32
 
 Get-ChildItem $pkgDir -Filter "*.whl" | ForEach-Object {
     $asZip = [System.IO.Path]::ChangeExtension($_.FullName, ".zip")
     Copy-Item $_.FullName $asZip -Force
     Expand-Archive -Path $asZip -DestinationPath $sitePkgs -Force
 }
+
+# pywin32 keeps its modules in three sub-folders that its own pywin32.pth would
+# normally register - but the embeddable interpreter never runs site.py, so the
+# ._pth has to list them explicitly or `import win32com` fails at runtime.
+Add-Content -Path $pthFile.FullName -Value "Lib\site-packages\win32"
+Add-Content -Path $pthFile.FullName -Value "Lib\site-packages\win32\lib"
+Add-Content -Path $pthFile.FullName -Value "Lib\site-packages\Pythonwin"
 
 # Scripts live flat next to python.exe: the embeddable interpreter's ._pth
 # file makes sys.path fully explicit, so sibling-module imports (e.g.

@@ -940,6 +940,77 @@ def main():
          chapter_core._script_imports, chapter_core._missing_modules,
          chapter_core.APP_VERSION) = _saved
 
+    # ── the source pool is checked before anything is written ───────────────
+    # Magic Builder draws 200 existing levels to a fixed difficulty
+    # distribution, and layout_diff removes a chapter's worth of layouts from
+    # the pool on every run. Chapter 87 hit the floor - three bands empty -
+    # and only found out after CondFilterConf.json had been rewritten.
+    print("\n--- source pool shortfall is predicted, not discovered ---")
+    with tempfile.TemporaryDirectory() as td:
+        design = Path(td)
+        # 12 source levels: 6 at hard_ratio .55 (band A), 6 at .45 (band B).
+        # Each carries its own layout string except the two marked SHARED.
+        rows = [("level_id", "name", "layout_str", "hard_ratio")]
+        for i in range(6):
+            rows.append((10001 + i, "", f"L{i}", 0.55))
+        for i in range(6):
+            rows.append((10101 + i, "", f"M{i}", 0.45))
+        # a built chapter whose levels reuse three of those layouts
+        for j, lay in enumerate(("L0", "L1", "M0")):
+            rows.append((11001 + j, "", lay, 0.5))
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "layout"
+        for r in rows:
+            ws.append(list(r))
+        wb.save(str(design / "pve_layout.xlsx"))
+
+        conf = {
+            "from_levels": [[10001, 10006], [10101, 10106]],
+            "layout_diff": [],
+            "hard_ratio_group": [[0.5, 0.6], [0.4, 0.5]],
+            "hard_num_list": [5, 5],
+            "target_level_count": 10,
+        }
+        # old_ch 99 has no levels in this workbook, so the range the check
+        # appends to layout_diff excludes nothing: 6 and 6 against 5 and 5.
+        cfg_p = _types.SimpleNamespace(design=lambda: str(design), old_ch=99,
+                                       new_ch=12, disp_new=2, lvl_py=design)
+
+        msgs = []
+        chapter_core.check_source_pool(cfg_p, lambda m, lvl="INFO": msgs.append(m), conf)
+        check(any("Every difficulty band has enough" in m for m in msgs),
+              "a healthy pool passes the check", "; ".join(msgs))
+
+        # old_ch 11 gets appended to layout_diff by the check itself, exactly as
+        # run_step1 is about to do - that removes layouts L0, L1 and M0, leaving
+        # 4 and 5 against a demand of 5 and 5.
+        conf2 = dict(conf, layout_diff=[])
+        cfg_p2 = _types.SimpleNamespace(design=lambda: str(design), old_ch=11,
+                                        new_ch=12, disp_new=2, lvl_py=design)
+        conf2["hard_num_list"] = [6, 6]
+        try:
+            chapter_core.check_source_pool(cfg_p2, lambda m, lvl="INFO": None, conf2)
+            err = ""
+        except RuntimeError as exc:
+            err = str(exc)
+        check("[0.5, 0.6)" in err and "short 2" in err,
+              "band A is reported short by 2 once its shared layouts go", err[:400])
+        check("[0.4, 0.5)" in err and "short 1" in err,
+              "band B is reported short by 1", err[:400])
+        check("nothing to revert" in err,
+              "the message says nothing has been written yet", err[:400])
+        check("from_levels" in err and "layout_diff" in err and "hard_num_list" in err,
+              "all three levers are named", err[:400])
+
+        # A missing workbook must warn and step aside, never block a real run.
+        (design / "pve_layout.xlsx").unlink()
+        warn = []
+        chapter_core.check_source_pool(cfg_p, lambda m, lvl="INFO": warn.append(m), conf)
+        check(any("skipping" in m for m in warn),
+              "a missing pve_layout.xlsx skips the check instead of failing",
+              "; ".join(warn))
+
     print("")
     if FAILS:
         print(f"{len(FAILS)} CHECK(S) FAILED")

@@ -14,7 +14,7 @@
 $ErrorActionPreference = "Stop"
 
 $desktopRoot = Split-Path -Parent $PSScriptRoot
-$backendSrc = Join-Path $desktopRoot "pybackend-src"
+$backendSrc = Join-Path (Split-Path -Parent $desktopRoot) "EventAutomation\PythonBackend"
 $dist = Join-Path $desktopRoot "pybackend_dist\python"
 
 if (-not (Test-Path $dist)) {

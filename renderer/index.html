@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Event Automator (Standalone)</title>
-<link rel="stylesheet" href="style.css?v=15" />
+<link rel="stylesheet" href="style.css?v=19" />
 </head>
 <body>
 <div class="app-container">
@@ -29,6 +29,10 @@
       <button class="menu-btn menu-btn-primary chip-yellow" data-view="ideation-view" data-rank="K" title="Ideation">
         <span class="icon-chip chip-yellow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a6 6 0 0 0-4 10.5c.6.6 1 1.4 1 2.3V16h6v-1.2c0-.9.4-1.7 1-2.3A6 6 0 0 0 12 2z"/></svg></span>
         <span class="btn-text">Ideation</span>
+      </button>
+      <button class="menu-btn menu-btn-primary chip-blue" data-view="localization-view" title="Localization">
+        <span class="icon-chip chip-blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h9M8 3v2c0 4-1.5 7-4 9M6 12c2.5 3 5 4.5 7 5"/><path d="M13 20l4-10 4 10M14.5 16.5h5"/></svg></span>
+        <span class="btn-text">Localization</span>
       </button>
       <button class="menu-btn menu-btn-primary chip-violet" data-view="main-events-view" data-rank="Q" title="Main Events">
         <span class="icon-chip chip-violet"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg></span>
@@ -85,6 +89,11 @@
       </button>
         </div>
       </div>
+
+      <button class="menu-btn chip-copper" data-view="xlsx-merge-view" title="Merge to Trunk">
+        <span class="icon-chip chip-copper"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="4" r="2"/><circle cx="6" cy="20" r="2"/><circle cx="18" cy="12" r="2"/><path d="M6 6v12M6 9c0 4 10 1 10 3"/></svg></span>
+        <span class="btn-text">Merge to Trunk</span>
+      </button>
 
       <div class="sidebar-spacer"></div>
 
@@ -660,6 +669,155 @@
       </div>
     </section>
 
+    <!-- MERGE TO TRUNK VIEW -->
+    <section id="xlsx-merge-view" class="main-container view" data-accent="copper" aria-labelledby="xlsx-merge-heading">
+      <div class="header-section">
+        <span class="view-glyph" aria-hidden="true">♣</span>
+        <span class="view-eyebrow">Release</span>
+        <h1 id="xlsx-merge-heading" class="header-title">Merge Branch Excels → trunk/WorkSpcae3</h1>
+        <p class="header-subtitle">Row-level 3-way merge. Only the rows your sprint branch changed since it was cut are written into trunk's workbooks, and only where trunk still matches the branch point. Rows, columns and sheets that exist only in trunk are never touched. Always dry-run first.</p>
+      </div>
+
+      <details class="stacked-card info-disclosure as-card">
+        <summary>
+          <span class="info-disclosure-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>
+          <span>How the merge decides what to write</span>
+          <svg class="info-disclosure-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+        </summary>
+        <div class="info-disclosure-body">
+          <p class="settings-hint">
+            <strong>Base</strong> is the branch at the revision the last merge covered (remembered per branch/trunk pair), or the branch copy point the first time.
+            Each sheet is compared base → branch → trunk by its descriptor <code>Key</code> column. A row the branch <em>added</em> is inserted after the same
+            predecessor row in trunk; a row the branch <em>changed</em> gets only its changed cells written, and only if trunk did not change the same cell;
+            a row the branch <em>deleted</em> is listed but kept unless you tick the option. New workbooks, sheets and columns are copied over; descriptor JSON and
+            PostConvert Lua get a 3-way text merge.
+          </p>
+          <p class="settings-hint">
+            <strong>Conflicts</strong> are anything a human must decide: <code>add-collision</code> (the branch added a key trunk already has with other content —
+            the "ID must change" case, or trunk already carries a newer version), <code>mod-overlap</code> (both sides edited the same cell), <code>alias-dup</code>
+            (an added row reuses an Alias trunk already has). They are written to <code>conflicts.csv</code> and never applied. Writes go through Excel itself, and every
+            written workbook is re-read afterwards to verify. Nothing is committed to SVN.
+          </p>
+        </div>
+      </details>
+
+      <div class="stacked-card">
+        <h2 class="card-title">Source → Target</h2>
+        <div class="form-row">
+          <label class="form-label" for="xm-branch-ws">Branch workspace</label>
+          <input type="text" id="xm-branch-ws" class="text-input mono" placeholder="…\branches\Misc\design\DesignData\WorkSpcae_Design" />
+          <button id="xm-browse-branch-btn" class="secondary-btn small">Browse</button>
+        </div>
+        <div class="form-row">
+          <label class="form-label" for="xm-trunk-ws">Trunk workspace</label>
+          <input type="text" id="xm-trunk-ws" class="text-input mono" placeholder="…\trunk\design\DesignData\WorkSpcae3" />
+          <button id="xm-browse-trunk-btn" class="secondary-btn small">Browse</button>
+        </div>
+        <div class="form-row">
+          <label class="form-label" for="xm-base-rev">Base revision</label>
+          <input type="text" id="xm-base-rev" class="text-input mono" placeholder="auto: last recorded merge, else the branch copy point" />
+        </div>
+        <div class="form-row">
+          <label class="form-label" for="xm-files">Only these workbooks</label>
+          <input type="text" id="xm-files" class="text-input mono" placeholder="optional, e.g. events.xlsx,item.xlsx" />
+        </div>
+        <div class="form-row">
+          <label class="form-label" for="xm-on-collision">Same key, other content</label>
+          <select id="xm-on-collision" class="text-input">
+            <option value="conflict">Report as conflict (default)</option>
+            <option value="skip">Keep trunk's row</option>
+            <option value="overwrite">Write the branch's row</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label class="form-label" for="xm-scope">Event scope</label>
+          <input type="text" id="xm-scope" class="text-input mono" placeholder="optional, e.g. sim2609,ChocolateFactory — only rows / files mentioning these are merged" />
+        </div>
+        <div class="form-row">
+          <label class="form-label" for="xm-scope-include">Merge whole (ignore scope)</label>
+          <input type="text" id="xm-scope-include" class="text-input mono" placeholder="e.g. pve_layout.xlsx,pve_level.xlsx,robot.xlsx" />
+        </div>
+        <div class="form-row">
+          <label class="form-label" for="xm-prefer-branch">Branch wins in</label>
+          <input type="text" id="xm-prefer-branch" class="text-input mono" placeholder="sheets where both-sides-changed cells take the branch value, e.g. robot.xlsx,card_collection.xlsx,localization.xlsx!CardCollection" />
+        </div>
+        <div class="form-row">
+          <label class="form-label" for="xm-prefer-trunk">Trunk wins in</label>
+          <input type="text" id="xm-prefer-trunk" class="text-input mono" placeholder="e.g. localization.xlsx!localize_event,pack.xlsx,drop_emitter3.xlsx" />
+        </div>
+        <div class="form-row">
+          <label class="form-label" for="xm-yield-trunk">Trunk yields IDs in</label>
+          <input type="text" id="xm-yield-trunk" class="text-input mono" placeholder="sheets where a clashing trunk row is renamed and the branch keeps its ID, e.g. events.xlsx!event_type" />
+        </div>
+        <div class="xm-options">
+          <label class="xm-check"><input type="checkbox" id="xm-auto-ids" /> Apply next-free-ID suggestions automatically</label>
+          <label class="xm-check"><input type="checkbox" id="xm-switch-off" /> Merge new event rows switched off</label>
+          <label class="xm-check"><input type="checkbox" id="xm-apply-deletes" /> Also delete rows the branch deleted</label>
+          <label class="xm-check"><input type="checkbox" id="xm-add-missing" /> Add branch-modified rows trunk doesn't have</label>
+          <label class="xm-check"><input type="checkbox" id="xm-no-text" /> Skip descriptor / Lua text merge</label>
+          <label class="xm-check"><input type="checkbox" id="xm-unlock-local" checked /> Make read-only trunk files writable (svn:needs-lock)</label>
+        </div>
+        <p class="settings-hint">Source follows the branch + workspace selected at the top of the window; target defaults to trunk's WorkSpcae3. Both working copies should be committed and updated (<code>svn up</code>) first — the report warns if they are not.</p>
+      </div>
+
+      <div class="stacked-card">
+        <h2 class="card-title">ID remap</h2>
+        <p class="settings-hint" style="margin:0 0 8px;">One line per ID to rename before merging: <code>xlsx,sheet,old_id,new_id</code>. The key of the branch-added row is renamed and every column whose descriptor <code>Ref</code> points at that sheet is rewritten too. After a dry run, <em>Load collisions</em> fills in the colliding IDs — you type the new ones after the last comma.</p>
+        <textarea id="xm-remap" class="text-input mono xm-remap" rows="5" spellcheck="false" placeholder="events.xlsx,events,20260901,20260903"></textarea>
+        <div class="execution-footer" style="justify-content:flex-start;">
+          <button id="xm-load-collisions-btn" class="secondary-btn small" disabled>Load collisions from last dry run</button>
+          <button id="xm-clear-remap-btn" class="secondary-btn small">Clear</button>
+        </div>
+      </div>
+
+      <div class="stacked-card">
+        <h2 class="card-title">Run</h2>
+        <div class="execution-footer" style="justify-content:space-between;">
+          <button id="xm-dryrun-btn" class="secondary-btn">Dry Run (report only)</button>
+          <button id="xm-apply-btn" class="primary-btn" disabled>Apply to Trunk</button>
+        </div>
+        <p class="settings-hint" id="xm-apply-hint">Apply unlocks after a dry run with the current settings. It writes through Excel, re-reads every workbook to verify, and never commits — review with <code>svn status</code> / <code>svn diff</code>, run <code>coder_convert</code>, then lock and commit yourself.</p>
+      </div>
+
+      <div class="stacked-card xm-hidden" id="xm-result-card">
+        <h2 class="card-title">Result <span id="xm-result-mode" class="xm-mode"></span></h2>
+        <div class="preview-grid four">
+          <div class="preview-cell"><span class="preview-label">Base → branch rev</span><span id="xm-res-revs" class="preview-value">...</span></div>
+          <div class="preview-cell"><span class="preview-label">Rows to add</span><span id="xm-res-add" class="preview-value">...</span></div>
+          <div class="preview-cell"><span class="preview-label">Rows to modify</span><span id="xm-res-mod" class="preview-value">...</span></div>
+          <div class="preview-cell"><span class="preview-label">New files / sheets / cols</span><span id="xm-res-new" class="preview-value">...</span></div>
+          <div class="preview-cell"><span class="preview-label">Conflicts</span><span id="xm-res-conflicts" class="preview-value">...</span></div>
+          <div class="preview-cell"><span class="preview-label">ID collisions</span><span id="xm-res-collisions" class="preview-value">...</span></div>
+          <div class="preview-cell"><span class="preview-label">Verify</span><span id="xm-res-verify" class="preview-value">...</span></div>
+          <div class="preview-cell"><span class="preview-label">Lint (c_data would reject)</span><span id="xm-res-lint" class="preview-value">...</span></div>
+        </div>
+        <div class="execution-footer" style="justify-content:flex-start;">
+          <button id="xm-reveal-btn" class="secondary-btn small">Open report folder</button>
+          <select id="xm-conflict-filter" class="text-input xm-filter"><option value="">All conflict kinds</option></select>
+        </div>
+        <div class="xm-table-wrap">
+          <table class="mg-preview-table xm-table"><thead><tr><th>Workbook</th><th>Sheet</th><th>Kind</th><th>Key</th><th>Detail</th></tr></thead><tbody id="xm-conflicts-body"></tbody></table>
+        </div>
+        <p class="settings-hint" id="xm-conflicts-more"></p>
+        <details class="info-disclosure">
+          <summary>
+            <span class="info-disclosure-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h8M8 17h5"/></svg></span>
+            <span>Full report</span>
+            <svg class="info-disclosure-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+          </summary>
+          <div class="info-disclosure-body"><pre class="xm-pre" id="xm-report"></pre></div>
+        </details>
+        <details class="info-disclosure xm-hidden" id="xm-svn-after-wrap">
+          <summary>
+            <span class="info-disclosure-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-5-6-5M12 19h8"/></svg></span>
+            <span>svn commands for the new files</span>
+            <svg class="info-disclosure-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+          </summary>
+          <div class="info-disclosure-body"><pre class="xm-pre" id="xm-svn-after"></pre></div>
+        </details>
+      </div>
+    </section>
+
     <!-- SPRINT BOARD (landing) -->
     <section id="sprint-view" class="main-container view" data-accent="sprint" aria-labelledby="sprint-heading">
       <div class="header-section">
@@ -781,6 +939,57 @@
       </div>
 
       <div id="artreq-results"></div>
+    </section>
+
+    <!-- LOCALIZATION VIEW -->
+    <section id="localization-view" class="main-container view" data-accent="blue" aria-labelledby="localization-heading">
+      <div class="header-section">
+        <span class="view-glyph" aria-hidden="true">✦</span>
+        <span class="view-eyebrow">Localization</span>
+        <h1 id="localization-heading" class="header-title">English to Six Languages</h1>
+        <p class="header-subtitle">Paste English strings and get German, Spanish, Dutch, Swedish, French and Danish back. Anything the translator has already approved, or that we already ship, is reused verbatim rather than translated again — only genuinely new text reaches the model.</p>
+      </div>
+
+      <div class="stacked-card">
+        <h2 class="card-title">English Input</h2>
+        <div class="form-row">
+          <label class="form-label">English strings</label>
+          <div class="loc-rows" id="loc-rows"></div>
+        </div>
+        <div class="form-row">
+          <label class="form-label"></label>
+          <div class="loc-rows-actions">
+            <button id="loc-add-row" class="secondary-btn small" type="button">+ Add row</button>
+            <button id="loc-split-rows" class="secondary-btn small" type="button">Split lines into rows</button>
+            <span class="loc-rows-hint" id="loc-rows-hint">A row can span several lines — Enter adds a line, Ctrl+Enter adds a row. Pasted text stays in one row; use Split lines if it was a list.</span>
+          </div>
+        </div>
+        <div class="form-row">
+          <label class="form-label">Languages</label>
+          <div class="loc-lang-picker" id="loc-lang-picker"></div>
+        </div>
+        <details class="info-disclosure">
+          <summary>
+            <span class="info-disclosure-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>
+            <span>Where each translation comes from</span>
+            <svg class="info-disclosure-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+          </summary>
+          <div class="info-disclosure-body">
+            <p class="settings-hint"><strong>Approved</strong> — the third-party translator's own corrected text for this exact English string, imported from their delivered workbooks. Reused as-is.</p>
+            <p class="settings-hint"><strong>Shipped</strong> — our existing translation from localization.xlsx or localization_quiz.xlsx. Reused as-is, so the same English never gets two different translations.</p>
+            <p class="settings-hint"><strong>Generated</strong> — new text, translated with the nearest shipped strings and the translator's real corrections in the prompt. Quotation marks are then applied by rule per language (German „…“, French « … », Spanish «…», Dutch ‘…’, Swedish and Danish ”…”), because every single typographic correction the translator made was that same fix.</p>
+            <p class="settings-hint">Warnings are advisory and never auto-applied: a dropped placeholder, a string longer than 99% of what we ship in that language, a leftover straight quote, or a translation identical to the English.</p>
+          </div>
+        </details>
+        <div class="board-divider"></div>
+        <div class="execution-footer">
+          <span class="loc-memory-note" id="loc-memory-note">Memory loads on first run.</span>
+          <button id="loc-brief-btn" class="secondary-btn" title="Builds the whole prompt — settled strings, gaps, nearest shipped text and the translator's corrections — and copies it. Needs no API key.">Copy brief for Claude</button>
+          <button id="loc-translate-btn" class="primary-btn">Translate</button>
+        </div>
+      </div>
+
+      <div id="loc-results"></div>
     </section>
 
     <!-- PROFILE VIEW -->
@@ -975,5 +1184,6 @@
 <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
 
 <script src="app.js"></script>
+<script src="ui-fx.js"></script>
 </body>
 </html>

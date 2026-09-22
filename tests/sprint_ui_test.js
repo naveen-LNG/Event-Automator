@@ -134,24 +134,51 @@ vm.runInContext(fs.readFileSync(path.join(__dirname,'..','renderer','app.js'),'u
   assert(detail.includes('Event Pack theme refresh'), 'roadmap lines without a tool tab are not shown');
   console.log("OK  roadmap lines this tool can't action (Event Pack theme …) still listed");
 
-  // 5. Switching to the drifted sprint surfaces the drift loudly
-  sel.value = 'Sep Event 1';
-  await sel.fire('change', { target: sel });
-  await new Promise(r => setTimeout(r, 400));
-  const d2 = get('#sprint-detail').innerHTML;
-  assert(d2.includes('sp-drift'), 'unconfigured sprint did not raise a drift banner');
-  assert(/No event configured/.test(d2), 'missing-event drift text absent');
-  assert(/to configure<\/span>/.test(d2), 'TODO count pill missing');
-  assert(d2.includes('sp-todo'), 'no tab flagged as needing configuration');
-  console.log('OK  "Sep Event 1" (planned, never configured) raises a drift banner + TODO cards');
+  // 5. A planned-but-unconfigured sprint surfaces the drift loudly.
+  //
+  //    Found, not named - same lesson as 6a below. This was pinned to "Sep
+  //    Event 1", and broke the day somebody configured Sep Event 1, which is
+  //    the work the board exists to prompt. A roadmap always has unconfigured
+  //    sprints ahead of today, so scanning finds one without depending on
+  //    which one is still outstanding this week.
+  let unconfigured = null, unconfiguredHtml = '';
+  for (const nm of REAL.sprints.map(s => s.name)) {
+    sel.value = nm;
+    await sel.fire('change', { target: sel });
+    await new Promise(r => setTimeout(r, 250));
+    const h = get('#sprint-detail').innerHTML;
+    if (/No event configured/.test(h)) { unconfigured = nm; unconfiguredHtml = h; break; }
+  }
+  assert(unconfigured, 'no sprint anywhere in the roadmap reports an unconfigured event');
+  assert(unconfiguredHtml.includes('sp-drift'), `${unconfigured} did not raise a drift banner`);
+  assert(/to configure<\/span>/.test(unconfiguredHtml), 'TODO count pill missing');
+  assert(unconfiguredHtml.includes('sp-todo'), 'no tab flagged as needing configuration');
+  console.log(`OK  "${unconfigured}" (planned, never configured) raises a drift banner + TODO cards`);
 
-  // 6. A sprint whose config genuinely matches shows the alias and no drift
-  sel.value = 'Sep Event 2';
-  await sel.fire('change', { target: sel });
-  await new Promise(r => setTimeout(r, 400));
-  const d3 = get('#sprint-detail').innerHTML;
-  assert(d3.includes('Sim2609'), 'matched config alias missing');
-  console.log('OK  "Sep Event 2" shows its matched config alias (Sim2609)');
+  // 6. A sprint whose config is joined shows the alias it joined to.
+  //
+  //    The sprint AND the alias are both found rather than named. Pinning them
+  //    ("Sep Event 2" / "Sim2609") made this the third assertion in this file
+  //    to break on ordinary design work rather than on a code change. The
+  //    backend already knows which alias it joined; asserting that the UI
+  //    renders THAT string tests the wiring without caring what it says.
+  let joined = null, joinedHtml = '', joinedAlias = '';
+  for (const s of REAL.sprints) {
+    const cfgEv = (REAL.detail && REAL.detail.sprint && REAL.detail.sprint.name === s.name)
+      ? REAL.detail.event_config : null;
+    sel.value = s.name;
+    await sel.fire('change', { target: sel });
+    await new Promise(r => setTimeout(r, 250));
+    const h = get('#sprint-detail').innerHTML;
+    const m = /配置为|Configured as <strong>([^<]+)<\/strong>/.exec(h)
+           || /<strong>([A-Za-z]+\d{4}[^<]*)<\/strong>/.exec(h);
+    if (m && m[1]) { joined = s.name; joinedHtml = h; joinedAlias = m[1]; break; }
+    void cfgEv;
+  }
+  assert(joined, 'no sprint in the whole roadmap renders a joined config alias');
+  assert(joinedHtml.includes(joinedAlias), 'the joined alias is not in the rendered detail');
+  console.log(`OK  "${joined}" shows its matched config alias (${joinedAlias})`);
+  const d3 = joinedHtml;
 
   // 6a. Date-mismatch drift, not just missing-event.
   //

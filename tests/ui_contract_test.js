@@ -42,21 +42,21 @@ check(missingIds.length === 0,
 // ---- 2. IDs built by template literal (#ideation-feedback-${i}) ------------
 // These are produced by app.js itself, so only the static prefix matters:
 // the container they get injected into must exist.
-for (const containerId of ['ideation-results', 'artreq-results']) {
+for (const containerId of ['ideation-results', 'artreq-results', 'loc-results']) {
   check(haveIds.has(containerId), `dynamic-content host #${containerId} exists`);
 }
 
 // ---- 3. navigation contract ------------------------------------------------
 const navOrder = [...html.matchAll(/class="[^"]*menu-btn[^"]*"[^>]*data-view="([^"]+)"/g)].map(m => m[1]);
 const EXPECTED_NAV = [
-  'sprint-view', 'ideation-view', 'main-events-view',
+  'sprint-view', 'ideation-view', 'localization-view', 'main-events-view',
   'minigames-view', 'battlepass-view', 'holiday-bp-view', 'decoration-shop-view',
   'streak-challenge-view', 'weekly-gift-view', 'full-screen-gift-view',
   'trivia-challenge-view', 'endless-treasure-view', 'chapter-view',
-  'profile-view', 'settings-view',
+  'xlsx-merge-view', 'profile-view', 'settings-view',
 ];
 check(JSON.stringify(navOrder) === JSON.stringify(EXPECTED_NAV),
-  `sidebar lists all 15 destinations in order (Sprint -> Ideation -> Main Events -> 10 regular -> Profile -> Settings)`,
+  `sidebar lists all 17 destinations in order (Sprint -> Ideation -> Localization -> Main Events -> 10 regular -> Merge to Trunk -> Profile -> Settings)`,
   'got: ' + JSON.stringify(navOrder));
 
 // every data-view must have a matching <section class="... view">
@@ -205,6 +205,26 @@ check(/sim_path:\s*cfg\.chapterSimPath/.test(js),
 // reintroduce exactly the internal-vs-display offset bug the backend removes.
 check(!/id="chapter-(old|new)-input"/.test(html),
   'chapter numbers are read from the workbook, not entered by hand');
+
+// ---- 6d. Merge to Trunk is wired end to end --------------------------------
+for (const [channel, bridge] of [['xlsxmerge:defaults', 'xlsxMergeDefaults'],
+                                 ['xlsxmerge:run', 'xlsxMergeRun'],
+                                 ['xlsxmerge:reveal', 'xlsxMergeReveal']]) {
+  check(mainJs.includes(`ipcMain.handle('${channel}'`), `main.js handles '${channel}'`);
+  check(preloadJs.includes(`'${channel}'`) && preloadJs.includes(bridge + ':'),
+    `preload.js bridges '${channel}' as api.${bridge}`);
+  check(js.includes('window.api.' + bridge + '('), `app.js calls api.${bridge}()`);
+}
+check(cliPy.includes('"xlsx_merge"'), `pybackend_cli.py dispatches 'xlsx_merge'`);
+check(fs.existsSync(path.join(BACKEND_DIR, 'xlsx_merge.py')), 'xlsx_merge.py lives in the backend source folder');
+// Apply must never be the first click: it is gated on a dry run with identical settings.
+check(/xmDryRunKey/.test(js) && /id="xm-apply-btn"[^>]*\bdisabled\b/.test(html),
+  'Apply starts disabled and is gated on a matching dry run');
+// pywin32 is what lets --apply drive Excel from the bundled interpreter. The wheel
+// unpacks fine without these lines and `import win32com` fails only at runtime.
+const buildPs1 = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'build-pybackend.ps1'), 'utf-8');
+check(/pip download[^\n]*\bpywin32\b/.test(buildPs1), 'build-pybackend.ps1 downloads pywin32');
+check(/Lib\\site-packages\\win32\\lib/.test(buildPs1), 'build-pybackend.ps1 adds the pywin32 folders to the ._pth');
 
 // ---- 6b. the Art Requirement can start from an EXISTING One-Pager ----------
 // Before this, the Art Requirement card only ever appeared after generating

@@ -1,6 +1,8 @@
 node_modules/
 release/
 pybackend_dist/
+# built by zipping mcp/extension; attached to releases, not committed
+event-automator.mcpb
 pybackend-src/build/
 pybackend-src/__pycache__/
 *.log

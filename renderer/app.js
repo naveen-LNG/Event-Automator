@@ -129,6 +129,7 @@
     if (viewId === 'trivia-challenge-view') loadTrivia();
     if (viewId === 'endless-treasure-view') loadEndlessTreasure();
     if (viewId === 'chapter-view') loadChapter();
+    if (viewId === 'xlsx-merge-view') loadXlsxMergeDefaults();
     if (viewId === 'profile-view') refreshProfiles();
     if (viewId === 'sprint-view' && !sprintData) loadSprintBoard();
   }
@@ -144,6 +145,7 @@
     else if (currentView === 'trivia-challenge-view') await loadTrivia(true);
     else if (currentView === 'endless-treasure-view') await loadEndlessTreasure(true);
     else if (currentView === 'chapter-view') await loadChapter(true);
+    else if (currentView === 'xlsx-merge-view') await loadXlsxMergeDefaults(true);
   }
 
   $$('.menu-btn').forEach(btn => {
@@ -152,6 +154,7 @@
       // be applied AFTER it — marking first meant switchView immediately
       // stripped it and every click left the sidebar with nothing lit.
       switchView(btn.dataset.view, btn.dataset.title);
+      if (btn.dataset.view === 'localization-view') locOfferFinishedBatch();
       btn.classList.add('active-btn');
     });
   });
@@ -1805,6 +1808,199 @@
       toast('Run failed: ' + res.output, 'error');
     }
   });
+
+  // ---------------- Merge to Trunk tab ----------------
+  // Thin front-end over xlsx_merge.py (the same script as tools/XlsxMerge): the
+  // backend does the 3-way work and leaves report.md / conflicts.csv /
+  // remap_suggest.csv / summary.json in a per-run folder; this tab only shapes
+  // the arguments and renders what came back. Apply is gated on a dry run with
+  // identical settings, so nobody writes into trunk on a stale picture.
+  let xmLast = null;        // result of the most recent run (dry or apply)
+  let xmDryRunKey = '';     // settings fingerprint of the last successful dry run
+  let xmRunning = false;
+  let xmArmedUntil = 0;     // two-click confirm on Apply
+
+  const XM_INPUT_IDS = ['xm-branch-ws', 'xm-trunk-ws', 'xm-base-rev', 'xm-files', 'xm-on-collision',
+    'xm-scope', 'xm-scope-include', 'xm-prefer-branch', 'xm-prefer-trunk', 'xm-yield-trunk', 'xm-auto-ids', 'xm-switch-off',
+    'xm-apply-deletes', 'xm-add-missing', 'xm-no-text', 'xm-unlock-local', 'xm-remap'];
+
+  function xmSettings() {
+    return {
+      branchWs: $('#xm-branch-ws').value.trim(),
+      trunkWs: $('#xm-trunk-ws').value.trim(),
+      base: $('#xm-base-rev').value.trim(),
+      files: $('#xm-files').value.trim(),
+      onCollision: $('#xm-on-collision').value,
+      scope: $('#xm-scope').value.trim(),
+      scopeInclude: $('#xm-scope-include').value.trim(),
+      preferBranch: $('#xm-prefer-branch').value.trim(),
+      preferTrunk: $('#xm-prefer-trunk').value.trim(),
+      yieldTrunk: $('#xm-yield-trunk').value.trim(),
+      autoIds: $('#xm-auto-ids').checked,
+      switchOff: $('#xm-switch-off').checked,
+      applyDeletes: $('#xm-apply-deletes').checked,
+      addMissing: $('#xm-add-missing').checked,
+      noText: $('#xm-no-text').checked,
+      unlockLocal: $('#xm-unlock-local').checked,
+      remapCsv: $('#xm-remap').value
+    };
+  }
+  // unlockLocal only matters at apply time, so it must not invalidate a dry run.
+  const xmKey = (s) => JSON.stringify({ ...s, unlockLocal: undefined });
+
+  async function loadXlsxMergeDefaults(force) {
+    const d = await window.api.xlsxMergeDefaults();
+    if (force || !$('#xm-branch-ws').value) $('#xm-branch-ws').value = d.branchWs || '';
+    if (!$('#xm-trunk-ws').value) $('#xm-trunk-ws').value = d.trunkWs || '';
+    xmRefreshApplyGate();
+  }
+
+  function xmRefreshApplyGate() {
+    const s = xmSettings();
+    const stale = !!xmDryRunKey && xmKey(s) !== xmDryRunKey;
+    $('#xm-apply-btn').disabled = xmRunning || !xmDryRunKey || stale || !s.branchWs || !s.trunkWs;
+    if (stale) $('#xm-apply-hint').textContent = 'Settings changed since the last dry run — run it again before applying.';
+  }
+  XM_INPUT_IDS.forEach(id => {
+    $('#' + id).addEventListener('input', xmRefreshApplyGate);
+    $('#' + id).addEventListener('change', xmRefreshApplyGate);
+  });
+
+  $('#xm-browse-branch-btn').addEventListener('click', async () => {
+    const p = await window.api.browseFolder($('#xm-branch-ws').value);
+    if (p) { $('#xm-branch-ws').value = p; xmRefreshApplyGate(); }
+  });
+  $('#xm-browse-trunk-btn').addEventListener('click', async () => {
+    const p = await window.api.browseFolder($('#xm-trunk-ws').value);
+    if (p) { $('#xm-trunk-ws').value = p; xmRefreshApplyGate(); }
+  });
+  $('#xm-clear-remap-btn').addEventListener('click', () => { $('#xm-remap').value = ''; xmRefreshApplyGate(); });
+  $('#xm-load-collisions-btn').addEventListener('click', () => {
+    const suggest = (xmLast && xmLast.suggest) || [];
+    if (!suggest.length) { toast('The last dry run reported no ID collisions.'); return; }
+    const existing = $('#xm-remap').value.split('\n').map(l => l.trim()).filter(Boolean);
+    // Rows the tool could resolve itself (same Alias already in trunk) arrive with new_id prefilled;
+    // "same row, content differs" rows are not ID clashes and are left out (use the collision policy).
+    const wanted = suggest.filter(r => !(r.note || '').startsWith('same row'));
+    const fresh = wanted.map(r => `${r.xlsx},${r.sheet},${r.old_id},${r.new_id || ''}`)
+      .filter(l => !existing.some(e => e.startsWith(l.slice(0, l.lastIndexOf(',') + 1))));
+    $('#xm-remap').value = [...existing, ...fresh].join('\n');
+    xmRefreshApplyGate();
+    const filled = wanted.filter(r => r.new_id).length;
+    toast(`${fresh.length} colliding IDs added — ${filled} prefilled from trunk's Alias match, ${fresh.length - filled} need a new_id after the trailing comma.`);
+  });
+
+  async function xmRun(apply) {
+    const s = xmSettings();
+    if (!s.branchWs || !s.trunkWs) { toast('Set both the branch and trunk workspace paths first.', 'error'); return; }
+    if (s.branchWs.toLowerCase() === s.trunkWs.toLowerCase()) { toast('Source and target are the same folder.', 'error'); return; }
+    if (apply) {
+      const now = Date.now();
+      if (now > xmArmedUntil) {
+        xmArmedUntil = now + 6000;
+        $('#xm-apply-btn').textContent = 'Click again to write into trunk';
+        setTimeout(() => { if (Date.now() >= xmArmedUntil && !xmRunning) $('#xm-apply-btn').textContent = 'Apply to Trunk'; }, 6100);
+        return;
+      }
+      xmArmedUntil = 0;
+    }
+    xmRunning = true;
+    const dryBtn = $('#xm-dryrun-btn'), applyBtn = $('#xm-apply-btn');
+    dryBtn.disabled = true; applyBtn.disabled = true;
+    dryBtn.textContent = apply ? 'Dry Run (report only)' : 'Running…';
+    applyBtn.textContent = apply ? 'Applying…' : 'Apply to Trunk';
+    log(`Merge to Trunk — ${apply ? 'APPLY' : 'dry run'}: ${s.branchWs} → ${s.trunkWs}`);
+
+    const res = await window.api.xlsxMergeRun({ ...s, apply });
+
+    xmRunning = false;
+    dryBtn.disabled = false; dryBtn.textContent = 'Dry Run (report only)'; applyBtn.textContent = 'Apply to Trunk';
+    xmLast = res;
+    xmRender(res, apply);
+    if (res.success) {
+      if (apply) {
+        xmDryRunKey = '';
+        $('#xm-apply-hint').textContent = 'Applied. Review trunk with svn status / svn diff, run coder_convert, then lock and commit.';
+        log('Merge to Trunk: apply finished and verified.', 'console-log-success');
+        toast('Merged into trunk — review before committing.', 'success');
+      } else {
+        xmDryRunKey = xmKey(s);
+        $('#xm-apply-hint').textContent = 'Dry run complete with these settings — Apply is unlocked. It writes through Excel, verifies, and never commits.';
+        log('Merge to Trunk: dry run finished.', 'console-log-success');
+        toast('Dry run complete — check the result card.', 'success');
+      }
+    } else {
+      xmDryRunKey = '';
+      log(`Merge to Trunk ${apply ? 'apply' : 'dry run'} failed (exit ${res.code}).`, 'console-log-error');
+      toast('Merge failed — see the output pane and the report.', 'error');
+    }
+    xmRefreshApplyGate();
+  }
+  $('#xm-dryrun-btn').addEventListener('click', () => xmRun(false));
+  $('#xm-apply-btn').addEventListener('click', () => xmRun(true));
+  $('#xm-reveal-btn').addEventListener('click', async () => {
+    if (!xmLast || !xmLast.outDir) return;
+    const r = await window.api.xlsxMergeReveal({ outDir: xmLast.outDir });
+    if (!r.success) toast(r.output || 'Could not open the report folder.', 'error');
+  });
+  $('#xm-conflict-filter').addEventListener('change', () => xmRenderConflicts());
+
+  function xmRender(res, apply) {
+    $('#xm-result-card').classList.remove('xm-hidden');
+    const sm = res.summary || {};
+    const t = sm.totals || {};
+    $('#xm-result-mode').textContent = apply ? 'apply' : 'dry run';
+    $('#xm-res-revs').textContent = sm.base_rev ? `r${sm.base_rev} → r${sm.branch_rev}` : (res.success ? '…' : 'failed');
+    $('#xm-res-add').textContent = sm.totals ? (t.add ?? 0) : '…';
+    $('#xm-res-mod').textContent = sm.totals ? (t.mod ?? 0) : '…';
+    $('#xm-res-new').textContent = sm.totals ? `${(sm.new_files || []).length} / ${t.new_sheets ?? 0} / ${t.new_cols ?? 0}` : '…';
+    $('#xm-res-conflicts').textContent = sm.n_conflicts ?? (res.conflicts ? res.conflicts.length : '…');
+    $('#xm-res-collisions').textContent = sm.n_collisions ?? (res.suggest ? res.suggest.length : '…');
+    let verify = 'n/a (dry run)';
+    if (apply) {
+      if (Array.isArray(sm.verify_problems)) verify = sm.verify_problems.length ? `${sm.verify_problems.length} problems` : 'OK';
+      else verify = res.success ? 'not run' : 'failed';
+    }
+    $('#xm-res-verify').textContent = verify;
+    $('#xm-res-lint').textContent = sm.n_lint == null ? '…' : (sm.n_lint === 0 ? 'clean' : `${sm.n_lint} findings`);
+    $('#xm-report').textContent = res.report || res.output || '(no report written)';
+    if (res.svnAfter) { $('#xm-svn-after-wrap').classList.remove('xm-hidden'); $('#xm-svn-after').textContent = res.svnAfter; }
+    else $('#xm-svn-after-wrap').classList.add('xm-hidden');
+    $('#xm-load-collisions-btn').disabled = !(res.suggest && res.suggest.length);
+
+    const sel = $('#xm-conflict-filter');
+    const keep = sel.value;
+    const conflicts = res.conflicts || [];
+    const kinds = [...new Set(conflicts.map(r => r.kind))].sort();
+    sel.innerHTML = '';
+    const all = document.createElement('option'); all.value = ''; all.textContent = `All conflict kinds (${conflicts.length})`; sel.appendChild(all);
+    kinds.forEach(k => {
+      const o = document.createElement('option'); o.value = k;
+      o.textContent = `${k} (${conflicts.filter(r => r.kind === k).length})`; sel.appendChild(o);
+    });
+    sel.value = kinds.includes(keep) ? keep : '';
+    xmRenderConflicts();
+  }
+
+  function xmRenderConflicts() {
+    const body = $('#xm-conflicts-body'); body.innerHTML = '';
+    const kind = $('#xm-conflict-filter').value;
+    const rows = ((xmLast && xmLast.conflicts) || []).filter(r => !kind || r.kind === kind);
+    const LIMIT = 300;
+    rows.slice(0, LIMIT).forEach(r => {
+      const tr = document.createElement('tr');
+      [r.xlsx, r.sheet, r.kind, r.key, r.detail].forEach((v, i) => {
+        const td = document.createElement('td');
+        if (i === 2) { const b = document.createElement('span'); b.className = 'xm-kind'; b.textContent = v; td.appendChild(b); }
+        else td.textContent = v;
+        tr.appendChild(td);
+      });
+      body.appendChild(tr);
+    });
+    $('#xm-conflicts-more').textContent = rows.length > LIMIT
+      ? `Showing ${LIMIT} of ${rows.length} — the full list is in conflicts.csv (Open report folder).`
+      : (rows.length ? '' : 'No conflicts.');
+  }
 
   // ---------------- Ideation tab ----------------
   // Pure generate-on-demand: no "get" call on tab switch, no cache to
@@ -3469,6 +3665,489 @@
   $('#sprint-refresh-btn').addEventListener('click', () => loadSprintBoard($('#sprint-select').value));
 
   // ---------------- Init ----------------
+  // ---------------- Localization ----------------
+  // Paste English, get the six shipped languages back. This panel deliberately
+  // does NOT write into localization.xlsx — the designer copies rows out and
+  // pastes them where they belong, which keeps step 14 the only code in this
+  // app that edits that workbook. Column order in the copied TSV matches the
+  // workbook's own B..H order so a paste lands in the right columns.
+  const LOC_LANGS = [['DE', 'German'], ['ES', 'Spanish'], ['NL', 'Dutch'],
+                     ['SV', 'Swedish'], ['FR', 'French'], ['DA', 'Danish']];
+  let locResult = null;
+
+  // One row per string, added and removed individually. A single textarea was
+  // fine for typing and bad for editing: changing string 12 of 30 meant
+  // finding the right line in a wall of text. Rows keep paste working though -
+  // see the paste handler, which splits a pasted block back out into rows
+  // rather than dumping 30 lines into one field.
+  function locRowHtml(value) {
+    return '<div class="loc-row">'
+      + `<textarea class="text-input mono loc-row-input" spellcheck="false" rows="1" `
+      + `placeholder="English string">${escapeHtml(value || '')}</textarea>`
+      + '<button class="loc-row-del" type="button" title="Remove this row" '
+      + 'aria-label="Remove this row">&minus;</button></div>';
+  }
+
+  // Grow to fit rather than scroll: a two-line string that only shows its first
+  // line is how you end up translating half of it without noticing.
+  function locAutoGrow(el) {
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight + 2, 260) + 'px';
+  }
+
+  function renderLocRows(values) {
+    const list = (values && values.length) ? values : [''];
+    $('#loc-rows').innerHTML = list.map(locRowHtml).join('');
+    $$('.loc-row-input').forEach(locAutoGrow);
+  }
+
+  function locRowValues() {
+    return $$('.loc-row-input').map((el) => el.value);
+  }
+
+  function locStrings() {
+    return locRowValues().map((s) => s.trim()).filter(Boolean);
+  }
+
+  function locAddRow(after) {
+    const row = document.createElement('div');
+    row.className = 'loc-row';
+    row.innerHTML = locRowHtml('').replace(/^<div class="loc-row">|<\/div>$/g, '');
+    if (after && after.parentNode) after.insertAdjacentElement('afterend', row);
+    else $('#loc-rows').appendChild(row);
+    const input = row.querySelector('.loc-row-input');
+    if (input) input.focus();
+    return row;
+  }
+
+  $('#loc-add-row').addEventListener('click', () => locAddRow());
+
+  $('#loc-rows').addEventListener('click', (evt) => {
+    const del = evt.target.closest('.loc-row-del');
+    if (!del) return;
+    const rows = $$('.loc-row');
+    // Never leave the panel with nowhere to type: the last row empties instead
+    // of disappearing.
+    if (rows.length <= 1) {
+      const only = rows[0] && rows[0].querySelector('.loc-row-input');
+      if (only) { only.value = ''; only.focus(); }
+      return;
+    }
+    del.closest('.loc-row').remove();
+  });
+
+  // A row is a textarea, so Enter inserts a newline — a single string can span
+  // lines, which 29 of the English strings in localization.xlsx genuinely do.
+  // Ctrl+Enter is the shortcut for the next row.
+  $('#loc-rows').addEventListener('keydown', (evt) => {
+    if (!evt.target.classList.contains('loc-row-input')) return;
+    if (evt.key === 'Enter' && (evt.ctrlKey || evt.metaKey)) {
+      evt.preventDefault();
+      locAddRow(evt.target.closest('.loc-row'));
+    }
+  });
+
+  $('#loc-rows').addEventListener('input', (evt) => {
+    if (evt.target.classList.contains('loc-row-input')) locAutoGrow(evt.target);
+  });
+
+  // Paste is deliberately literal — it does NOT split lines into rows.
+  //
+  // It used to. That is wrong for the case that matters: a multi-line string
+  // pasted in would be torn into fragments and each fragment translated on its
+  // own, out of context, with the damage invisible in a table that looks
+  // perfectly normal. Pasting a bulk list into one row is the opposite kind of
+  // mistake — obvious on sight and one click to fix with "Split lines". Given
+  // one silent failure and one loud one, the default takes the loud one.
+
+  $('#loc-split-rows').addEventListener('click', () => {
+    const before = locRowValues();
+    const values = [];
+    before.forEach((value) => {
+      const parts = value.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+      if (parts.length > 1) values.push(...parts);
+      else values.push(value);
+    });
+    const gained = values.length - before.length;
+    if (gained <= 0) { toast('Nothing to split — no row has more than one line.'); return; }
+    renderLocRows(values);
+    toast(`Split into ${values.length} rows.`, 'success');
+  });
+
+  function renderLocLangPicker() {
+    $('#loc-lang-picker').innerHTML = LOC_LANGS.map(([code, name]) => (
+      `<label class="loc-lang-chip" title="${escapeHtml(name)}">` +
+      `<input type="checkbox" class="loc-lang-box" value="${code}" checked />` +
+      `<span>${code}</span></label>`
+    )).join('');
+  }
+
+  // Unticking everything is a slip, not a request for nothing — fall back to
+  // all six rather than silently translating into no languages at all.
+  function selectedLocLangs() {
+    const picked = $$('.loc-lang-box').filter((b) => b.checked).map((b) => b.value);
+    return picked.length ? picked : LOC_LANGS.map(([code]) => code);
+  }
+
+  async function copyText(text, label) {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast(`${label} copied to the clipboard.`, 'success');
+      return;
+    } catch (e) {
+      // Clipboard API can be refused depending on focus; the textarea route
+      // still works and is the difference between the button doing something
+      // and doing nothing.
+      const scratch = document.createElement('textarea');
+      scratch.value = text;
+      document.body.appendChild(scratch);
+      scratch.select();
+      const ok = document.execCommand('copy');
+      scratch.remove();
+      toast(ok ? `${label} copied to the clipboard.` : 'Could not copy — select the table and copy manually.',
+        ok ? 'success' : 'error');
+    }
+  }
+
+  // A field carrying a real line break, a tab or a quote has to be quoted or
+  // the paste tears one row into several. Excel reads the doubled-quote form.
+  function tsvField(value) {
+    const text = String(value == null ? '' : value);
+    return /[\t\r\n"]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  }
+
+  function locTsv() {
+    if (!locResult) return '';
+    const langs = locResult.languages;
+    const header = ['English', ...langs].join('\t');
+    const body = locResult.rows.map((row) => [
+      row.en,
+      ...langs.map((code) => (row.targets[code] || {}).text || ''),
+    ].map(tsvField).join('\t'));
+    return [header, ...body].join('\r\n');
+  }
+
+  function renderLocResults() {
+    const host = $('#loc-results');
+    if (!locResult) { host.innerHTML = ''; return; }
+    const langs = locResult.languages;
+    const counts = locResult.counts || {};
+    const summary = [
+      `${locResult.rows.length} string(s)`,
+      `${counts.approved || 0} reused from translator-approved text`,
+      `${counts.memory || 0} reused from what we already ship`,
+      `${counts.generated || 0} newly translated`,
+    ];
+    if (counts.failed) summary.push(`${counts.failed} not translated`);
+
+    const head = ['<th>English</th>', ...langs.map((c) => `<th>${c}</th>`)].join('');
+    const body = locResult.rows.map((row) => {
+      const cells = langs.map((code) => {
+        const cell = row.targets[code] || { text: '', source: 'failed', warnings: [] };
+        const warns = (cell.warnings || []).map(
+          (w) => `<div class="loc-warn">${escapeHtml(w)}</div>`).join('');
+        const badgeClass = `loc-src loc-src-${cell.source}`;
+        const note = cell.note ? ` title="${escapeHtml(cell.note)}"` : '';
+        return `<td class="loc-cell"><div class="loc-cell-text">${escapeHtml(cell.text) || '—'}</div>` +
+          `<span class="${badgeClass}"${note}>${cell.source}</span>${warns}</td>`;
+      }).join('');
+      // The English lands in column B of localization.xlsx like every other
+      // column, so a character the convert cannot carry has to show here too -
+      // the per-language warnings above never look at it.
+      const enWarns = (row.warnings || []).map(
+        (w) => `<div class="loc-warn">${escapeHtml(w)}</div>`).join('');
+      return `<tr><td class="loc-en-cell">${escapeHtml(row.en)}${enWarns}</td>${cells}</tr>`;
+    }).join('');
+
+    // One banner for a batch-level failure. Without it the only signal is a
+    // column of FAILED badges, which says that nothing worked but not why or
+    // what to do about it.
+    const banner = locResult.provider_error
+      ? `<div class="loc-banner"><strong>No model was reachable</strong>` +
+        `<span class="loc-banner-reason">${escapeHtml(locResult.provider_error)}</span>` +
+        `<span>${escapeHtml(locResult.provider_hint || '')}</span></div>`
+      : '';
+
+    host.innerHTML =
+      `<div class="stacked-card"><h2 class="card-title">Translations</h2>` +
+      banner +
+      `<div class="loc-summary">${escapeHtml(summary.join('  ·  '))}</div>` +
+      `<div class="loc-actions">` +
+      `<button class="secondary-btn small" data-loc-copy="1">Copy all as TSV</button>` +
+      `<button class="secondary-btn small" data-loc-xlsx="1">Export to Excel Sheet</button>` +
+      `</div>` +
+      `<div class="loc-table-wrap"><table class="loc-table">` +
+      `<thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div></div>`;
+
+    host.querySelector('[data-loc-copy]').addEventListener('click', () => {
+      copyText(locTsv(), `${locResult.rows.length} row(s)`);
+    });
+
+    host.querySelector('[data-loc-xlsx]').addEventListener('click', async (evt) => {
+      const btn = evt.currentTarget;
+      btn.disabled = true; btn.textContent = 'Exporting...';
+      const stamp = new Date().toISOString().slice(0, 10);
+      const res = await window.api.locExportXlsx({
+        rows: locResult.rows,
+        languages: locResult.languages,
+        suggestedName: `Skip-Bo translations ${stamp}.xlsx`,
+      });
+      btn.disabled = false; btn.textContent = 'Export to Excel Sheet';
+      if (res.canceled) return;
+      if (!res.success) {
+        log(`Excel export failed: ${res.output}`, 'console-log-error');
+        toast('Excel export failed - see the console.', 'error');
+        return;
+      }
+      let parsed;
+      try { parsed = JSON.parse(res.stdout); }
+      catch (e) { toast('Could not read the export result.', 'error'); return; }
+      if (parsed.error) { toast(parsed.error, 'error'); return; }
+      log(`Exported ${parsed.rows} row(s) to ${parsed.path}. ${parsed.note}`
+        + (parsed.flagged ? ` ${parsed.flagged} cell(s) carry checks - see the `
+          + `Provenance sheet.` : ''), 'console-log-success');
+      toast('Exported to Excel.', 'success');
+    });
+  }
+
+  // The no-key route. Same prompt the MCP server hands Claude Desktop, only
+  // delivered by clipboard, so a designer without an Anthropic key still gets
+  // the memory, the neighbours and the translator's corrections working for
+  // them instead of translating from a blank page.
+  $('#loc-brief-btn').addEventListener('click', async () => {
+    const strings = locStrings();
+    if (!strings.length) { toast('Paste at least one English string first.', 'error'); return; }
+
+    const btn = $('#loc-brief-btn');
+    btn.disabled = true; btn.textContent = 'Building...';
+    const res = await window.api.locBrief({ strings, languages: selectedLocLangs() });
+    btn.disabled = false; btn.textContent = 'Copy brief for Claude';
+
+    if (!res.success) {
+      log(`Could not build the brief: ${res.output}`, 'console-log-error');
+      toast('Could not build the brief — see the console.', 'error');
+      return;
+    }
+    let parsed;
+    try { parsed = JSON.parse(res.stdout); }
+    catch (e) { toast('Could not parse the brief.', 'error'); return; }
+    if (parsed.error) { toast(parsed.error, 'error'); return; }
+
+    await copyText(parsed.text, 'Brief');
+    const c = parsed.counts || {};
+    log(`Brief built for ${c.strings} string(s): ${c.settled} already settled by memory, `
+      + `${c.gaps} needing translation. Paste it into Claude Desktop, then paste the `
+      + `table back — or ask Claude Desktop to run localization_brief itself.`,
+      'console-log-success');
+  });
+
+  // Queue the batch, bring Claude Desktop up, and watch for the answer. The
+  // trigger phrase goes on the clipboard because no claude:// route can carry
+  // it — the app's routes are claude://claude, resume, code/*, and
+  // cowork/shared-artifact, none of which take text.
+  // A queued batch is answered by a person working in Claude Desktop, so the
+  // wait is theirs, not a machine's. A real 124-string batch came back after
+  // 33 minutes; the old ceiling of 300 polls x 2s gave up at 10 and the
+  // finished work — all 744 cells — was never shown. Poll for two hours, and
+  // slow down rather than hammering the synced folder.
+  const LOC_POLL_LIMIT_MS = 2 * 60 * 60 * 1000;
+  function locPollDelay(elapsedMs) {
+    if (elapsedMs < 60000) return 2000;          // first minute: responsive
+    if (elapsedMs < 10 * 60000) return 5000;
+    return 15000;
+  }
+  let locPollTimer = null;
+  // Persisted, not just in-memory: otherwise every restart re-offers a batch
+  // the designer has already loaded, and a banner that cries wolf gets ignored
+  // exactly when it finally matters.
+  const LOC_SEEN_KEY = 'loc.lastLoadedJobId';
+  let locLastJobId = (() => {
+    try { return localStorage.getItem(LOC_SEEN_KEY) || null; } catch (e) { return null; }
+  })();
+  function locRememberJob(jobId) {
+    locLastJobId = jobId;
+    try { localStorage.setItem(LOC_SEEN_KEY, jobId); } catch (e) { /* private mode */ }
+  }
+
+  function locStopPolling() {
+    if (locPollTimer) { clearTimeout(locPollTimer); locPollTimer = null; }
+  }
+
+  function locWaitingBanner(jobId, phrase) {
+    const host = $('#loc-results');
+    const existing = host.querySelector('.loc-banner-wait');
+    const html =
+      `<div class="loc-banner loc-banner-wait"><strong>Waiting for Claude Desktop</strong>` +
+      `<span>Batch <code>${escapeHtml(jobId)}</code> is queued. Claude Desktop should be ` +
+      `open — paste the line below (it is already on your clipboard) and send it. ` +
+      `This table fills in by itself when it comes back.</span>` +
+      `<span class="loc-banner-reason">${escapeHtml(phrase)}</span>` +
+      `<span class="loc-wait-elapsed">Waiting…</span></div>`;
+    if (existing) existing.outerHTML = html;
+    else host.insertAdjacentHTML('afterbegin', html);
+  }
+
+  async function handOffToClaudeDesktop(strings, languages) {
+    const btn = $('#loc-translate-btn');
+    const queued = await window.api.locQueue({ strings, languages });
+    if (!queued.success) {
+      log(queued.output, 'console-log-error');
+      toast(queued.output, 'error');
+      btn.disabled = false; btn.textContent = 'Translate';
+      return;
+    }
+
+    const phrase = 'Do the pending localization batch.';
+    // Not awaited: the clipboard is a convenience, and navigator.clipboard can
+    // reject or stall when the window is not focused. The phrase is shown in
+    // the banner too, so a failed copy must not hold up the handoff.
+    copyText(phrase, 'Trigger phrase');
+    await window.api.locOpenClaudeDesktop();
+    locWaitingBanner(queued.jobId, phrase);
+    btn.disabled = true; btn.textContent = 'Waiting for Claude…';
+    log(`Batch ${queued.jobId} queued for Claude Desktop. Send "${phrase}" there — `
+      + `it will call localization_pending and the table will land back here.`,
+      'console-log-success');
+
+    const startedAt = Date.now();
+    const poll = async () => {
+      locPollTimer = null;
+      const res = await window.api.locQueueResult({ jobId: queued.jobId });
+      if (res.success && res.ready) {
+        locResult = res.result;
+        locRememberJob(queued.jobId);
+        renderLocResults();
+        btn.disabled = false; btn.textContent = 'Translate';
+        const c = res.result.counts || {};
+        const mins = Math.round((Date.now() - startedAt) / 60000);
+        log(`Batch ${queued.jobId} came back after ${mins} min: `
+          + `${c.generated || 0} newly translated, ${c.approved || 0} approved, `
+          + `${c.memory || 0} already shipped.`, 'console-log-success');
+        toast('Translations came back from Claude Desktop.', 'success');
+        return;
+      }
+      const elapsed = Date.now() - startedAt;
+      if (elapsed >= LOC_POLL_LIMIT_MS) {
+        btn.disabled = false; btn.textContent = 'Translate';
+        log(`Stopped watching batch ${queued.jobId} after 2 hours. Nothing is lost — `
+          + `when it finishes, reopen this tab and the panel will offer it.`,
+          'console-log-line');
+        return;
+      }
+      const waiting = document.querySelector('.loc-banner-wait');
+      if (waiting) {
+        const mins = Math.floor(elapsed / 60000);
+        const note = waiting.querySelector('.loc-wait-elapsed');
+        if (note) note.textContent = mins < 1 ? 'Waiting…' : `Waiting ${mins} min…`;
+      }
+      locPollTimer = setTimeout(poll, locPollDelay(elapsed));
+    };
+    locPollTimer = setTimeout(poll, locPollDelay(0));
+  }
+
+  // Live progress from the backend. Without it a large batch shows
+  // "Translating..." and nothing else, and slow is indistinguishable from hung.
+  window.api.onLocProgress((p) => {
+    const btn = $('#loc-translate-btn');
+    if (!btn.disabled) return;                 // a stale line after we finished
+    if (p.stage === 'generating' && p.total > 1) {
+      btn.textContent = `Translating ${p.done}/${p.total}...`;
+    } else {
+      btn.textContent = 'Translating...';
+    }
+    $('#loc-memory-note').textContent = p.detail || '';
+  });
+
+  // Offer a batch that finished while nobody was watching.
+  //
+  // The panel used to stop polling after 10 minutes, and a result that landed
+  // later was unreachable forever even though it was sitting on disk. Checking
+  // on open means closing the app, or walking away, no longer loses the work.
+  async function locOfferFinishedBatch() {
+    const res = await window.api.locLatestResult({ since: locLastJobId });
+    if (!res.success || !res.found) return;
+    const rows = (res.result.rows || []).length;
+    if (!rows) return;
+    const when = new Date(res.mtime).toLocaleString();
+    const host = $('#loc-results');
+    if (host.querySelector('.loc-recover')) return;
+    host.insertAdjacentHTML('afterbegin',
+      `<div class="loc-banner loc-recover"><strong>A finished batch is waiting</strong>` +
+      `<span>${rows} string(s), filed ${escapeHtml(when)}. It came back after this ` +
+      `panel stopped watching.</span>` +
+      `<span><button class="secondary-btn small" data-loc-load="1">Load it</button></span></div>`);
+    host.querySelector('[data-loc-load]').addEventListener('click', () => {
+      locResult = res.result;
+      locRememberJob(res.jobId);
+      renderLocResults();
+      const banner = host.querySelector('.loc-recover');
+      if (banner) banner.remove();
+      log(`Loaded batch ${res.jobId}: ${rows} string(s).`, 'console-log-success');
+    });
+  }
+
+  $('#loc-translate-btn').addEventListener('click', async () => {
+    locStopPolling();
+    const strings = locStrings();
+    if (!strings.length) { toast('Paste at least one English string first.', 'error'); return; }
+
+    if (!activeBranchRoot()) { toast('Set the branch path in Settings first.', 'error'); return; }
+
+    // No designPath is sent on purpose: main.js pins the memory to WorkSpcae3
+    // (the master the corrections land in) rather than following the workspace
+    // picker, so switching workspace for unrelated work cannot change what this
+    // panel considers already-approved.
+    const btn = $('#loc-translate-btn');
+    btn.disabled = true; btn.textContent = 'Translating...';
+    const res = await window.api.locTranslate({
+      strings, languages: selectedLocLangs(),
+    });
+    btn.disabled = false; btn.textContent = 'Translate';
+
+    if (!res.success) {
+      log(`Translation failed: ${res.output}`, 'console-log-error');
+      toast('Translation failed — see the console.', 'error');
+      return;
+    }
+    let parsed;
+    try { parsed = JSON.parse(res.stdout); }
+    catch (e) {
+      log(`Could not parse the translation response: ${res.output}`, 'console-log-error');
+      toast('Could not parse the translation response.', 'error');
+      return;
+    }
+    if (parsed.error) {
+      log(`Translation error: ${parsed.error}`, 'console-log-error');
+      toast(parsed.error, 'error');
+      return;
+    }
+
+    locResult = parsed;
+    renderLocResults();
+
+    const mem = parsed.memory || {};
+    $('#loc-memory-note').textContent =
+      `${(mem.approved_entries || 0).toLocaleString()} approved · ` +
+      `${(mem.shipped_entries || 0).toLocaleString()} shipped · ` +
+      `memory ${mem.snapshot === 'cache' ? 'from cache' : 'rebuilt'}`;
+    if (!mem.approved_entries) {
+      log('Note: no translator-approved memory found — run loc_corrections_import.py '
+        + 'against the LOC Corrections folder to populate it.', 'console-log-line');
+    }
+    // No key and nothing reachable: hand the batch to Claude Desktop instead of
+    // stopping at an error. One message over there is the only manual step.
+    if (parsed.provider_error) {
+      log(`No model reachable: ${parsed.provider_error}`, 'console-log-error');
+      await handOffToClaudeDesktop(strings, selectedLocLangs());
+      return;
+    }
+    const counts = parsed.counts || {};
+    log(`Translated ${parsed.rows.length} string(s): ${counts.approved || 0} approved, `
+      + `${counts.memory || 0} already shipped, ${counts.generated || 0} generated `
+      + `via ${parsed.provider === 'ollama' ? 'local Ollama' : 'Claude'}.`, 'console-log-success');
+  });
+
   async function init() {
     const data = await window.api.getConfig();
     cfg = data.cfg;
@@ -3490,6 +4169,8 @@
     draftAvatarColor = cfg.avatarColor || '';
     draftAvatarImage = cfg.avatarImage || '';
     renderProfileEditor();
+    renderLocLangPicker();
+    renderLocRows();
     await refreshIdeationDataStatus();
 
     populateBranchWorkspaceSelects();
