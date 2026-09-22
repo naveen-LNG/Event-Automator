@@ -1144,6 +1144,89 @@ def main():
         check(any("skipping the scene fruit check" in m for m in msgs4),
               "an unreadable expectation skips instead of blocking", "; ".join(msgs4))
 
+    # ── the new chapter gets its own scene, renumbered ──────────────────────
+    # Scenes are kept per chapter so a designer can reopen an old one. Making
+    # the new one was manual, and when it was skipped the Map Builder read the
+    # previous chapter's and wrote its collectibles into the new chapter's map.
+    print("\n--- step 7: the chapter's scene is created from the last one ---")
+    with tempfile.TemporaryDirectory() as td:
+        design = Path(td) / "design"
+        design.mkdir()
+        wb = openpyxl.Workbook(); ws = wb.active; ws.title = "reward_zone"
+        ws.append(["ID", "start", "end", "bonus", "fruit"])
+        for i, f in enumerate((359, 360, 361, 362)):
+            ws.append([1341 + i, f"章节86关卡{i*50+1}", f"章节86关卡{(i+1)*50}", 0, f])
+        for i, f in enumerate((363, 364, 365, 366)):
+            ws.append([1345 + i, f"章节87关卡{i*50+1}", f"章节87关卡{(i+1)*50}", 0, f])
+        wb.save(str(design / "pve_chapter.xlsx"))
+
+        scenes = Path(td) / "Scenes"
+        scenes.mkdir()
+        src = scenes / "BuilderScene 86.unity"
+        src.write_text(
+            "--- !u!1 &1\nGameObject:\n  m_Name: fruit359 (3)\n"
+            "--- !u!1 &2\nGameObject:\n  m_Name: fruit362 (1)\n"
+            "--- !u!1 &3\nGameObject:\n  m_Name: FruitPanel\n"
+            "--- !u!1 &4\nGameObject:\n  m_Name: LevelPanel\n"
+            "  someOtherField: fruit359 must not be touched here\n", encoding="utf-8")
+        (scenes / "BuilderScene.unity").write_text("GameObject:\n  m_Name: Empty\n",
+                                                   encoding="utf-8")
+
+        cfg9 = _types.SimpleNamespace(design=lambda: str(design), disp_old=86,
+                                      disp_new=87, map_scenes=scenes)
+        msgs = []
+        made = chapter_core.prepare_chapter_scene(cfg9, lambda m, lvl="INFO": msgs.append(m))
+        check(made and made.name == "BuilderScene 87.unity",
+              "the new chapter's scene is created next to the old one", str(made))
+        body = made.read_text(encoding="utf-8")
+        check("m_Name: fruit363 (3)" in body and "m_Name: fruit366 (1)" in body,
+              "fruit objects are renumbered to this chapter's collectibles", body)
+        check("m_Name: fruit359" not in body,
+              "and none of the old chapter's ids survive in a name", body)
+        check("someOtherField: fruit359 must not be touched here" in body,
+              "text outside an m_Name line is left alone", body)
+        check(src.read_text(encoding="utf-8").count("fruit359") == 2,
+              "the source scene is not modified")
+        check(not (scenes / "BuilderScene 87.unity.meta").exists(),
+              "no .meta is copied - a duplicate GUID is worse than a missing one")
+
+        # An existing scene for this chapter is a designer's work: never clobber.
+        made.write_text("EDITED BY A DESIGNER", encoding="utf-8")
+        msgs2 = []
+        again = chapter_core.prepare_chapter_scene(cfg9, lambda m, lvl="INFO": msgs2.append(m))
+        check(again.read_text(encoding="utf-8") == "EDITED BY A DESIGNER",
+              "an existing scene for this chapter is never overwritten")
+        check(any("leaving it alone" in m for m in msgs2),
+              "and the log says so", "; ".join(msgs2))
+
+        # No scene for the previous chapter: say so, do not invent one.
+        cfg10 = _types.SimpleNamespace(design=lambda: str(design), disp_old=40,
+                                       disp_new=41, map_scenes=scenes)
+        msgs3 = []
+        none = chapter_core.prepare_chapter_scene(cfg10, lambda m, lvl="INFO": msgs3.append(m))
+        check(none is None and any("nothing to start" in m for m in msgs3),
+              "no source scene means a clear skip, not an invented file",
+              "; ".join(msgs3))
+
+    # The picker prefers the scene NAMED for this chapter over the newest one.
+    with tempfile.TemporaryDirectory() as td:
+        scenes = Path(td)
+        blocks = "m_Name: FruitPanel\n" * 3
+        (scenes / "BuilderScene 87.unity").write_text(blocks, encoding="utf-8")
+        (scenes / "BuilderScene 86.unity").write_text(blocks + blocks, encoding="utf-8")
+        # make 86 the most recently modified, as reopening it would
+        _t = time.time()
+        os.utime(scenes / "BuilderScene 87.unity", (_t - 500, _t - 500))
+        os.utime(scenes / "BuilderScene 86.unity", (_t, _t))
+        got = chapter_core._pick_map_scene(scenes, "", lambda m, lvl="INFO": None, 87)
+        check(got.name == "BuilderScene 87.unity",
+              "the chapter's own scene wins over a more recently touched one",
+              got.name)
+        got2 = chapter_core._pick_map_scene(scenes, "", lambda m, lvl="INFO": None, 88)
+        check(got2.name == "BuilderScene 86.unity",
+              "with no scene for this chapter it still falls back to the newest",
+              got2.name)
+
     print("")
     if FAILS:
         print(f"{len(FAILS)} CHECK(S) FAILED")

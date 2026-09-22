@@ -2449,7 +2449,7 @@ def run_step2_upload(cfg: AppConfig, log):
 
     log("  ✓ Screenshots committed to SVN")
 
-def _pick_map_scene(scenes_dir, explicit, log):
+def _pick_map_scene(scenes_dir, explicit, log, disp_new=None):
     """Choose the .unity scene that actually holds the map blocks.
 
     The old rule was "sort by name descending, take the first", commented as
@@ -2494,7 +2494,18 @@ def _pick_map_scene(scenes_dir, explicit, log):
             "then run this step again."
         )
 
-    # newest usable scene wins; panel count only breaks ties
+    # A scene named for this chapter wins outright. Scenes are kept per chapter
+    # (BuilderScene 86.unity, BuilderScene 87.unity), so "most recently
+    # modified" picks the PREVIOUS chapter's the moment anyone reopens it to
+    # look at it - which is how chapter 86's collectibles reached chapter 87's
+    # map even though a chapter 87 scene existed.
+    if disp_new is not None:
+        want = re.compile(rf"(?<!\d){disp_new}(?!\d)")
+        named = [t for t in usable if want.search(t[2].stem)]
+        if named:
+            usable = named
+
+    # then the newest usable scene; panel count only breaks ties
     usable.sort(key=lambda t: (t[1], t[0]), reverse=True)
     panels, _, chosen = usable[0]
     log(f"Scene: {chosen.name} ({panels} map blocks)")
@@ -2506,8 +2517,10 @@ def _pick_map_scene(scenes_dir, explicit, log):
     return chosen
 
 
-def expected_chapter_fruits(cfg):
-    """The collectible ids this chapter is supposed to use, from reward_zone.
+def expected_chapter_fruits(cfg, disp=None):
+    """The collectible ids a chapter is supposed to use, from reward_zone.
+
+    `disp` defaults to the chapter being built; pass one to ask about another.
 
     reward_zone column E is where step 6 writes them and where the game reads
     them, so it is the authority - not the harvest sheet's maximum, which step 6
@@ -2525,7 +2538,7 @@ def expected_chapter_fruits(cfg):
         if "reward_zone" not in wb.sheetnames:
             wb.close()
             return None
-        want = f"章节{cfg.disp_new}关卡"
+        want = f"章节{cfg.disp_new if disp is None else disp}关卡"
         ids = {r[4] for r in wb["reward_zone"].iter_rows(min_row=2, values_only=True)
                if r and r[1] and want in str(r[1]) and isinstance(r[4], int)}
         wb.close()
@@ -2534,7 +2547,7 @@ def expected_chapter_fruits(cfg):
     return ids or None
 
 
-def check_scene_fruits(cfg, log, fruit_id_parts):
+def check_scene_fruits(cfg, log, fruit_id_parts, scene_name=""):
     """Refuse to paste the previous chapter's collectibles into the new chapter.
 
     Column F of the map sheet is filled from the fruit GameObject names in the
@@ -2579,6 +2592,7 @@ def check_scene_fruits(cfg, log, fruit_id_parts):
     got = ", ".join(str(i) for i in sorted(found))
     raise RuntimeError(
         f"The scene's collectibles belong to a different chapter.\n\n"
+        f"  scene read:  {scene_name or '(unknown)'}\n"
         f"  chapter {cfg.disp_new} uses:  {exp}\n"
         f"  this scene contains:  {got}\n\n"
         f"Column F of the map sheet is filled from the fruit object names in "
@@ -2594,9 +2608,84 @@ def check_scene_fruits(cfg, log, fruit_id_parts):
     )
 
 
+def prepare_chapter_scene(cfg, log):
+    """Start the new chapter's scene from the previous chapter's, renumbered.
+
+    Scenes are kept per chapter - BuilderScene 86.unity, BuilderScene 87.unity -
+    so a designer can reopen an old chapter and tweak its positions. Making the
+    new one was a manual step, and when it was skipped the Map Builder read the
+    previous chapter's scene and wrote its collectibles into the new chapter's
+    map, which is the bug this pairs with.
+
+    Only the fruit GameObject NAMES are changed. A fruitN object carries a
+    RectTransform and nothing else - its artwork is a child - so the name is the
+    id and the id is all the name is. fileIDs, prefab links and every position
+    are untouched, and the .meta is deliberately not copied because a duplicate
+    GUID is worse than the one Unity will generate.
+
+    The layout is still last chapter's and has to be laid out; that is the point
+    of handing the designer a starting file rather than an empty one. An
+    existing scene for this chapter is never overwritten - it may already hold
+    exactly that work.
+    """
+    scenes = Path(cfg.map_scenes)
+    if not scenes.is_dir():
+        log(f"  ⚠  Map Builder scenes folder not found: {scenes}", "WARN")
+        return None
+
+    disp_old, disp_new = cfg.disp_old, cfg.disp_new
+    old_re = re.compile(rf"(?<!\d){disp_old}(?!\d)")
+    src = next((p for p in sorted(scenes.glob("*.unity")) if old_re.search(p.stem)), None)
+    if src is None:
+        log(f"  – No scene named for chapter {disp_old} in {scenes}, so there is "
+            f"nothing to start chapter {disp_new}'s from - lay it out by hand.")
+        return None
+
+    dst = src.with_name(old_re.sub(str(disp_new), src.stem) + src.suffix)
+    if dst.exists():
+        log(f"  – {dst.name} already exists, leaving it alone")
+        return dst
+
+    old_fruits = expected_chapter_fruits(cfg, disp_old)
+    new_fruits = expected_chapter_fruits(cfg, disp_new)
+    remap = {}
+    if old_fruits and new_fruits and len(old_fruits) == len(new_fruits):
+        remap = dict(zip(sorted(old_fruits), sorted(new_fruits)))
+
+    text = src.read_text("utf-8", errors="replace")
+    renamed = 0
+    if remap:
+        # One pass with a lookup, not four chained replaces: 359->363 followed by
+        # 363->367 would renumber the same object twice. Only m_Name lines are
+        # touched, so nothing else in the YAML can be caught by a stray match.
+        def _sub(m):
+            nonlocal renamed
+            nid = remap.get(int(m.group(2)))
+            if nid is None:
+                return m.group(0)
+            renamed += 1
+            return f"{m.group(1)}{nid}"
+        text = re.sub(r"(m_Name: fruit)(\d+)", _sub, text)
+    else:
+        log(f"  ⚠  Could not read both chapters' collectibles from reward_zone, "
+            f"so {dst.name} keeps chapter {disp_old}'s fruit names - rename them "
+            f"before running the Map Builder", "WARN")
+
+    dst.write_text(text, "utf-8")
+    log(f"  ✓ Created {dst.name} from {src.name}"
+        + (f" ({renamed} fruit object(s) renumbered "
+           f"{min(remap)}–{max(remap)} → {min(remap.values())}–{max(remap.values())})"
+           if remap else ""))
+    log(f"     It is {src.name}'s layout to start from - open it in the Map "
+        f"Builder and lay chapter {disp_new} out before trusting the positions.")
+    return dst
+
+
 def run_step7_map_builder(cfg: AppConfig, scene_file: str, log):
     """Parse Unity scene YAML, extract fruit/map positions, run save_map_data.py."""
-    scene_path = _pick_map_scene(cfg.map_scenes, scene_file, log)
+    if not scene_file:
+        prepare_chapter_scene(cfg, log)
+    scene_path = _pick_map_scene(cfg.map_scenes, scene_file, log, cfg.disp_new)
     log(f"Parsing scene: {scene_path.name} …")
     with open(str(scene_path), "r", encoding="utf-8", errors="replace") as f:
         scene_text = f.read()
@@ -2772,7 +2861,7 @@ def run_step7_map_builder(cfg: AppConfig, scene_file: str, log):
                 dir_str += f"#2|{round(rt.get('ax',0))},{round(rt.get('ay',0))}"
         dir_parts.append(dir_str or "#")
 
-    check_scene_fruits(cfg, log, fruit_id_parts)
+    check_scene_fruits(cfg, log, fruit_id_parts, scene_path.name)
 
     n_blocks = len(parent_to_panels)
     level_data  = f"{n_blocks}#" + "#".join(level_pos_parts)
