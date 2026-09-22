@@ -2506,6 +2506,94 @@ def _pick_map_scene(scenes_dir, explicit, log):
     return chosen
 
 
+def expected_chapter_fruits(cfg):
+    """The collectible ids this chapter is supposed to use, from reward_zone.
+
+    reward_zone column E is where step 6 writes them and where the game reads
+    them, so it is the authority - not the harvest sheet's maximum, which step 6
+    has already advanced by the time step 7 runs.
+
+    Returns None when the sheet cannot be read or the chapter has no zones yet,
+    so the caller can skip the check rather than invent a range.
+    """
+    pvc = Path(cfg.design()) / "pve_chapter.xlsx"
+    if not pvc.exists():
+        return None
+    try:
+        import openpyxl as _oxl
+        wb = _oxl.load_workbook(str(pvc), read_only=True, data_only=True)
+        if "reward_zone" not in wb.sheetnames:
+            wb.close()
+            return None
+        want = f"章节{cfg.disp_new}关卡"
+        ids = {r[4] for r in wb["reward_zone"].iter_rows(min_row=2, values_only=True)
+               if r and r[1] and want in str(r[1]) and isinstance(r[4], int)}
+        wb.close()
+    except Exception:
+        return None
+    return ids or None
+
+
+def check_scene_fruits(cfg, log, fruit_id_parts):
+    """Refuse to paste the previous chapter's collectibles into the new chapter.
+
+    Column F of the map sheet is filled from the fruit GameObject names in the
+    Unity scene ("fruit362 (3)" -> 362). Nothing renumbers them: if the scene is
+    last chapter's, or is a copy nobody has restyled yet, the ids that come out
+    are last chapter's.
+
+    That is what happened on chapter 87. Step 6 had already written fruits
+    363-366 into reward_zone, harvest, icon and asset_ref, and then this step
+    quietly pasted 359-362 - chapter 86's - into the map sheet beside them. It
+    reported success, because as far as it was concerned it had pasted what the
+    scene contained.
+
+    So the two are compared before anything is written. Pasting nothing is
+    recoverable; pasting the wrong collectibles looks finished and ships a map
+    whose fruits belong to the chapter before it.
+    """
+    expected = expected_chapter_fruits(cfg)
+    if not expected:
+        log("  ⚠  Could not read chapter "
+            f"{cfg.disp_new}'s collectibles from reward_zone - skipping the "
+            f"scene fruit check", "WARN")
+        return
+
+    found = set()
+    for part in fruit_id_parts:
+        for n in re.findall(r"\d+", part.split("|", 1)[-1]):
+            if n != "0":
+                found.add(int(n))
+    if not found:
+        log("  ⚠  No fruit ids could be read from the scene's FruitPanels - "
+            "the map's collectible column will be left empty", "WARN")
+        return
+
+    stray = found - expected
+    if not stray:
+        log(f"  ✓ Scene collectibles match chapter {cfg.disp_new} "
+            f"({', '.join(str(i) for i in sorted(found))})")
+        return
+
+    exp = ", ".join(str(i) for i in sorted(expected))
+    got = ", ".join(str(i) for i in sorted(found))
+    raise RuntimeError(
+        f"The scene's collectibles belong to a different chapter.\n\n"
+        f"  chapter {cfg.disp_new} uses:  {exp}\n"
+        f"  this scene contains:  {got}\n\n"
+        f"Column F of the map sheet is filled from the fruit object names in "
+        f"the scene, and nothing renumbers them - so this scene would put "
+        f"{', '.join(str(i) for i in sorted(stray))} into chapter "
+        f"{cfg.disp_new}'s map while reward_zone, harvest, icon and asset_ref "
+        f"all say {exp}.\n\n"
+        f"Nothing has been written. Either open the scene laid out for chapter "
+        f"{cfg.disp_new}, or rename its fruit objects to fruit{min(expected)}"
+        f"-fruit{max(expected)} and re-run this step.\n\n"
+        f"If this scene IS the right one and the ids above are deliberate, say "
+        f"so - the check reads reward_zone, so the two can be reconciled there."
+    )
+
+
 def run_step7_map_builder(cfg: AppConfig, scene_file: str, log):
     """Parse Unity scene YAML, extract fruit/map positions, run save_map_data.py."""
     scene_path = _pick_map_scene(cfg.map_scenes, scene_file, log)
@@ -2683,6 +2771,8 @@ def run_step7_map_builder(cfg: AppConfig, scene_file: str, log):
             elif nm == "CellNextComingSoon":
                 dir_str += f"#2|{round(rt.get('ax',0))},{round(rt.get('ay',0))}"
         dir_parts.append(dir_str or "#")
+
+    check_scene_fruits(cfg, log, fruit_id_parts)
 
     n_blocks = len(parent_to_panels)
     level_data  = f"{n_blocks}#" + "#".join(level_pos_parts)

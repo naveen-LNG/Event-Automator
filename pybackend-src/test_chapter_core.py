@@ -1081,6 +1081,69 @@ def main():
               "an unknown-shaped name survives rather than being mangled",
               f"{leftover}")
 
+    # ── the scene's collectibles must belong to THIS chapter ────────────────
+    # Column F of the map sheet comes from the fruit object names in the Unity
+    # scene, and nothing renumbers them. Chapter 87 got 359-362 - chapter 86's -
+    # pasted in beside a reward_zone that already said 363-366.
+    print("\n--- step 7: the scene's fruit ids are checked against reward_zone ---")
+    with tempfile.TemporaryDirectory() as td:
+        design = Path(td)
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "reward_zone"
+        ws.append(["奖励区域ID", "起始关卡ID", "结束关卡ID", "奖励加成", "采集物种类列表"])
+        for i, fruit in enumerate((359, 360, 361, 362)):
+            ws.append([1341 + i, f"章节86关卡{i*50+1}", f"章节86关卡{(i+1)*50}", 0, fruit])
+        for i, fruit in enumerate((363, 364, 365, 366)):
+            ws.append([1345 + i, f"章节87关卡{i*50+1}", f"章节87关卡{(i+1)*50}", 0, fruit])
+        wb.save(str(design / "pve_chapter.xlsx"))
+
+        cfg7 = _types.SimpleNamespace(design=lambda: str(design), disp_new=87)
+        check(chapter_core.expected_chapter_fruits(cfg7) == {363, 364, 365, 366},
+              "the chapter's own fruit ids are read from reward_zone",
+              repr(chapter_core.expected_chapter_fruits(cfg7)))
+
+        # the scene the failing run used: chapter 86's fruits
+        stale = ["3|359,359,359,", "4|360,360,360,360,", "2|361,361,", "2|362,362,"]
+        try:
+            chapter_core.check_scene_fruits(cfg7, lambda m, lvl="INFO": None, stale)
+            err = ""
+        except RuntimeError as exc:
+            err = str(exc)
+        check("359" in err and "363, 364, 365, 366" in err,
+              "a previous chapter's scene is refused, naming both sets", err[:300])
+        check("Nothing has been written" in err,
+              "and says nothing was written")
+
+        # the right scene passes
+        good = ["3|363,363,363,", "4|364,364,364,364,", "2|365,365,", "2|366,366,"]
+        msgs = []
+        chapter_core.check_scene_fruits(cfg7, lambda m, lvl="INFO": msgs.append(m), good)
+        check(any("match chapter 87" in m for m in msgs),
+              "the correct scene passes", "; ".join(msgs))
+
+        # a subset is fine - not every fruit has to appear on the map
+        msgs2 = []
+        chapter_core.check_scene_fruits(cfg7, lambda m, lvl="INFO": msgs2.append(m),
+                                        ["2|363,363,", "2|365,365,"])
+        check(any("match chapter 87" in m for m in msgs2),
+              "a scene using only some of the chapter's fruits still passes",
+              "; ".join(msgs2))
+
+        # unreadable fruit names ("0,") must not read as a foreign chapter
+        msgs3 = []
+        chapter_core.check_scene_fruits(cfg7, lambda m, lvl="INFO": msgs3.append(m),
+                                        ["2|0,0,", "1|0,"])
+        check(any("No fruit ids" in m for m in msgs3),
+              "unnamed fruit objects warn rather than raise", "; ".join(msgs3))
+
+        # a chapter with no zones yet cannot be checked, and must not block
+        cfg8 = _types.SimpleNamespace(design=lambda: str(design), disp_new=99)
+        msgs4 = []
+        chapter_core.check_scene_fruits(cfg8, lambda m, lvl="INFO": msgs4.append(m), stale)
+        check(any("skipping the scene fruit check" in m for m in msgs4),
+              "an unreadable expectation skips instead of blocking", "; ".join(msgs4))
+
     print("")
     if FAILS:
         print(f"{len(FAILS)} CHECK(S) FAILED")
