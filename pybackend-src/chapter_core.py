@@ -1158,15 +1158,52 @@ def run_step5_art_assets(cfg: AppConfig, log):
         shutil.copytree(str(src_map), str(dst_map))
         log(f"  ✓ Copied dynamic_map_{old_map_id} → dynamic_map_{new_map_id}")
 
-    # Rename files inside (replace old_map_id with new_map_id in filenames)
-    for fpath in dst_map.rglob("*"):
-        if fpath.is_file():
-            old_name = fpath.name
-            new_name = old_name.replace(str(old_map_id), str(new_map_id))
-            new_name = new_name.replace(f"_{old_ch}_", f"_{new_ch}_")
-            if new_name != old_name:
-                fpath.rename(fpath.parent / new_name)
-    log(f"  ✓ Renamed files inside dynamic_map_{new_map_id}")
+    # Rename everything inside to the new chapter. Two numbering systems live in
+    # this folder at once and the old code got both of them wrong:
+    #
+    #   bg_96000/map_86_1.jpg          folder = internal map id, file = DISPLAY
+    #   pve_96000/pve_bg_86.jpg
+    #   starpass_96000/icon_cheststart86.png, img_chapterbg86.png
+    #
+    # It substituted the INTERNAL number into file names - "_96_" against names
+    # carrying "_86_" - so not one artwork file was renamed; and it skipped
+    # directories outright (`if fpath.is_file()`), so the sub-folders kept the
+    # old map id too. Everything came out still named for the previous chapter,
+    # and step 8's converter then failed on the first asset key_asset points at:
+    #   not found asset: .../dynamic_map_97000/pve_97000/pve_bg_87.jpg
+    #
+    # The display number is matched on digit boundaries so "86" inside a longer
+    # run of digits is left alone - map_86_13.jpg must not become map_87_13.jpg
+    # by way of its trailing 13, and the map id is substituted first so it
+    # cannot be clipped by the display pass either.
+    disp_re = re.compile(rf"(?<!\d){cfg.disp_old}(?!\d)")
+
+    def _rename_for_new_chapter(name):
+        name = name.replace(str(old_map_id), str(new_map_id))
+        return disp_re.sub(str(cfg.disp_new), name)
+
+    # Deepest first, so a folder is only renamed once everything inside it has
+    # been - otherwise renaming bg_96000 invalidates the paths still queued
+    # underneath it.
+    renamed = 0
+    for path in sorted(dst_map.rglob("*"), key=lambda p: len(p.parts), reverse=True):
+        new_name = _rename_for_new_chapter(path.name)
+        if new_name != path.name:
+            path.rename(path.parent / new_name)
+            renamed += 1
+    log(f"  ✓ Renamed {renamed} item(s) inside dynamic_map_{new_map_id}")
+
+    # Say so rather than leave it for the converter ten minutes later. A name
+    # still carrying the old chapter means a shape this rename does not know
+    # about, and the asset it stands for will not be where key_asset says it is.
+    stale = [str(p.relative_to(dst_map)) for p in dst_map.rglob("*")
+             if not p.name.endswith(".meta")
+             and (str(old_map_id) in p.name or disp_re.search(p.name))]
+    if stale:
+        log(f"  ⚠  Still named for chapter {cfg.disp_old} after renaming: "
+            f"{', '.join(stale[:6])}{' …' if len(stale) > 6 else ''}", "WARN")
+        log(f"     Step 8's converter checks these paths against key_asset and "
+            f"will fail on them - rename them by hand before running it.", "WARN")
 
     # Delete meta files that Unity will regenerate
     for meta in dst_map.rglob("*.meta"):

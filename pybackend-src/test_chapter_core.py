@@ -1011,6 +1011,76 @@ def main():
               "a missing pve_layout.xlsx skips the check instead of failing",
               "; ".join(warn))
 
+    # ── step 5 renames the dynamic_map folder to the NEW chapter ────────────
+    # Two numbering systems in one folder: sub-folders carry the internal map
+    # id, the artwork files carry the display number. The old code substituted
+    # the internal number into file names and skipped directories entirely, so
+    # nothing was renamed and step 8's converter failed on
+    #   not found asset: .../dynamic_map_97000/pve_97000/pve_bg_87.jpg
+    print("\n--- step 5: dynamic_map is renamed to the new chapter ---")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        client_map = root / "Assets" / "Map"
+        # the real shape, taken from dynamic_map_96000 on disk
+        src = client_map / "dynamic_map_96000"
+        for rel in ["bg_96000/map_86_1.jpg", "bg_96000/map_86_13.jpg",
+                    "pve_96000/pve_bg_86.jpg",
+                    "starpass_96000/icon_cheststart86.png",
+                    "starpass_96000/img_chapterbg86.png",
+                    "bg_96000/map_86_1.jpg.meta"]:
+            f = src / rel
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_bytes(b"x")
+        tex = root / "Assets" / "Texture"
+        (tex / "AdventureMapBg").mkdir(parents=True)
+        (tex / "ChapeDoneBg").mkdir(parents=True)
+
+        cfg5 = _types.SimpleNamespace(
+            old_ch=96, new_ch=97, disp_old=86, disp_new=87,
+            client_map=client_map, client_tex=tex)
+        msgs = []
+        chapter_core.run_step5_art_assets(cfg5, lambda m, lvl="INFO": msgs.append(m))
+
+        dst = client_map / "dynamic_map_97000"
+        got = sorted(str(p.relative_to(dst)).replace("\\", "/")
+                     for p in dst.rglob("*") if p.is_file())
+        want = ["bg_97000/map_87_1.jpg", "bg_97000/map_87_13.jpg",
+                "pve_97000/pve_bg_87.jpg",
+                "starpass_97000/icon_cheststart87.png",
+                "starpass_97000/img_chapterbg87.png"]
+        check(got == want, "every file and folder is renamed to the new chapter",
+              f"got {got}")
+        check(not any("86" in g for g in got),
+              "nothing is left carrying the old display number", f"got {got}")
+        check("map_87_13.jpg" in " ".join(got),
+              "a trailing 13 is not mistaken for part of the chapter number",
+              f"got {got}")
+        check(not list(dst.rglob("*.meta")),
+              "stale .meta files are removed")
+        check(not any("Still named for chapter" in m for m in msgs),
+              "no stale-name warning on a clean rename", "; ".join(msgs))
+
+        # Re-running over an already-renamed folder must change nothing.
+        before = sorted(str(p.relative_to(dst)) for p in dst.rglob("*"))
+        chapter_core.run_step5_art_assets(cfg5, lambda m, lvl="INFO": None)
+        after = sorted(str(p.relative_to(dst)) for p in dst.rglob("*"))
+        check(before == after, "re-running step 5 is a no-op, not a second rename",
+              f"{before} -> {after}")
+
+        # A shape the rename does not know about is reported, not passed on.
+        odd = dst / "pve_97000" / "legacy_86_extra.jpg"
+        odd.write_bytes(b"x")
+        (client_map / "dynamic_map_97000_probe").mkdir()
+        msgs2 = []
+        cfg6 = _types.SimpleNamespace(old_ch=97, new_ch=98, disp_old=87, disp_new=88,
+                                      client_map=client_map, client_tex=tex)
+        chapter_core.run_step5_art_assets(cfg6, lambda m, lvl="INFO": msgs2.append(m))
+        dst2 = client_map / "dynamic_map_98000"
+        leftover = [p.name for p in dst2.rglob("*") if "86" in p.name]
+        check(leftover and any("Still named for chapter" not in m for m in msgs2),
+              "an unknown-shaped name survives rather than being mangled",
+              f"{leftover}")
+
     print("")
     if FAILS:
         print(f"{len(FAILS)} CHECK(S) FAILED")
