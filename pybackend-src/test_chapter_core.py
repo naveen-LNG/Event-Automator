@@ -19,6 +19,7 @@ import os
 import sys
 import time
 import types as _types
+import shutil as _shutil
 import tempfile
 from pathlib import Path
 
@@ -489,15 +490,21 @@ def main():
         for label, fn, needle in [
             ("Magic Builder", chapter_core.run_step1_magic_builder, "CondFilterConf.json"),
             ("Screenshot Upload", chapter_core.run_step2_upload, "Level Builder Py folder"),
-            ("Import Config", chapter_core.run_step8_import_config, "coder_convert.bat"),
+            # Step 8 gained a second gate in front of the converter: it checks
+            # every file key_asset points at before running it. With this bare
+            # config that gate fires first, and its message is the usable one -
+            # so either is accepted rather than pinning the order.
+            ("Import Config", chapter_core.run_step8_import_config,
+             ("coder_convert.bat", "key_asset points at")),
             ("Simulation", chapter_core.run_step9_simulation, "run_conf_2.json"),
         ]:
             try:
                 fn(guessed, quiet)
                 ok, detail = False, "did not raise"
             except Exception as e:
-                ok = needle in str(e) or needle in repr(e)
-                detail = f"{type(e).__name__}: {str(e)[:70]}"
+                needles = needle if isinstance(needle, tuple) else (needle,)
+                ok = any(n in str(e) or n in repr(e) for n in needles)
+                detail = f"{type(e).__name__}: {str(e)[:160]}"
             check(ok, f"{label} fails with a usable message when its files are missing",
                   detail)
 
@@ -1191,11 +1198,13 @@ def main():
               "no .meta is copied - a duplicate GUID is worse than a missing one")
 
         # An existing scene for this chapter is a designer's work: never clobber.
-        made.write_text("EDITED BY A DESIGNER", encoding="utf-8")
+        # "Work" means it has map blocks in it - a saved-but-empty file is a stub
+        # and IS rebuilt, which is covered further down.
+        made.write_text("m_Name: FruitPanel" + chr(10) + "EDITED BY A DESIGNER", encoding="utf-8")
         msgs2 = []
         again = chapter_core.prepare_chapter_scene(cfg9, lambda m, lvl="INFO": msgs2.append(m))
-        check(again.read_text(encoding="utf-8") == "EDITED BY A DESIGNER",
-              "an existing scene for this chapter is never overwritten")
+        check(again.read_text(encoding="utf-8").endswith("EDITED BY A DESIGNER"),
+              "an existing scene with map blocks is never overwritten")
         check(any("leaving it alone" in m for m in msgs2),
               "and the log says so", "; ".join(msgs2))
 
@@ -1226,6 +1235,176 @@ def main():
         check(got2.name == "BuilderScene 86.unity",
               "with no scene for this chapter it still falls back to the newest",
               got2.name)
+
+    # ── every key_asset file is checked before the converter runs ───────────
+    # post_check.lua raises on the FIRST missing asset and stops, so a run
+    # reports exactly one - and a run is the ten-minute one that has already
+    # rewritten the design workbooks. Chapter 87 cost three in a row.
+    print("\n--- step 8: missing art is reported all at once, up front ---")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        design = root / "design"
+        design.mkdir()
+        client = root / "develop" / "client" / "Skipbo"
+        (client / "Assets" / "Map" / "dynamic_map_97000" / "bg_97000").mkdir(parents=True)
+        (client / "Assets" / "Map" / "dynamic_map_97000" / "pve_97000").mkdir(parents=True)
+
+        wb = openpyxl.Workbook(); ws = wb.active; ws.title = "key_asset"
+        ws.append(["资源名", "Alias", "资源路径"])
+        paths = []
+        for i in range(1, 14):
+            p = f"Assets/Map/dynamic_map_97000/bg_97000/map_87_{i}.jpg"
+            ws.append([f"MAP_87_{i}", f"场景八十七地图片{i}", p]); paths.append(p)
+        pve = "Assets/Map/dynamic_map_97000/pve_97000/pve_bg_87.jpg"
+        ws.append(["PVE_BG_87", "背景", pve])
+        # another chapter's row, which must not be reported by this run
+        ws.append(["MAP_86_1", "场景八十六地图片1",
+                   "Assets/Map/dynamic_map_96000/bg_96000/map_86_1.jpg"])
+        wb.save(str(design / "asset_ref.xlsx"))
+
+        cfgk = _types.SimpleNamespace(design=lambda: str(design), branch_root=root,
+                                      new_ch=97, old_ch=96, disp_new=87)
+
+        # only pve_bg exists - exactly the state after the first fix landed
+        (client / pve).write_bytes(b"x")
+        try:
+            chapter_core.check_key_assets(cfgk, lambda m, lvl="INFO": None)
+            err = ""
+        except RuntimeError as exc:
+            err = str(exc)
+        check("13 of 14" in err, "every missing file is counted, not just the first",
+              err[:200])
+        check("map_87_1.jpg" in err and "map_87_13.jpg" in err,
+              "and all of them are listed", err[:400])
+        check("MAP_86_1" not in err,
+              "another chapter's assets are not dragged in", err[:400])
+        check("step 5 (Art Assets)" in err,
+              "the message names the step that produces them")
+
+        # fill them in: the check passes and says how many it saw
+        for p in paths:
+            (client / p).write_bytes(b"x")
+        msgs = []
+        chapter_core.check_key_assets(cfgk, lambda m, lvl="INFO": msgs.append(m))
+        check(any("All 14 key_asset file(s)" in m for m in msgs),
+              "a complete chapter passes", "; ".join(msgs))
+
+        # no rows for this chapter: warn, never block
+        cfgk2 = _types.SimpleNamespace(design=lambda: str(design), branch_root=root,
+                                       new_ch=99, old_ch=98, disp_new=89)
+        msgs2 = []
+        chapter_core.check_key_assets(cfgk2, lambda m, lvl="INFO": msgs2.append(m))
+        check(any("no rows pointing at" in m for m in msgs2),
+              "a chapter with no key_asset rows warns rather than blocking",
+              "; ".join(msgs2))
+
+        # unreadable workbook: warn, never block
+        (design / "asset_ref.xlsx").unlink()
+        msgs3 = []
+        chapter_core.check_key_assets(cfgk, lambda m, lvl="INFO": msgs3.append(m))
+        check(any("skipping the key_asset check" in m for m in msgs3),
+              "a missing asset_ref.xlsx skips instead of failing", "; ".join(msgs3))
+
+    # ── "the folder exists" is not "the folder is done" ─────────────────────
+    # The copy used to be skipped whenever dynamic_map_<new> existed at all. An
+    # empty one - left by a reverted run, or made by Unity or SVN - meant
+    # nothing was copied and the rename then had nothing to rename, so the
+    # folder stayed empty and the converter failed on one missing asset per
+    # ten-minute run. Same bug in the scene: an empty BuilderScene <new>.unity
+    # was left alone, so the fruits were never renumbered.
+    print("\n--- step 5: every state of the destination folder ---")
+
+    def _make_src(cmap):
+        src = cmap / "dynamic_map_96000"
+        for rel in ["bg_96000/map_86_1.jpg", "bg_96000/map_86_13.jpg",
+                    "pve_96000/pve_bg_86.jpg",
+                    "starpass_96000/icon_cheststart86.png"]:
+            f = src / rel
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_bytes(b"src")
+        return src
+
+    WANT = {"bg_97000/map_87_1.jpg", "bg_97000/map_87_13.jpg",
+            "pve_97000/pve_bg_87.jpg", "starpass_97000/icon_cheststart87.png"}
+
+    for state in ("absent", "empty", "old-named", "already correct"):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            cmap = root / "Map"
+            src = _make_src(cmap)
+            dst = cmap / "dynamic_map_97000"
+            if state == "empty":
+                dst.mkdir()
+            elif state == "old-named":
+                _shutil.copytree(str(src), str(dst))
+            elif state == "already correct":
+                _shutil.copytree(str(src), str(dst))
+                for p in sorted(dst.rglob("*"), key=lambda q: len(q.parts), reverse=True):
+                    n = (p.name.replace("96000", "97000").replace("_86_", "_87_")
+                         .replace("_86.", "_87.").replace("86.png", "87.png"))
+                    if n != p.name:
+                        p.rename(p.parent / n)
+            tex = root / "T"
+            (tex / "AdventureMapBg").mkdir(parents=True)
+            (tex / "ChapeDoneBg").mkdir(parents=True)
+            cfgm = _types.SimpleNamespace(old_ch=96, new_ch=97, disp_old=86,
+                                          disp_new=87, client_map=cmap, client_tex=tex)
+            chapter_core.run_step5_art_assets(cfgm, lambda m, lvl="INFO": None)
+            got = {str(p.relative_to(dst)).replace("\\", "/")
+                   for p in dst.rglob("*") if p.is_file()}
+            check(got == WANT, f"destination {state!r} ends up correctly filled",
+                  f"got {sorted(got)}")
+
+    # Real art already in place must never be overwritten by the old chapter's.
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        cmap = root / "Map"
+        _make_src(cmap)
+        dst = cmap / "dynamic_map_97000" / "bg_97000"
+        dst.mkdir(parents=True)
+        (dst / "map_87_1.jpg").write_bytes(b"REAL ART")
+        tex = root / "T"
+        (tex / "AdventureMapBg").mkdir(parents=True)
+        (tex / "ChapeDoneBg").mkdir(parents=True)
+        cfgm = _types.SimpleNamespace(old_ch=96, new_ch=97, disp_old=86,
+                                      disp_new=87, client_map=cmap, client_tex=tex)
+        chapter_core.run_step5_art_assets(cfgm, lambda m, lvl="INFO": None)
+        check((dst / "map_87_1.jpg").read_bytes() == b"REAL ART",
+              "art already in the destination is never overwritten")
+        check((cmap / "dynamic_map_97000" / "pve_97000" / "pve_bg_87.jpg").exists(),
+              "while everything genuinely missing is still filled in")
+
+    # A scene file that exists but holds no map blocks is a stub, not work.
+    with tempfile.TemporaryDirectory() as td:
+        design = Path(td) / "design"
+        design.mkdir()
+        wb = openpyxl.Workbook(); ws = wb.active; ws.title = "reward_zone"
+        ws.append(["ID", "start", "end", "bonus", "fruit"])
+        for i, f in enumerate((359, 360, 361, 362)):
+            ws.append([1341 + i, f"章节86关卡{i*50+1}", f"章节86关卡{(i+1)*50}", 0, f])
+        for i, f in enumerate((363, 364, 365, 366)):
+            ws.append([1345 + i, f"章节87关卡{i*50+1}", f"章节87关卡{(i+1)*50}", 0, f])
+        wb.save(str(design / "pve_chapter.xlsx"))
+        scenes = Path(td) / "Scenes"
+        scenes.mkdir()
+        (scenes / "BuilderScene 86.unity").write_text(
+            "m_Name: FruitPanel\nm_Name: fruit359 (1)\nm_Name: fruit362 (2)\n",
+            encoding="utf-8")
+        stub = scenes / "BuilderScene 87.unity"
+        stub.write_text("m_Name: Empty\n", encoding="utf-8")   # saved, but no blocks
+        cfgs = _types.SimpleNamespace(design=lambda: str(design), disp_old=86,
+                                      disp_new=87, map_scenes=scenes)
+        chapter_core.prepare_chapter_scene(cfgs, lambda m, lvl="INFO": None)
+        body = stub.read_text(encoding="utf-8")
+        check("m_Name: fruit363 (1)" in body and "m_Name: fruit366 (2)" in body,
+              "a scene with no map blocks is rebuilt and its fruits renumbered", body)
+
+        # and one WITH blocks is left completely alone
+        real = "m_Name: FruitPanel\nm_Name: fruit999 (1)\nDESIGNER WORK\n"
+        stub.write_text(real, encoding="utf-8")
+        chapter_core.prepare_chapter_scene(cfgs, lambda m, lvl="INFO": None)
+        check(stub.read_text(encoding="utf-8") == real,
+              "a scene that already has map blocks is never rebuilt")
 
     print("")
     if FAILS:

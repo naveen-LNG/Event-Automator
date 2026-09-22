@@ -1152,11 +1152,18 @@ def run_step5_art_assets(cfg: AppConfig, log):
     dst_map = cfg.client_map / f"dynamic_map_{new_map_id}"
     if not src_map.exists():
         raise FileNotFoundError(f"Source map folder not found: {src_map}")
-    if dst_map.exists():
-        log(f"  dynamic_map_{new_map_id} already exists, skipping copy")
-    else:
-        shutil.copytree(str(src_map), str(dst_map))
-        log(f"  ✓ Copied dynamic_map_{old_map_id} → dynamic_map_{new_map_id}")
+    # The copy used to be skipped whenever the destination folder existed at
+    # all, which treated "the folder is there" as "the folder is done". An empty
+    # or half-filled dynamic_map_97000 - left by a reverted run, or made by
+    # Unity, or by SVN - meant nothing was copied AND the rename below then had
+    # nothing to rename, so the folder stayed empty and the converter failed on
+    # one missing asset per ten-minute run.
+    #
+    # It is filled in per file instead. A file already in the destination is
+    # never overwritten, because that may be the real art somebody has already
+    # put there; only what is genuinely absent is taken from the previous
+    # chapter.
+    dst_map.mkdir(parents=True, exist_ok=True)
 
     # Rename everything inside to the new chapter. Two numbering systems live in
     # this folder at once and the old code got both of them wrong:
@@ -1181,6 +1188,29 @@ def run_step5_art_assets(cfg: AppConfig, log):
     def _rename_for_new_chapter(name):
         name = name.replace(str(old_map_id), str(new_map_id))
         return disp_re.sub(str(cfg.disp_new), name)
+
+    # Fill in whatever the destination is missing, under its new-chapter name.
+    # Both names are checked: a file already sitting there under the OLD name is
+    # left for the rename pass below, so nothing is copied twice.
+    copied = 0
+    for src_file in sorted(src_map.rglob("*")):
+        if not src_file.is_file() or src_file.name.endswith(".meta"):
+            continue
+        rel = src_file.relative_to(src_map)
+        as_is = dst_map / rel
+        renamed_rel = Path(*[_rename_for_new_chapter(part) for part in rel.parts])
+        target = dst_map / renamed_rel
+        if target.exists() or as_is.exists():
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(str(src_file), str(target))
+        copied += 1
+    if copied:
+        log(f"  ✓ Copied {copied} missing file(s) from "
+            f"dynamic_map_{old_map_id} → dynamic_map_{new_map_id}")
+    else:
+        log(f"  – dynamic_map_{new_map_id} already had every file "
+            f"dynamic_map_{old_map_id} has")
 
     # Deepest first, so a folder is only renamed once everything inside it has
     # been - otherwise renaming bg_96000 invalidates the paths still queued
@@ -2643,8 +2673,20 @@ def prepare_chapter_scene(cfg, log):
 
     dst = src.with_name(old_re.sub(str(disp_new), src.stem) + src.suffix)
     if dst.exists():
-        log(f"  – {dst.name} already exists, leaving it alone")
-        return dst
+        # Existing is not the same as done. A scene file that is there but holds
+        # no map blocks is a stub - an empty scene somebody saved, or one left
+        # by a run that went wrong - and leaving it alone meant the fruit names
+        # were never renumbered and step 7 had nothing usable to read. A scene
+        # WITH map blocks is somebody's actual layout and is never touched.
+        try:
+            has_blocks = "m_Name: FruitPanel" in dst.read_text("utf-8", errors="replace")
+        except Exception:
+            has_blocks = True          # unreadable: assume it is real, do not clobber
+        if has_blocks:
+            log(f"  – {dst.name} already exists and has map blocks, leaving it alone")
+            return dst
+        log(f"  {dst.name} exists but contains no map blocks - rebuilding it from "
+            f"{src.name}", "WARN")
 
     old_fruits = expected_chapter_fruits(cfg, disp_old)
     new_fruits = expected_chapter_fruits(cfg, disp_new)
@@ -2948,6 +2990,86 @@ def run_step7_map_builder(cfg: AppConfig, scene_file: str, log):
                 f"in the pve_chapter map sheet, so the map positions were NOT "
                 f"written. Run Asset Config first - it adds those rows.", "WARN")
 
+def check_key_assets(cfg, log):
+    """Every file key_asset points at for this chapter, checked in one go.
+
+    post_check.lua raises on the FIRST asset it cannot find and then stops, so
+    the converter reports exactly one missing file per run - and a run is the
+    ten-minute one that has already rewritten the design workbooks. Chapter 87
+    cost three of those in a row: pve_bg_87.jpg, then map_87_1.jpg, each found
+    only after the previous one was fixed.
+
+    key_asset already lists every path, so all of them can be checked at once,
+    before the converter starts. Scoped to this chapter's map folder: the rest
+    of the sheet is other chapters' assets, and an old breakage there is not
+    this run's business to report.
+    """
+    # Everything here is a courtesy ahead of the converter, so anything it
+    # cannot work out is a reason to step aside, never to stop a run that would
+    # otherwise have gone through.
+    try:
+        ar = Path(cfg.design()) / "asset_ref.xlsx"
+        client = Path(cfg.branch_root) / "develop" / "client" / "Skipbo"
+    except Exception as e:
+        log(f"  ⚠  Could not work out the design/client paths for the "
+            f"key_asset check ({e}) - skipping it", "WARN")
+        return
+    if not ar.exists():
+        log(f"  ⚠  asset_ref.xlsx not found in {cfg.design()} - skipping the "
+            f"key_asset check", "WARN")
+        return
+    try:
+        import openpyxl as _oxl
+        wb = _oxl.load_workbook(str(ar), read_only=True, data_only=True)
+        if "key_asset" not in wb.sheetnames:
+            wb.close()
+            log("  ⚠  asset_ref.xlsx has no key_asset sheet - skipping the "
+                "key_asset check", "WARN")
+            return
+        rows = [(r[0], r[2]) for r in wb["key_asset"].iter_rows(min_row=2, values_only=True)
+                if r and r[2]]
+        wb.close()
+    except Exception as e:
+        log(f"  ⚠  Could not read asset_ref.xlsx for the key_asset check: {e}", "WARN")
+        return
+
+    folder = f"dynamic_map_{cfg.new_ch * 1000}"
+    mine = [(str(name or ""), str(path)) for name, path in rows if folder in str(path)]
+    if not mine:
+        log(f"  ⚠  key_asset has no rows pointing at {folder}, so the map assets "
+            f"for chapter {cfg.disp_new} could not be checked", "WARN")
+        return
+
+    missing = [(n, p) for n, p in mine if not (client / p.replace("\\", "/")).exists()]
+    if not missing:
+        log(f"  ✓ All {len(mine)} key_asset file(s) for chapter {cfg.disp_new} "
+            f"are on disk")
+        return
+
+    lines = [f"{len(missing)} of {len(mine)} art file(s) key_asset points at for "
+             f"chapter {cfg.disp_new} are not on disk.", ""]
+    for n, p in missing[:20]:
+        lines.append(f"  {n or '(unnamed)'}: {p}")
+    if len(missing) > 20:
+        lines.append(f"  … and {len(missing) - 20} more")
+    lines += [
+        "",
+        f"Checked under: {client}",
+        "",
+        "The converter stops at the first one of these it meets, so it would "
+        "report one per run and a run takes minutes - they are listed together "
+        "here instead, before anything is converted.",
+        "",
+        f"These come from step 5 (Art Assets), which copies "
+        f"dynamic_map_{cfg.old_ch * 1000} and renames it. If that step was "
+        f"skipped, or the client folder was reverted after it ran, re-run it. "
+        f"If a file is genuinely new art that does not exist yet, it has to be "
+        f"produced or the key_asset row removed - the converter will not pass "
+        f"without it.",
+    ]
+    raise RuntimeError("\n".join(lines))
+
+
 def run_step8_import_config(cfg: AppConfig, log):
     """Run the coder_convert batch script for the active workspace.
 
@@ -2962,6 +3084,10 @@ def run_step8_import_config(cfg: AppConfig, log):
     table in the workspace and takes minutes, so buffering it until the end
     would leave the console pane empty and looking stuck for the whole run.
     """
+    # Before the converter, not through it: post_check.lua reports one missing
+    # asset per run and each run costs minutes.
+    check_key_assets(cfg, log)
+
     root = cfg.design_root()
     bat = root / "coder_convert_not_pause.bat"
     if not bat.exists():
