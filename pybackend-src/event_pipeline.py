@@ -7666,7 +7666,16 @@ def clone_event_id_resources(proj_root, src_evt, tgt_evt, log_dir, step_index):
             for n, src_p in live.items():
                 dst = os.path.join(folder, tgt_name(n))
                 if dst.endswith(".meta") and os.path.exists(dst):
-                    continue  # keep a .meta that's already there (restore: it holds the same GUID)
+                    # Keep a .meta that's already there - and record whose GUID it stands in
+                    # for. The asset copied beside it takes THIS file's GUID, so every link to
+                    # the source's GUID (in prefabs copied here, and in the event's own prefabs
+                    # repointed below) has to move to it; otherwise they keep pointing at the
+                    # source event's image. Same-ID restore: both GUIDs are the original, so
+                    # this maps a GUID to itself and changes nothing.
+                    gs, gt = _meta_guid(src_p), _meta_guid(dst)
+                    if gs and gt and gs != gt:
+                        guid_map[gs] = gt
+                    continue
                 if os.path.isdir(src_p):
                     shutil.copytree(src_p, dst, dirs_exist_ok=True)  # may land in an emptied leftover folder
                     new_files = [os.path.join(dp, f) for dp, _, fn in os.walk(dst) for f in fn]
@@ -7682,11 +7691,15 @@ def clone_event_id_resources(proj_root, src_evt, tgt_evt, log_dir, step_index):
         shutil.rmtree(tmp, ignore_errors=True)
 
     fresh = _fresh_guid_map(created)
-    if restore:
+    if restore and created:   # nothing restored = nothing to check; skip the 30s scan
         # Restored files keep their ORIGINAL GUIDs, so every existing link to them in the event's
         # own prefabs resolves again untouched. The one exception: a GUID something else now
         # owns (the team renames these files forward, e.g. <id>_img_token -> the next event's,
         # which keeps the GUID) — a duplicate would confuse Unity, so that file gets a new one.
+        # Scans every .meta under Assets: ~67k GUIDs, around 30s on a dev machine. Said up
+        # front, or the step sits silent for half a minute and looks hung.
+        log(f"Checking {len(created)} restored file(s) against every GUID in Assets "
+            f"(reads each .meta once - this takes about half a minute)...")
         in_use = _guids_in_use(os.path.join(proj_root, "develop", "client", "Skipbo", "Assets"), set(created))
         fresh = {g: n for g, n in fresh.items() if g in in_use}
         if fresh:

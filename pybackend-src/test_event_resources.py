@@ -103,11 +103,105 @@ def main():
         check(not os.path.exists(os.path.join(tgt, "Prefabs")),
               "real assets present: the folder is left exactly as it was")
 
+    step25()
+
     print("")
     if FAILS:
         print(f"{len(FAILS)} CHECK(S) FAILED")
         sys.exit(1)
     print("EVENT RESOURCES OK")
+
+
+S_GUID, O_GUID = "5" * 32, "0" * 32
+
+
+def _branch_for_step25(root, rows, tgt_id):
+    """events.xlsx with `rows`, extra_args naming tgt_id, and an empty Common tree."""
+    import json
+    import openpyxl
+    design = os.path.join(root, "design", "DesignData", ep.WORKSPACE_NAME, "design")
+    os.makedirs(design)
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "events"
+    ws.append(["ID", "Alias", "", "", "", "", "", "Start"])
+    for eid, alias, start in rows:
+        ws.append([eid, alias, "", "", "", "", "", start])
+    wb.save(os.path.join(design, "events.xlsx"))
+    log_dir = os.path.join(root, "log")
+    os.makedirs(log_dir)
+    with open(os.path.join(log_dir, "extra_args.json"), "w") as f:
+        json.dump({"event_id": tgt_id, "src_start_time": ""}, f)
+    events = os.path.join(root, "develop", "client", "Skipbo", "Assets", "ResourcesAb", "Events")
+    img = os.path.join(events, "Common", "Icon", "CommonEventImg")
+    os.makedirs(img)
+    return log_dir, events, img
+
+
+def _write(p, text):
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with open(p, "w", newline="\n") as f:
+        f.write(text)
+
+
+def step25():
+    print("\n--- step 25: event-ID resources ---")
+
+    # New ID, with a leftover target-named .meta already in place. The copied image takes
+    # that .meta's GUID, so the event's own prefab must be repointed to it - not left on
+    # the source event's image.
+    with tempfile.TemporaryDirectory() as td:
+        log_dir, events, img = _branch_for_step25(
+            td, [(20260801, "Merge2608活动", "2026-08-06")], "20261101")
+        with open(os.path.join(img, "20260801_img_token.png"), "wb") as f:
+            f.write(b"PNG-token")
+        _write(os.path.join(img, "20260801_img_token.png.meta"), f"fileFormatVersion: 2\nguid: {S_GUID}\n")
+        _write(os.path.join(img, "20261101_img_token.png.meta"), f"fileFormatVersion: 2\nguid: {O_GUID}\n")
+        prefab = os.path.join(events, "Merge2611", "Prefabs", "UIMerge2611Panel.prefab")
+        _write(prefab, f"%YAML 1.1\n--- !u!1 &1\n  m_Sprite: {{fileID: 21300000, guid: {S_GUID}, type: 3}}\n")
+
+        ep.clone_event_id_resources(td, "merge2608", "merge2611", log_dir, 24)
+
+        check(os.path.isfile(os.path.join(img, "20261101_img_token.png")),
+              "new ID: the image is copied under the new ID")
+        meta = open(os.path.join(img, "20261101_img_token.png.meta")).read()
+        check(O_GUID in meta, "new ID: the leftover .meta is kept as it was", meta)
+        body = open(prefab).read()
+        check(f"guid: {O_GUID}" in body and S_GUID not in body,
+              "new ID: the event's prefab now points at the copied image, not the source's",
+              body)
+
+    # Same name, same ID: the event's own deleted files come back from SVN in place.
+    with tempfile.TemporaryDirectory() as td:
+        log_dir, events, img = _branch_for_step25(
+            td, [(20251002, "Merge2510活动", "2025-10-16")], "20251002")
+        staged = os.path.join(td, "svn_copy")
+        os.makedirs(staged)
+        with open(os.path.join(staged, "20251002_img_token.png"), "wb") as f:
+            f.write(b"PNG-original")
+        _write(os.path.join(staged, "20251002_img_token.png.meta"), f"fileFormatVersion: 2\nguid: {S_GUID}\n")
+
+        def fake_svn(folder, prefix, hint, dest):
+            if "CommonEventImg" not in folder:
+                return {}
+            return {n: os.path.join(staged, n) for n in os.listdir(staged) if n.startswith(prefix)}
+
+        real_svn, real_log = ep._svn_export_deleted, ep.log
+        seen = []
+        ep._svn_export_deleted = fake_svn
+        ep.log = lambda m, *a, **k: seen.append(str(m))
+        try:
+            ep.clone_event_id_resources(td, "merge2510", "merge2510", log_dir, 24)
+        finally:
+            ep._svn_export_deleted, ep.log = real_svn, real_log
+
+        check(os.path.isfile(os.path.join(img, "20251002_img_token.png")),
+              "same ID: the deleted image is restored in place")
+        meta = open(os.path.join(img, "20251002_img_token.png.meta")).read()
+        check(S_GUID in meta, "same ID: it keeps its ORIGINAL GUID, so old links resolve", meta)
+        check(any("Checking" in m and "GUID in Assets" in m for m in seen),
+              "same ID: the long GUID scan is announced before it starts",
+              [m for m in seen if "GUID" in m])
 
 
 if __name__ == "__main__":
