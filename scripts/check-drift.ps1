@@ -150,6 +150,22 @@ if (Test-Path $repoBackendSrc) {
     }
 }
 
+# --- Reverse pass: tracked in this repo but gone from the live tool ---
+# Every comparison above walks the LIVE side, and Compare-File returns early when
+# the live file is missing - so a file deleted from the live tree was never visited
+# and never reported. main.js was deleted from the live tool once and this script
+# still said "No drift detected". Walk what the repo tracks instead.
+# (pybackend-src is excluded: it mirrors PythonBackend, checked just above.)
+$repoOnlyFiles = @("README.md", ".gitignore")
+foreach ($rel in (git -C $repoRoot -c core.quotepath=off ls-files)) {
+    if ($rel -like "pybackend-src/*" -or $rel -like "githooks/*" -or $rel -like "release/*") { continue }
+    if ($repoOnlyFiles -contains $rel) { continue }
+    $livePath = Join-Path $liveDesktop ($rel -replace '/', '\')
+    if (-not (Test-Path -LiteralPath $livePath)) {
+        $drift += "IN REPO BUT MISSING FROM LIVE TOOL: $rel"
+    }
+}
+
 # --- Catch-all: any top-level content in the live tool that this script does
 # not already classify. Without this, a brand-new folder is invisible to the
 # drift check entirely - which is exactly how ideationData\Roadmap\Roadmap.xlsx
