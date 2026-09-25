@@ -5,7 +5,25 @@ import json
 import traceback
 import re
 import copy as _copy
+import builtins
 from xlsx_safe import load_workbook_frozen
+
+
+def open(file, mode='r', *args, **kwargs):  # noqa: A001 - deliberately shadows builtins.open
+    """Every text-mode write in this module goes through here. Python's text mode on Windows
+    turns each '\\n' into '\\r\\n', so re-saving an LF file (storagedata.proto; convert.json in
+    WorkSpcae3/WorkSpcae_NE) silently converts ALL its line endings — SVN then shows a
+    whole-file change. An existing file keeps its own line endings; new files are unchanged.
+    ponytail: sniffs the first 64 KB; a file that mixes endings is treated as CRLF (the old behaviour)."""
+    if 'w' in mode and 'b' not in mode and 'newline' not in kwargs and len(args) < 3:
+        try:
+            with builtins.open(file, 'rb') as f:
+                head = f.read(65536)
+            if b'\n' in head and b'\r\n' not in head:
+                kwargs['newline'] = '\n'
+        except OSError:
+            pass
+    return builtins.open(file, mode, *args, **kwargs)
 
 
 WORKSPACE_NAME = "WorkSpcae_Design"
@@ -256,6 +274,11 @@ def copy_and_rename_file(src_path, dest_path, old_name, new_name, root_path, ste
     if not os.path.exists(src_path):
         log(f"Error: Source file not found: {src_path}")
         return False
+    if os.path.exists(dest_path):
+        # A reopen under the same name makes src and dest the SAME file. Rewriting it and
+        # recording it as "created" meant Undo deleted the event's real, committed script.
+        log(f"{os.path.basename(dest_path)} already exists — left untouched.")
+        return True
 
     try:
         os.makedirs(os.path.dirname(dest_path), exist_ok=True)
@@ -1686,13 +1709,62 @@ def get_localize_event_rows_for_source(loc_path, src_lower, hint_date, log_dir):
                 rows.append([(ws.cell(r, c).value, cell_style_to_dict(ws.cell(r, c))) for c in range(1, ws.max_column + 1)])
         return rows
 
+    def _header(ws):
+        return [h for h in (str(ws.cell(1, c).value or "").strip() for c in range(1, ws.max_column + 1)) if h]
+
+    def _launch_rows():
+        """src_lower's localize_event rows as the event shipped: the shipping workspace's
+        (WorkSpcae3) file the day after the source started. The active workspace's own history
+        can be stale — WorkSpcae_Design had no localization commit from 2025-09-18 until well
+        after Merge2510 launched on 2025-10-16."""
+        from datetime import datetime, timedelta
+        try:
+            day = (datetime.strptime(hint_date.strip()[:10], "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+        except Exception:
+            return None, None
+        design_data = os.path.dirname(os.path.dirname(os.path.dirname(loc_path)))
+        for path in dict.fromkeys([os.path.join(design_data, "WorkSpcae3", "design", "localization.xlsx"), loc_path]):
+            data = svn_cat_revision_bytes(path, "{%s}" % day) if os.path.exists(path) else None
+            try:
+                wb_hist = _oxl.load_workbook(_io.BytesIO(data), data_only=True) if data else None
+            except Exception:
+                wb_hist = None
+            if not wb_hist or active_sheet_name not in wb_hist.sheetnames:
+                continue
+            ws_hist = wb_hist[active_sheet_name]
+            # ponytail: rows are copied by position, so a column layout change since launch skips
+            # the snapshot instead of shifting translations into the wrong language; remap by header if that ever bites.
+            if active_sheet_name in wb_live.sheetnames and _header(ws_hist) != _header(wb_live[active_sheet_name]):
+                log(f"localize_event: {os.path.basename(os.path.dirname(os.path.dirname(path)))} @ {day} has different "
+                    f"columns than today's sheet — not used.")
+                continue
+            rows = _rows_from_sheet(ws_hist)
+            if rows:
+                return rows, f"{active_sheet_name} as shipped ({os.path.basename(os.path.dirname(os.path.dirname(path)))} @ {day})"
+        return None, None
+
+    def _loc_key(v):
+        return str(v or "").replace("//", "").strip().upper()
+
+    def _topped_up(rows, label):
+        # 旧活动备份 keeps only part of an event — Merge2510's archive held 94 of the 151 rows it
+        # shipped with (its 建筑名 / NPC对话 groups were deleted outright), so the rest come from the launch snapshot.
+        snap, snap_label = _launch_rows()
+        have = {_loc_key(r[0][0]) for r in rows}
+        extra = [r for r in snap or [] if _loc_key(r[0][0]) not in have]
+        if not extra:
+            return rows, label
+        log(f"localize_event: {len(extra)} row(s) of {src_lower} missing from {label} — recovered from {snap_label}.")
+        return rows + extra, f"{label} + {len(extra)} from {snap_label}"
+
     if backup_sheet_name in wb_live.sheetnames:
         rows = _rows_from_sheet(wb_live[backup_sheet_name])
         if rows:
+            rows, label = _topped_up(rows, f"{backup_sheet_name} backup sheet ({len(rows)} row(s))")
             cache = load_named_cache(log_dir, "localize_event_cache")
-            cache[src_lower] = {"rows": rows, "source": f"{backup_sheet_name} (live)", "cached_at": _cache_timestamp()}
+            cache[src_lower] = {"rows": rows, "source": label, "cached_at": _cache_timestamp()}
             save_named_cache(log_dir, "localize_event_cache", cache)
-            return rows, f"{backup_sheet_name} backup sheet ({len(rows)} row(s))"
+            return rows, label
 
     if active_sheet_name in wb_live.sheetnames:
         rows = _rows_from_sheet(wb_live[active_sheet_name])
@@ -1705,12 +1777,21 @@ def get_localize_event_rows_for_source(loc_path, src_lower, hint_date, log_dir):
     cache = load_named_cache(log_dir, "localize_event_cache")
     cached_entry = cache.get(src_lower)
     if cached_entry and cached_entry.get("rows"):
-        return cached_entry["rows"], f"local cache (from {cached_entry.get('source', '?')}, cached {cached_entry.get('cached_at', '?')})"
+        label = f"local cache (from {cached_entry.get('source', '?')}, cached {cached_entry.get('cached_at', '?')})"
+        if "as shipped" in label:  # already topped up (or taken whole) from the launch snapshot
+            return cached_entry["rows"], label
+        return _topped_up(cached_entry["rows"], label)
 
     if not event_ever_registered_in_convert_json(loc_path, src_lower, hint_date):
         log(f"localize_event: {src_lower} never appears in convert.json (current or history) and wasn't in "
             f"{backup_sheet_name} or the live {active_sheet_name} sheet — skipping the expensive SVN search.")
         return None, None
+
+    rows, label = _launch_rows()
+    if rows:
+        cache[src_lower] = {"rows": rows, "source": label, "cached_at": _cache_timestamp()}
+        save_named_cache(log_dir, "localize_event_cache", cache)
+        return rows, f"SVN {label}"
 
     revisions = get_svn_revisions_in_date_range(loc_path, hint_date) if hint_date else None
     if not revisions:
@@ -3292,17 +3373,32 @@ def update_event_shop_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
                         segments.append(seg)
             
             if len(segments) > 2:
-                keep_segments = segments[-2:]
-                log(f"item_sheet: Keeping groups {keep_segments} active. Commenting others.")
+                # The last two groups, plus the target's own: a reopen under the same name keeps
+                # its items in their original (older, mid-sheet) group, which "last two" alone
+                # would comment straight back out right after uncommenting it (Merge2510: 1035).
+                keep_segments = list(dict.fromkeys(segments[-2:] + [i // 100 for i in new_item_ids if isinstance(i, int)]))
+                # ...and whatever an ACTIVE shop row still sells. WorkSpcae3 keeps every recent
+                # event's shop live (13 groups, Blocks2604..Blocks2610); commenting their items left
+                # e.g. Merge2608's shop pointing at 105501-105504, and c_data's reference check then
+                # aborts the whole coder_convert ("value:105501 not exist in event_shop_sale_item").
+                sold = set()
+                if "event_shop" in wb.sheetnames:
+                    ws_s = wb["event_shop"]
+                    for sr in range(2, ws_s.max_row + 1):
+                        if str(ws_s.cell(sr, 1).value or "").strip().startswith("//"):
+                            continue
+                        for sc in range(1, ws_s.max_column + 1):
+                            sold.update(int(x) for x in re.findall(r'(?<!\d)\d{6}(?!\d)', str(ws_s.cell(sr, sc).value or "")))
+                log(f"item_sheet: Keeping groups {keep_segments} active, plus any item an active shop still sells. Commenting others.")
                 for r in range(2, real_max + 1):
                     val = ws_item.cell(r, 1).value
                     if val:
                         id_v = get_id_value(val)
-                        if id_v and (id_v // 100) not in keep_segments:
+                        if id_v and (id_v // 100) not in keep_segments and id_v not in sold:
                             s_val = str(val).strip()
                             if not s_val.startswith("//"):
                                 ws_item.cell(r, 1, "//" + s_val)
-                        elif id_v and (id_v // 100) in keep_segments:
+                        elif id_v and ((id_v // 100) in keep_segments or id_v in sold):
                             s_val = str(val).strip()
                             if s_val.startswith("//"):
                                 ws_item.cell(r, 1, s_val[2:].strip())
@@ -3634,8 +3730,11 @@ def update_icon_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
             if "备份" in sheet_name: continue
             ws_f = wb_icon[sheet_name]
             for r in range(2, ws_f.max_row + 1):
-                v = str(ws_f.cell(r, 1).value or "").strip().upper()
-                if v: all_final_icons.add(v)
+                # item.xlsx's 物品ICON columns name icons by ALIAS (col 2, e.g. "MERGE2510代币"), not
+                # key — checking keys alone flagged all 17 of Merge2510's (all present) as missing art.
+                for c in (1, 2):
+                    v = str(ws_f.cell(r, c).value or "").strip().upper()
+                    if v: all_final_icons.add(v)
                 
         missing_icons = []
         for req_icon in required_tgt_icons:
@@ -3925,26 +4024,30 @@ def update_localization_main_excel(proj_root, src_evt, tgt_evt, log_dir, step_in
         # 1c. localize_event — backup-first (localize_旧活动备份), then cache, then SVN
         # history. Never falls back to a placeholder — if nothing is found anywhere,
         # that's logged plainly and left for a human, not papered over.
+        # Gap-aware rather than skip-if-any-present: a reopen (or a re-run) that already holds part
+        # of the event gets only the rows it still lacks.
         if "localize_event" in wb.sheetnames:
             ws_le = wb["localize_event"]
-            tgt_already_present = any(tgt_lower in str(ws_le.cell(r, 1).value or "").lower() for r in range(2, ws_le.max_row + 1))
-            if tgt_already_present:
-                log(f"localize_event: {tgt_evt} already present. Skipping.")
+            have = {str(ws_le.cell(r, 1).value or "").replace("//", "").strip().upper() for r in range(2, ws_le.max_row + 1)}
+            le_rows, le_label = get_localize_event_rows_for_source(file_path, src_lower, src_start_time, log_dir)
+            new_rows = [rp for rp in le_rows or []
+                        if str(swap_name(rp[0][0]) or "").replace("//", "").strip().upper() not in have]
+            if new_rows:
+                log(f"localize_event: Resolved {len(le_rows)} row(s) for {src_evt} from {le_label}.")
+                insert_at = ws_le.max_row + 1
+                for row_pairs in new_rows:
+                    for c_idx, (v, style) in enumerate(row_pairs):
+                        dst_c = ws_le.cell(insert_at, c_idx + 1, swap_name(v))
+                        apply_cell_style_dict(dst_c, style)
+                    insert_at += 1
+                log(f"localize_event: Appended {len(new_rows)} row(s) for {tgt_evt}"
+                    f"{f' ({len(le_rows) - len(new_rows)} already present)' if len(new_rows) < len(le_rows) else ''}.")
+                modified = True
+            elif le_rows:
+                log(f"localize_event: all {len(le_rows)} row(s) of {src_evt} already present for {tgt_evt}. Skipping.")
             else:
-                le_rows, le_label = get_localize_event_rows_for_source(file_path, src_lower, src_start_time, log_dir)
-                if le_rows:
-                    log(f"localize_event: Resolved {len(le_rows)} row(s) for {src_evt} from {le_label}.")
-                    insert_at = ws_le.max_row + 1
-                    for row_pairs in le_rows:
-                        for c_idx, (v, style) in enumerate(row_pairs):
-                            dst_c = ws_le.cell(insert_at, c_idx + 1, swap_name(v))
-                            apply_cell_style_dict(dst_c, style)
-                        insert_at += 1
-                    log(f"localize_event: Appended {len(le_rows)} row(s) for {tgt_evt}.")
-                    modified = True
-                else:
-                    log(f"localize_event: WARNING — no data found for {src_evt} anywhere (not live, not in "
-                        f"localize_旧活动备份, not cached, not in SVN history). Needs manual entry — no placeholder created.")
+                log(f"localize_event: WARNING — no data found for {src_evt} anywhere (not live, not in "
+                    f"localize_旧活动备份, not cached, not in SVN history). Needs manual entry — no placeholder created.")
 
         # 1d. localize_server — pure accumulator, always live so far. Simple scan + clone.
         if "localize_server" in wb.sheetnames:
@@ -5861,13 +5964,21 @@ def update_sys_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
         ws = wb["DeepLink"]
         modified = False
 
+        # A reopen under the same name (or a re-run) finds the target's Share group already in
+        # sys.xlsx, and <tgt>.xlsx already uses exactly those IDs. Remapping it anyway pointed
+        # every share link at IDs that are never created (Merge2510: 11810.. -> 12639.., none exist).
+        tgt_share_exists = any(tgt_evt.lower() in str(ws.cell(r, 2).value or "").lower()
+                               for r in range(1, row_achieve_divider + 1))
+        if src_share_rows and tgt_share_exists:
+            log(f"sys.xlsx: {tgt_evt}'s Share group already exists — {tgt_evt}.xlsx keeps its IDs (no remap).")
+
         # 3. Update Sim2605.xlsx if we have Share IDs to map
-        if src_share_rows and not os.path.exists(tgt_evt_xlsx):
+        if src_share_rows and not tgt_share_exists and not os.path.exists(tgt_evt_xlsx):
             log(f"Warning: {tgt_evt}.xlsx not found — skipping in-file Share ID remap. "
                 f"That workbook will still reference the OLD (unshifted) DeepLink IDs until this step "
                 f"is re-run after {tgt_evt}.xlsx exists (normally created by step 6).")
 
-        if src_share_rows and os.path.exists(tgt_evt_xlsx):
+        if src_share_rows and not tgt_share_exists and os.path.exists(tgt_evt_xlsx):
             # Get the exact numeric values from scan result
             wb_ref = openpyxl.load_workbook(sys_path, data_only=True)
             ws_ref = wb_ref["DeepLink"]
@@ -6458,8 +6569,20 @@ def update_event_config_lua(proj_root, src_evt, tgt_evt, log_dir, step_index):
     with open(file_path, 'r', encoding='utf-8') as f:
         content = f.read()
 
-    if re.search(rf'(?m)^\s*{re.escape(tgt_pascal)}\s*=\s*\{{', content):
-        log(f"EventConfig.lua: {tgt_pascal} already registered. Skipping.")
+    existing = re.search(rf'(?m)^[ \t]*{re.escape(tgt_pascal)}\s*=\s*\{{[^}}]*\}}', content)
+    if existing:
+        # Reopening an event under its own name finds its old entry, which was switched off
+        # when the event closed (Merge2510: Enable = false). Same docx rule as a new event.
+        if not re.search(r'Enable\s*=\s*false', existing.group(0)):
+            log(f"EventConfig.lua: {tgt_pascal} already registered and enabled. Skipping.")
+            return True
+        backup_path = file_path + ".bak"
+        shutil.copy2(file_path, backup_path)
+        record_file_creation(log_dir, step_index, backup_path)
+        block = re.sub(r'Enable\s*=\s*false', 'Enable = true', existing.group(0))
+        with open(file_path, 'w', encoding='utf-8') as f:
+            f.write(content[:existing.start()] + block + content[existing.end():])
+        log(f"EventConfig.lua: {tgt_pascal} was already registered but disabled — set Enable = true.")
         return True
 
     match = re.search(rf'([ \t]*{re.escape(src_pascal)}\s*=\s*\{{[^}}]*\}},?)', content, re.DOTALL)
@@ -6525,6 +6648,21 @@ def update_bidef_lua(proj_root, src_evt, tgt_evt, log_dir, step_index):
     return True
 
 
+def _special_panel_lines_from_svn(file_path, src_pascal, hint_date):
+    """The source's SpecialPanelMap line(s) from UIManager.lua's SVN history. They're removed
+    once an event closes (Merge2510's was), so reopening an older event has nothing live to
+    clone. Date-bracketed by the source's start, newest revision first."""
+    revs = get_svn_revisions_in_date_range(file_path, hint_date) if hint_date else None
+    for rev in revs or get_svn_log_revisions(file_path, limit=60) or []:
+        old = svn_cat_revision(file_path, rev) or ''
+        m = re.search(r'local\s+SpecialPanelMap\s*=\s*\{(.*?)\n[ \t]*\}', old, re.DOTALL)
+        lines = re.findall(rf'[ \t]*\["UI{re.escape(src_pascal)}\w*"\]\s*=\s*true,', m.group(1)) if m else []
+        if lines:
+            log(f"UIManager.lua: recovered UI{src_pascal}*'s SpecialPanelMap line(s) from r{rev}.")
+            return lines
+    return []
+
+
 def update_ui_manager_special_panel_map(proj_root, src_evt, tgt_evt, log_dir, step_index):
     """UIManager.lua's SpecialPanelMap: ["UI<Event>...Panel"] = true, — suffix
     (LoadingPanel vs StageLoadingPanel etc.) varies per event, so clone whatever
@@ -6555,7 +6693,9 @@ def update_ui_manager_special_panel_map(proj_root, src_evt, tgt_evt, log_dir, st
 
     src_lines = re.findall(rf'[ \t]*\["UI{re.escape(src_pascal)}\w*"\]\s*=\s*true,', table_body)
     if not src_lines:
-        log(f"Warning: UIManager.lua's SpecialPanelMap has no entry for UI{src_pascal}*. Skipping.")
+        src_lines = _special_panel_lines_from_svn(file_path, src_pascal, load_extra_args(log_dir).get("src_start_time", ""))
+    if not src_lines:
+        log(f"Warning: UIManager.lua's SpecialPanelMap has no entry for UI{src_pascal}* (live or SVN). Skipping.")
         return True
 
     new_lines = [line.replace(src_pascal, tgt_pascal) for line in src_lines]
@@ -7177,12 +7317,12 @@ def clone_event_resources(proj_root, src_evt, tgt_evt, log_dir, step_index):
     return True
 
 
-def _lookup_event_id_and_start(proj_root, evt_name, exclude_id=None):
+def _lookup_event_id_and_start(proj_root, evt_name, exclude_id=None, workspace=None):
     """(event_id, start_time) of evt_name's LATEST row in the workspace's events.xlsx
     (rows are chronological), skipping exclude_id — so a reopen that reuses the source's
     name still resolves to the source's own row, not the target row step 10 just added."""
     import openpyxl
-    path = os.path.join(proj_root, "design", "DesignData", WORKSPACE_NAME, "design", "events.xlsx")
+    path = os.path.join(proj_root, "design", "DesignData", workspace or WORKSPACE_NAME, "design", "events.xlsx")
     if not os.path.exists(path):
         return None, None
     wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
@@ -7194,6 +7334,79 @@ def _lookup_event_id_and_start(proj_root, evt_name, exclude_id=None):
             found = (eid, str(row[7] or ""))
     wb.close()
     return found
+
+
+def retired_export_ids(ws_dir, evt, event_id=None):
+    """{table.json: [ids]} of evt's own rows whose IDs PostConvert's default_filter_map.lua drops
+    from the client export. The team raises those ranges as events retire (DeepLink: up to 12300 in
+    May 2026, 12526 in Aug, 12567 in Sep), so an old event reopened under its own name keeps IDs the
+    game never loads — Merge2510's event row, entrance, score, 31 gift/pack rows and 48 share links
+    all sit inside them. A row is evt's own when its name is in the ID/alias columns (another event's
+    标签刷新前置活动 column can mention it further right). event_id stands in for the rows step 10
+    re-keys to it (events / event_pre / event_post)."""
+    import glob as _glob
+    import openpyxl
+    lua = os.path.join(ws_dir, "PostConvert", "Lua", "convert", "default_filter_map.lua")
+    if not os.path.exists(lua):
+        return {}
+    ranges = {}
+    for m in re.finditer(r'\["([\w.]+\.json)"\]\s*=\s*\{(.*?)\n\s*\},', open(lua, encoding="utf-8").read(), re.S):
+        body = re.sub(r'--[^\n]*', '', m.group(2))
+        ranges[m.group(1)] = ([(int(a), int(b)) for a, b in re.findall(r'\{\s*(\d+)\s*,\s*(\d+)\s*\}', body)] +
+                              [(int(n), int(n)) for n in re.findall(r'\d+', re.sub(r'\{[^{}]*\}', '', body))])
+
+    def retired(j, k):
+        return any(a <= k <= b for a, b in ranges[j])
+
+    evt_lower, out = evt.lower(), {}
+    for p in _glob.glob(os.path.join(ws_dir, "descriptor", "app_client", "*.json")):
+        try:
+            directors = json.load(open(p, encoding="utf-8")).get("Directors") or []
+        except Exception:
+            continue
+        for d in directors:
+            j = d.get("FileName")
+            if j not in ranges:
+                continue
+            if event_id and j in ("events.json", "event_pre.json", "event_post.json"):
+                if retired(j, int(event_id)):
+                    out[j] = [int(event_id)]
+                continue
+            for es in d.get("ExcelSheets", []):
+                path = os.path.join(ws_dir, "design", es["ExcelName"] + ".xlsx")
+                if not os.path.exists(path):
+                    continue
+                wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+                if es["SheetName"] in wb.sheetnames:
+                    rows = wb[es["SheetName"]].iter_rows(values_only=True)
+                    head = [str(h or "").strip() for h in next(rows, ())]
+                    ki = head.index(d.get("Key")) if d.get("Key") in head else 0
+                    for r in rows:
+                        if not any(evt_lower in str(v).lower() for v in r[:2] if v is not None):
+                            continue
+                        try:
+                            k = int(float(r[ki]))
+                        except (TypeError, ValueError, IndexError):
+                            continue  # commented-out (//) or blank key
+                        if retired(j, k):
+                            out.setdefault(j, []).append(k)
+                wb.close()
+    return out
+
+
+def _guids_in_use(assets_dir, skip_paths):
+    """Every asset GUID under assets_dir, ignoring the files in skip_paths."""
+    skip = {os.path.normcase(p) for p in skip_paths}
+    used = set()
+    for dp, _, fn in os.walk(assets_dir):
+        for n in fn:
+            if n.endswith(".meta"):
+                p = os.path.join(dp, n)
+                if os.path.normcase(p) not in skip:
+                    g = _meta_guid(p)
+                    if g:
+                        used.add(g)
+    return used
 
 
 def _svn(args, cwd, timeout=120):
@@ -7372,13 +7585,20 @@ def clone_event_id_resources(proj_root, src_evt, tgt_evt, log_dir, step_index):
         log(f"Warning: no valid target event ID supplied (got '{tgt_id}') — skipping event-ID resources.")
         return True
     src_id, src_start = _lookup_event_id_and_start(proj_root, src_evt, exclude_id=tgt_id)
+    if not src_id and WORKSPACE_NAME != "WorkSpcae3":
+        # Step 10 rewrites the event's own row with the target ID, so for a same-name reopen
+        # with a new ID the original ID is only still visible in WorkSpcae3 (never edited here).
+        src_id, src_start = _lookup_event_id_and_start(proj_root, src_evt, exclude_id=tgt_id, workspace="WorkSpcae3")
+    restore = False
+    if not src_id and src_evt.lower() == tgt_evt.lower():
+        # Same name AND same ID: nothing to rename. The event's own ID-keyed files were deleted
+        # when it closed (Merge2510's all were), so bring them back in place from SVN instead.
+        src_id, restore = tgt_id, True
     if not src_id:
-        if _lookup_event_id_and_start(proj_root, src_evt)[0] == tgt_id:
-            log(f"{src_evt}'s only event ID is the target's own ({tgt_id}) — nothing to copy.")
-        else:
-            log(f"Warning: {src_evt} not found in {WORKSPACE_NAME}/events.xlsx — can't tell which event-ID resources to copy. Skipping.")
+        log(f"Warning: {src_evt} not found in {WORKSPACE_NAME}/events.xlsx — can't tell which event-ID resources to copy. Skipping.")
         return True
-    log(f"Event-ID resources: {src_evt} ({src_id}) -> {tgt_evt} ({tgt_id})")
+    src_start = extra.get("src_start_time") or src_start  # the source's ORIGINAL start; step 10 may have rewritten the row
+    log(f"Event-ID resources: {src_evt} ({src_id}) -> {tgt_evt} ({tgt_id})" + (" — restoring in place" if restore else ""))
 
     common = os.path.join(proj_root, "develop", "client", "Skipbo", "Assets", "ResourcesAb", "Events", "Common")
     pieces = [  # (label, folder, name prefix shared by every item of the piece)
@@ -7422,7 +7642,9 @@ def clone_event_id_resources(proj_root, src_evt, tgt_evt, log_dir, step_index):
                 summary.append(f"{label}: none")
                 continue
 
-            existing = [n for n in live if os.path.exists(os.path.join(folder, tgt_name(n)))]
+            # Only real content counts as "already exists": a leftover .meta or an emptied folder
+            # (what an event's cleanup commit leaves behind) must not block the copy/restore.
+            existing = [n for n in live if has_content(os.path.join(folder, tgt_name(n)))]
             if existing:
                 # Something (usually art) already made the target's version — never overwrite.
                 # Still link it: map each source GUID to the existing target file's GUID by name,
@@ -7443,8 +7665,10 @@ def clone_event_id_resources(proj_root, src_evt, tgt_evt, log_dir, step_index):
 
             for n, src_p in live.items():
                 dst = os.path.join(folder, tgt_name(n))
+                if dst.endswith(".meta") and os.path.exists(dst):
+                    continue  # keep a .meta that's already there (restore: it holds the same GUID)
                 if os.path.isdir(src_p):
-                    shutil.copytree(src_p, dst)
+                    shutil.copytree(src_p, dst, dirs_exist_ok=True)  # may land in an emptied leftover folder
                     new_files = [os.path.join(dp, f) for dp, _, fn in os.walk(dst) for f in fn]
                 else:
                     shutil.copy2(src_p, dst)
@@ -7453,11 +7677,21 @@ def clone_event_id_resources(proj_root, src_evt, tgt_evt, log_dir, step_index):
                 for p in new_files:
                     os.chmod(p, stat.S_IWRITE | stat.S_IREAD)  # svn:needs-lock files copy over read-only
                 created += new_files
-            summary.append(f"{label}: {len(live)} item(s) copied")
+            summary.append(f"{label}: {len(live)} item(s) {'restored' if restore else 'copied'}")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-    guid_map.update(_fresh_guid_map(created))
+    fresh = _fresh_guid_map(created)
+    if restore:
+        # Restored files keep their ORIGINAL GUIDs, so every existing link to them in the event's
+        # own prefabs resolves again untouched. The one exception: a GUID something else now
+        # owns (the team renames these files forward, e.g. <id>_img_token -> the next event's,
+        # which keeps the GUID) — a duplicate would confuse Unity, so that file gets a new one.
+        in_use = _guids_in_use(os.path.join(proj_root, "develop", "client", "Skipbo", "Assets"), set(created))
+        fresh = {g: n for g, n in fresh.items() if g in in_use}
+        if fresh:
+            log(f"{len(fresh)} restored file(s) had a GUID another asset now uses — gave them new ones.")
+    guid_map.update(fresh)
     remapped, rewritten, _ = _rewrite_unity_text_files(created, guid_map, swap_bytes)
     log(f"Event-ID resources {src_id} -> {tgt_id}: {'; '.join(summary)}. {len(created)} files created, "
         f"{remapped} GUID references remapped, {rewritten} files rewritten.")
@@ -7538,6 +7772,20 @@ def main():
     log(f"Executing Python Step {step_index} | {src_evt} -> {tgt_evt}")
 
     if step_index == 0:
+        # Same-name reopen: stop before anything is touched if the event's own IDs are ones the
+        # client export drops. Reads WorkSpcae3 — what step 5 copies in.
+        if src_evt.lower() == tgt_evt.lower():
+            ws3 = os.path.join(proj_root, "design", "DesignData", "WorkSpcae3")
+            retired = retired_export_ids(ws3, tgt_evt, load_extra_args(log_dir).get("event_id"))
+            if retired:
+                log(f"Reopen blocked: reopening {tgt_evt} under its own name keeps its old rows, and these IDs are inside the "
+                    f"ranges PostConvert/Lua/convert/default_filter_map.lua drops from the client export — the game would "
+                    f"never load them (a missing entrance is a Lua error in EventMgr):")
+                for j, ids in retired.items():
+                    log(f"  {j}: {ids if len(ids) <= 3 else f'{len(ids)} IDs, {min(ids)}-{max(ids)}'}")
+                log(f"Nothing was changed. Either run it as a new event (source {src_evt} -> a new name), which gives every row a "
+                    f"fresh ID, or take these IDs out of default_filter_map.lua in WorkSpcae3 and run again.")
+                sys.exit(1)
         proto_dir = os.path.join(proj_root, r"develop\protocol")
         success = inject_proto(proto_dir, src_evt, tgt_evt, log_dir, step_index)
         if not success: sys.exit(1)
