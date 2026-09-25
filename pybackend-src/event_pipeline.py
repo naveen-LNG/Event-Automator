@@ -108,17 +108,42 @@ def record_file_creation(root_path, step_index, file_path):
         
     save_undo_log(root_path, undo_data)
 
+def record_file_backup(root_path, step_index, file_path):
+    """Back up a file this step is about to edit IN PLACE and register it for revert_step.
+    Unlike the .bak-next-to-the-file convention, the copy goes in an "undo_backups~" folder:
+    root_path is inside Assets/, and Unity never imports folders ending in "~" — a .bak copy
+    of a prefab sitting next to it would be imported as an asset of its own."""
+    undo_data = load_undo_log(root_path)
+    entry = undo_data.setdefault(str(step_index), {"created": [], "modified": []})
+    mods = entry.setdefault("modified", [])
+    if any(isinstance(m, dict) and m.get("orig") == file_path for m in mods):
+        return  # the first backup in a run holds the true pre-step state
+    bdir = os.path.join(root_path, "undo_backups~", str(step_index))
+    os.makedirs(bdir, exist_ok=True)
+    backup = os.path.join(bdir, f"{len(mods)}_{os.path.basename(file_path)}")
+    shutil.copy2(file_path, backup)
+    mods.append({"orig": file_path, "backup": backup})
+    save_undo_log(root_path, undo_data)
+
 def revert_step(root_path, step_index):
     undo_data = load_undo_log(root_path)
     step_key = str(step_index)
-    
+
     if step_key not in undo_data:
         log(f"No undo data found for Step {step_index}")
         return True
-        
+
     files_created = undo_data[step_key].get("created", [])
     import stat
-    
+
+    for m in undo_data[step_key].get("modified", []):
+        if isinstance(m, dict) and os.path.exists(m.get("backup", "")):
+            if os.path.exists(m["orig"]):
+                os.chmod(m["orig"], stat.S_IWRITE | stat.S_IREAD)
+            shutil.copy2(m["backup"], m["orig"])
+            os.remove(m["backup"])
+            log(f"Reverted (Restored edited file): {os.path.basename(m['orig'])}")
+
     for f in files_created:
         if os.path.exists(f):
             if f.endswith(".bak"):
@@ -332,6 +357,81 @@ def inject_proto(proto_dir, src_evt, tgt_evt, root_path, step_index):
     log(f"Successfully injected proto message {tgt_msg_name} to storagedata.proto")
     return True
 
+def _strip_lua_comment(line):
+    """Drop a trailing `--` comment from one line of Lua, ignoring `--` inside strings."""
+    in_str = None
+    i = 0
+    while i < len(line):
+        c = line[i]
+        if in_str:
+            if c == '\\':
+                i += 2
+                continue
+            if c == in_str:
+                in_str = None
+        elif c in '"\'':
+            in_str = c
+        elif line.startswith('--', i):
+            return line[:i]
+        i += 1
+    return line
+
+
+def _last_lua_code_index(text):
+    """Index of the last character in text that is actual code (not whitespace or comment), or -1."""
+    offset = len(text)
+    for line in reversed(text.splitlines(keepends=True)):
+        offset -= len(line)
+        code = _strip_lua_comment(line.rstrip('\r\n')).rstrip()
+        if code:
+            return offset + len(code) - 1
+    return -1
+
+
+def find_lua_table_close(content, table_name):
+    """
+    Index of the `}` closing the table assigned by `<table_name> = {`, found by brace
+    matching that skips strings and comments — so it doesn't care how the file is
+    formatted. None if the assignment or its closing brace can't be found.
+    """
+    m = re.search(re.escape(table_name) + r'\s*=\s*\{', content)
+    if not m:
+        return None
+    depth = 0
+    in_str = None
+    i = m.end() - 1
+    while i < len(content):
+        c = content[i]
+        if in_str:
+            if c == '\\':
+                i += 2
+                continue
+            if c == in_str or c == '\n':  # an unterminated string can't span lines in Lua
+                in_str = None
+        elif content.startswith('--[[', i):
+            end = content.find(']]', i + 4)
+            if end == -1:
+                return None
+            i = end + 2
+            continue
+        elif content.startswith('--', i):
+            nl = content.find('\n', i)
+            if nl == -1:
+                return None
+            i = nl
+            continue
+        elif c in '"\'':
+            in_str = c
+        elif c == '{':
+            depth += 1
+        elif c == '}':
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return None
+
+
 def inject_local_service_mgr(proj_root, tgt_evt, root_path, step_index):
     mgr_path = os.path.join(proj_root, r"develop\client\Skipbo\Assets\Lua\Game\Module\LocalService\LocalServiceMgr.lua")
     if not os.path.exists(mgr_path):
@@ -372,21 +472,33 @@ def inject_local_service_mgr(proj_root, tgt_evt, root_path, step_index):
 
     # 3. If neither active nor commented, insert it as a brand new event
 
-    # Insert require statement before PBReg
-    if "local PBReg = " in content:
-        content = content.replace('local PBReg = require "Game/Module/Protocol/PBReg"', require_str + 'local PBReg = require "Game/Module/Protocol/PBReg"')
+    # Insert bucket inside ServiceDef. Located structurally, not by exact text: the file is
+    # hand-edited between events, and r132944 joined the table's closing brace onto the next
+    # statement ("}    LocalServiceMgr.LoginLocalService = ..."), which broke an exact-string anchor.
+    close_idx = find_lua_table_close(content, "LocalServiceMgr.ServiceDef")
+    if close_idx is None:
+        log("Error: Could not find the LocalServiceMgr.ServiceDef = { ... } table in LocalServiceMgr.lua")
+        return False
+    line_start = content.rfind('\n', 0, close_idx) + 1
+    if content[line_start:close_idx].strip() == "":
+        # "}" starts its line: insert the new entry as the line above it.
+        before, after = content[:line_start], content[line_start:]
     else:
+        # "}" shares a line with the last entry: break the line before it.
+        before, after = content[:close_idx].rstrip(' \t') + "\n", content[close_idx:]
+    # The previous entry needs a trailing separator, or the new line is a Lua syntax error.
+    last = _last_lua_code_index(before)
+    if last >= 0 and before[last] not in ",;{":
+        before = before[:last + 1] + "," + before[last + 1:]
+    content = before + bucket_str + after
+
+    # Insert require statement before the PBReg require (after the bucket edit, which is
+    # located by searching forward from ServiceDef and so is unaffected by this insertion).
+    pbreg = re.search(r'^local\s+PBReg\s*=.*$', content, re.MULTILINE)
+    if not pbreg:
         log("Error: Could not find 'local PBReg =' in LocalServiceMgr.lua")
         return False
-
-    # Insert bucket inside ServiceDef
-    find_str = "    }\n\n    LocalServiceMgr.LoginLocalService ="
-    replace_str = bucket_str + find_str
-    if find_str in content:
-        content = content.replace(find_str, replace_str)
-    else:
-        log("Error: Could not find ServiceDef insertion point in LocalServiceMgr.lua")
-        return False
+    content = content[:pbreg.start()] + require_str + content[pbreg.start():]
 
     shutil.copy2(mgr_path, mgr_path + ".bak")
     record_file_creation(root_path, step_index, mgr_path + ".bak")
@@ -4092,9 +4204,31 @@ def update_answer_challenge_excel(proj_root, src_evt, tgt_evt, log_dir, step_ind
                 det_lower = detected_event_name.lower()
                 det_upper = detected_event_name.upper()
                 det_pascal = detected_event_name[0].upper() + detected_event_name[1:]
-                
+
+                # 'stage' is a single shared slot across EVERY event type and workspace —
+                # whichever event last ran this step (in any workspace) owns it, regardless
+                # of which event is being reopened here. So the detected name/digits are only
+                # used to locate what to replace; the suffix must be forced from tgt_evt's type.
+                # SVN history of trunk/WorkSpcae3 (40 revisions, 2512 → 2610) shows two
+                # different conventions side by side:
+                #   额外奖励内容 (item-alias Map, cols 9/14/19): Merge → 'Merge2608能量:30',
+                #                                                 every other type → '代币'
+                #   额外奖励图标列表 (icon alias, cols 10/15/20): '代币' for ALL types,
+                #                                                 Merge included ('MERGE2608代币')
+                # The icon alias must match icon.xlsx icon_item, which names Merge's token
+                # icon 'MERGE2608代币' too — so icon columns are left to the plain name swap.
+                is_merge_tgt = tgt_evt.lower().startswith("merge")
+                correct_suffix = "能量" if is_merge_tgt else "代币"
+                wrong_suffix = "代币" if is_merge_tgt else "能量"
+                # Only the suffix glued to the target's own event code, and never the '能量'
+                # inside a compound like Dessert's 'Dessert2608能量代币' item.
+                suffix_re = re.compile(rf'({re.escape(tgt_evt)}){wrong_suffix}(?!代币)', re.IGNORECASE)
+                reward_cols = {c for c in range(1, ws_stage.max_column + 1)
+                               if "图标" not in str(ws_stage.cell(1, c).value or "")}
+
                 log(f"answer_challenge [stage]: Detected '{detected_event_name}{detected_event_digits}' in rewards, replacing with '{tgt_pascal}'")
-                
+
+                suffix_corrections = 0
                 for r in range(2, ws_stage.max_row + 1):
                     for c in range(1, ws_stage.max_column + 1):
                         cell_val = ws_stage.cell(r, c).value  # type: ignore
@@ -4107,10 +4241,20 @@ def update_answer_challenge_excel(proj_root, src_evt, tgt_evt, log_dir, step_ind
                             new_s = new_s.replace(f"{det_upper}{detected_event_digits}", tgt_upper)
                             new_s = new_s.replace(f"{det_lower}{detected_event_digits}", tgt_lower)
                             new_s = new_s.replace(f"{det_pascal}{detected_event_digits}", tgt_pascal)
+                            if c in reward_cols:
+                                fixed_s = suffix_re.sub(lambda m: m.group(1) + correct_suffix, new_s)
+                                if fixed_s != new_s:
+                                    new_s = fixed_s
+                                    suffix_corrections += 1
                             if new_s != s:
                                 ws_stage.cell(r, c, new_s)  # type: ignore
                                 stage_modified += 1
-                
+
+                if suffix_corrections > 0:
+                    log(f"answer_challenge [stage]: Corrected {suffix_corrections} reward-currency suffix reference(s) "
+                        f"from '{wrong_suffix}' to '{correct_suffix}' (forced by {tgt_evt}'s event type, not carried over "
+                        f"from the detected '{detected_event_name}{detected_event_digits}' source).")
+
                 if stage_modified > 0:
                     log(f"answer_challenge [stage]: Updated {stage_modified} reward references")
                     modified = True
@@ -4728,29 +4872,32 @@ def update_store_excel(proj_root, src_evt, tgt_evt, log_dir, step_index):
                                 new_gift_ids.append(str(int(id_val)))
                     src_gift_rows = [] # Skip cloning
                 else:
-                    # Find max ID only in the event gift section (row 61+)
-                    # The event section starts after "// 活动商店与进度礼包" row
-                    # Event gift IDs are in the 9000-12999 range
-                    # Non-event IDs (18xxx for 周末礼包, 芭比 etc.) are in rows 16-60
-                    event_section_start = 61
-                    for r in range(2, ws_g.max_row + 1):
-                        id_val = str(ws_g.cell(r, 1).value or "")  # type: ignore
-                        if id_val.startswith("// 活动商店"):
-                            event_section_start = r + 1
-                            break
-                    
+                    # Next ID = max of the event-gift ID band (below 18000), NOT of a row
+                    # range. Event gifts live in 9xxx-11xxx; 18xxx is the non-event block
+                    # (周末礼包, 节日BP推荐 184xx, 全屏礼包 185xx...). Those non-event rows
+                    # are interleaved with the event rows in some workspaces and the old
+                    # "// 活动商店与进度礼包" marker this used to key off is absent in
+                    # WorkSpcae_NE (and now WorkSpcae_Design), so a row-range max picked
+                    # up 18518 and Merge2611 got 18519+ instead of 11609+.
+                    # ponytail: fixed 18000 ceiling; revisit if event IDs ever reach 17xxx.
+                    EVENT_GIFT_ID_CEILING = 18000
+                    all_gift_ids = set()
                     max_gift_id = 0
-                    for r in range(event_section_start, ws_g.max_row + 1):
-                        id_val = ws_g.cell(r, 1).value  # type: ignore
-                        if id_val:
-                            try:
-                                num = int(id_val)
-                                if num > max_gift_id:
-                                    max_gift_id = num
-                            except (ValueError, TypeError):
-                                pass
-                    
-                    log(f"recommend_gift: Event section max ID = {max_gift_id} (from R{event_section_start}+)")
+                    for r in range(2, ws_g.max_row + 1):
+                        try:
+                            num = int(ws_g.cell(r, 1).value)  # type: ignore
+                        except (ValueError, TypeError):
+                            continue
+                        all_gift_ids.add(num)
+                        if num < EVENT_GIFT_ID_CEILING and num > max_gift_id:
+                            max_gift_id = num
+
+                    clash = [max_gift_id + 1 + i for i in range(len(old_gift_ids))
+                             if max_gift_id + 1 + i in all_gift_ids]
+                    if clash:
+                        raise RuntimeError(f"recommend_gift: new IDs {clash} already used elsewhere in the sheet")
+
+                    log(f"recommend_gift: Event-gift max ID (< {EVENT_GIFT_ID_CEILING}) = {max_gift_id}")
                     
                     # Build old→new ID map
                     for i, old_id in enumerate(old_gift_ids):
@@ -6740,6 +6887,29 @@ def _regenerate_meta_guid(meta_path):
         f.write(new_content)
 
 
+def _rename_tree_deepest_first(root, swap):
+    """Rename every file/dir under root whose name changes under swap(). Returns the
+    number renamed. Paths are snapshotted in one upfront pass, then renamed
+    deepest-first: os.walk's own dirnames list goes stale if directories are renamed
+    mid-walk (it hands back a name that's already been changed out from under it),
+    while a fixed snapshot processed deepest-to-shallowest never touches an ancestor
+    before its children are done."""
+    all_paths = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        for name in filenames + dirnames:
+            all_paths.append(os.path.join(dirpath, name))
+    all_paths.sort(key=lambda p: p.count(os.sep), reverse=True)
+
+    renamed = 0
+    for old_path in all_paths:
+        base = os.path.basename(old_path)
+        new_base = swap(base)
+        if new_base != base:
+            os.rename(old_path, os.path.join(os.path.dirname(old_path), new_base))
+            renamed += 1
+    return renamed
+
+
 def _clone_one_event_code_folder(base_dir, src_folder_name, tgt_folder_name, src_evt, tgt_evt, log_dir, step_index):
     """Clones a single Core<Event> or UI<Event>Panel folder tree (Step 10a):
     copy the folder + its sibling .meta, rename every nested file/dir whose
@@ -6775,26 +6945,7 @@ def _clone_one_event_code_folder(base_dir, src_folder_name, tgt_folder_name, src
     def swap(s):
         return s.replace(src_upper, tgt_upper).replace(src_pascal, tgt_pascal).replace(src_lower, tgt_lower)
 
-    # Rename files/dirs deepest-first, using paths captured in one upfront pass.
-    # os.walk's own dirnames list goes stale mid-traversal if you rename directories
-    # while it's still walking (topdown=False computes each level's children before
-    # its descendants are renamed, then hands you a now-outdated name) -- snapshotting
-    # every path first, then acting deepest-to-shallowest on those fixed paths, avoids
-    # ever asking the filesystem for a name that's already been changed out from under it.
-    all_paths = []
-    for dirpath, dirnames, filenames in os.walk(tgt_dir):
-        for name in filenames:
-            all_paths.append(os.path.join(dirpath, name))
-        for name in dirnames:
-            all_paths.append(os.path.join(dirpath, name))
-    all_paths.sort(key=lambda p: p.count(os.sep), reverse=True)
-
-    for old_path in all_paths:
-        parent = os.path.dirname(old_path)
-        base = os.path.basename(old_path)
-        new_base = swap(base)
-        if new_base != base:
-            os.rename(old_path, os.path.join(parent, new_base))
+    _rename_tree_deepest_first(tgt_dir, swap)
 
     # Now rewrite content: Lua files get the same multi-case swap, .meta files get a
     # fresh GUID instead (their content otherwise carries no event-specific text).
@@ -6827,10 +6978,9 @@ def clone_event_code_folders(proj_root, src_evt, tgt_evt, log_dir, step_index):
     (CoreMerge2606, CoreMerge2608, ... all coexist) — so this is a pure clone, never
     an overwrite-in-place.
 
-    Step 10b (binary ResourcesAb/icon atlas assets) and the "Generate UI Code"
-    Unity codegen for genuinely new events are deliberately NOT covered here — the
-    first needs art assets that don't exist yet for a new event, the second invokes
-    a Unity Editor prefab tool, both out of scope per the automation proposal.
+    The event's ResourcesAb/Events asset folder is cloned separately by
+    clone_event_resources (step 24). The "Generate UI Code" Unity codegen for
+    genuinely new events is NOT covered — it invokes a Unity Editor prefab tool.
     """
     base_dir = os.path.join(proj_root, r"develop\client\Skipbo\Assets\Lua\Game\Panel\UIEventHub")
     src_pascal = src_evt[0].upper() + src_evt[1:]
@@ -6842,6 +6992,478 @@ def clone_event_code_folders(proj_root, src_evt, tgt_evt, log_dir, step_index):
     ]
     results = [_clone_one_event_code_folder(base_dir, s, t, src_evt, tgt_evt, log_dir, step_index) for s, t in pairs]
     return all(results)
+
+
+_META_GUID_LINE = re.compile(rb'^guid:\s*([0-9a-f]{32})', re.M)
+# Bare 32-hex match (not just "guid: x") so GUIDs stored under other keys are caught
+# too; a false hit would need a random 128-bit value to equal one of the mapped GUIDs.
+_HEX32 = re.compile(rb'(?<![0-9a-f])[0-9a-f]{32}(?![0-9a-f])')
+
+
+def _meta_guid(meta_path):
+    with open(meta_path, 'rb') as f:
+        m = _META_GUID_LINE.search(f.read())
+    return m.group(1) if m else None
+
+
+def _fresh_guid_map(files):
+    """old GUID -> brand-new GUID for every .meta among files. Freshly copied .meta files
+    still carry the source asset's GUID, so this is exactly source GUID -> clone GUID."""
+    import uuid
+    guid_map = {}
+    for p in files:
+        if p.endswith(".meta"):
+            g = _meta_guid(p)
+            if g:
+                guid_map[g] = uuid.uuid4().hex.encode()
+    return guid_map
+
+
+def _rewrite_unity_text_files(files, guid_map, swap_bytes):
+    """In every .meta and Unity YAML (%YAML header) file: replace mapped GUIDs, then apply
+    swap_bytes for names. Bytes-level, so LF endings and UTF-8 survive exactly; every other
+    file (png/txt/bytes/...) is left untouched. Returns (guid refs remapped, files
+    rewritten, list of the non-YAML files that were left alone)."""
+    remapped = 0
+    def sub(m):
+        nonlocal remapped
+        new = guid_map.get(m.group(0))
+        if new is None:
+            return m.group(0)
+        remapped += 1
+        return new
+
+    rewritten, other_files = 0, []
+    for p in files:
+        with open(p, 'rb') as f:
+            data = f.read()
+        if p.endswith(".meta") or data.startswith(b'%YAML'):
+            new = swap_bytes(_HEX32.sub(sub, data))
+            if new != data:
+                with open(p, 'wb') as f:
+                    f.write(new)
+                rewritten += 1
+        else:
+            other_files.append(p)
+    return remapped, rewritten, other_files
+
+
+def _find_event_backup_dir(proj_root):
+    """docx Step 10: a closed event's resources may have been moved out of Assets into
+    <repo>/common/program/event_backup (same Cell/Icon/Prefabs/Texture layout). That
+    folder sits at the repo root, a sibling of trunk/ and branches/, so walk up from
+    the branch root to find it rather than assuming how deep the branch is."""
+    d = os.path.abspath(proj_root)
+    for _ in range(4):
+        cand = os.path.join(d, "common", "program", "event_backup")
+        if os.path.isdir(cand):
+            return cand
+        d = os.path.dirname(d)
+    return None
+
+
+def clone_event_resources(proj_root, src_evt, tgt_evt, log_dir, step_index):
+    """
+    Step 24 (docx Step 10b): duplicate Assets/ResourcesAb/Events/<Src> as <Tgt> and
+    repoint every reference to the new event.
+
+    Unity-specific traps, measured on real event folders (Sim2607/Merge2608/Sort2609):
+      - Every asset's .meta carries a GUID, and assets inside the folder reference each
+        other by GUID — 9,328 such internal references in Sim2607 alone. A verbatim copy
+        gives two assets the same GUID (Unity silently reassigns one on import, and the
+        clone's prefabs keep pointing at the SOURCE's sprites); regenerating GUIDs
+        without remapping breaks every one of them. So each .meta gets a new GUID and
+        every occurrence of an old in-folder GUID is rewritten to its new one.
+        References to GUIDs outside the folder (shared fonts/materials/scripts, ~8k per
+        event) are left alone — they must keep pointing at the shared asset.
+      - Event names only ever appear in dir/.prefab/.anim/.controller names and inside
+        Unity YAML (m_Name, LocalizeKey) — never in png/txt/bytes/mat, across all five
+        families. So only YAML files (%YAML header) and .meta get content edits; every
+        other file is copied byte-for-byte (Spine .txt/.bytes pairs in particular must
+        never be swapped independently of each other).
+      - All edits are bytes-level, so Unity's LF line endings and UTF-8 text survive exactly.
+    """
+    import stat
+
+    src_pascal = src_evt[0].upper() + src_evt[1:]
+    tgt_pascal = tgt_evt[0].upper() + tgt_evt[1:]
+    pairs = [(src_evt.upper(), tgt_evt.upper()), (src_pascal, tgt_pascal), (src_evt.lower(), tgt_evt.lower())]
+    bpairs = [(a.encode(), b.encode()) for a, b in pairs]
+
+    def swap(s):
+        for a, b in pairs:
+            s = s.replace(a, b)
+        return s
+
+    def swap_bytes(b):
+        for x, y in bpairs:
+            b = b.replace(x, y)
+        return b
+
+    events_dir = os.path.join(proj_root, "develop", "client", "Skipbo", "Assets", "ResourcesAb", "Events")
+    tgt_dir = os.path.join(events_dir, tgt_pascal)
+    tgt_meta = tgt_dir + ".meta"
+    if os.path.exists(tgt_dir):
+        log(f"ResourcesAb/Events/{tgt_pascal} already exists — skipping (idempotent, never overwritten).")
+        return True
+
+    src_dir = os.path.join(events_dir, src_pascal)
+    if not os.path.isdir(src_dir):
+        backup = _find_event_backup_dir(proj_root)
+        if backup and os.path.isdir(os.path.join(backup, src_pascal)):
+            src_dir = os.path.join(backup, src_pascal)
+            log(f"ResourcesAb/Events/{src_pascal} not in Assets — using the archived copy at {src_dir}.")
+        else:
+            log(f"Warning: no ResourcesAb/Events/{src_pascal} folder (checked Assets and common/program/event_backup). Skipping.")
+            return True
+
+    shutil.copytree(src_dir, tgt_dir)
+    record_file_creation(log_dir, step_index, tgt_dir)
+    if os.path.exists(src_dir + ".meta"):
+        shutil.copy2(src_dir + ".meta", tgt_meta)
+        record_file_creation(log_dir, step_index, tgt_meta)
+    else:
+        log(f"Warning: {src_pascal}.meta not found — Unity will generate a folder .meta for {tgt_pascal} on import.")
+
+    # Working-copy files can be read-only (svn:needs-lock); copy2 carries that over, which
+    # would block the rewrite below and the undo's rmtree.
+    all_files = [os.path.join(dp, n) for dp, _, fn in os.walk(tgt_dir) for n in fn]
+    for p in all_files + ([tgt_meta] if os.path.exists(tgt_meta) else []):
+        os.chmod(p, stat.S_IWRITE | stat.S_IREAD)
+
+    renamed = _rename_tree_deepest_first(tgt_dir, swap)
+
+    all_files = [os.path.join(dp, n) for dp, _, fn in os.walk(tgt_dir) for n in fn]
+    if os.path.exists(tgt_meta):
+        all_files.append(tgt_meta)
+    guid_map = _fresh_guid_map(all_files)
+    remapped, rewritten, other_files = _rewrite_unity_text_files(all_files, guid_map, swap_bytes)
+
+    src_tokens = [x for x, _ in bpairs]
+    untouched_with_token = []
+    for p in other_files:
+        with open(p, 'rb') as f:
+            data = f.read()
+        if any(t in data for t in src_tokens):
+            untouched_with_token.append(os.path.relpath(p, tgt_dir))
+
+    log(f"ResourcesAb/Events: cloned {src_pascal} -> {tgt_pascal} ({len(all_files)} files, {renamed} renamed, "
+        f"{len(guid_map)} GUIDs regenerated, {remapped} GUID references remapped, {rewritten} files rewritten).")
+    if untouched_with_token:
+        log(f"Warning: {len(untouched_with_token)} non-YAML file(s) contain '{src_pascal}' but were copied unchanged "
+            f"(binary-safe) — check whether they need updating: {untouched_with_token[:10]}")
+    return True
+
+
+def _lookup_event_id_and_start(proj_root, evt_name, exclude_id=None):
+    """(event_id, start_time) of evt_name's LATEST row in the workspace's events.xlsx
+    (rows are chronological), skipping exclude_id — so a reopen that reuses the source's
+    name still resolves to the source's own row, not the target row step 10 just added."""
+    import openpyxl
+    path = os.path.join(proj_root, "design", "DesignData", WORKSPACE_NAME, "design", "events.xlsx")
+    if not os.path.exists(path):
+        return None, None
+    wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    found = (None, None)
+    alias_re = re.compile(rf'^{re.escape(evt_name)}(?!\d)', re.IGNORECASE)
+    for row in wb["events"].iter_rows(min_row=2, max_col=8, values_only=True):
+        eid = str(row[0] or "").replace("//", "").strip()
+        if eid and alias_re.match(str(row[1] or "").strip()) and eid != exclude_id:
+            found = (eid, str(row[7] or ""))
+    wb.close()
+    return found
+
+
+def _svn(args, cwd, timeout=120):
+    import subprocess
+    try:
+        r = subprocess.run(["svn"] + args, cwd=cwd, shell=True, capture_output=True, text=True,
+                           timeout=timeout, encoding='utf-8', errors='replace')
+    except Exception as e:
+        log(f"svn {args[0]} failed to run: {e}")
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+def _svn_export_deleted(wc_dir, name_prefix, hint_date, dest_dir):
+    """
+    Recover files/dirs under wc_dir whose name starts with name_prefix and that have since
+    been deleted, by finding each one's deletion commit and exporting it from the revision
+    just before. Returns {name: exported_path}.
+
+    Deleted paths are matched by their location relative to the ResourcesAb tree, not by
+    the current branch URL: /branches/Misc was re-created from trunk on 2026-09-24
+    (r133037), so every older deletion is recorded under /trunk/... in this path's history.
+    """
+    from datetime import datetime, timedelta
+    root_url = (_svn(["info", "--show-item", "repos-root-url", "."], wc_dir) or "").strip()
+    if not root_url:
+        return {}
+
+    marker = "/Assets/ResourcesAb/"
+    rel_dir = wc_dir.replace("\\", "/").split(marker, 1)[-1].rstrip("/")
+    want_parent = marker + rel_dir + "/"
+
+    def scan(rev_args):
+        out = _svn(["log", "-v", "-q"] + rev_args + ["."], wc_dir, timeout=300) or ""
+        deleted, rev = {}, None
+        for line in out.splitlines():
+            m = re.match(r'^r(\d+) \|', line)
+            if m:
+                rev = int(m.group(1))
+                continue
+            m = re.match(r'^\s+D (/\S.*)$', line)
+            if m and rev and want_parent in m.group(1):
+                path = m.group(1)
+                name = path.rsplit("/", 1)[-1]
+                if path.endswith(want_parent + name) and name.startswith(name_prefix):
+                    if name not in deleted or rev > deleted[name][0]:
+                        deleted[name] = (rev, path)
+        return deleted
+
+    deleted = {}
+    try:
+        center = datetime.strptime(hint_date.strip()[:10], "%Y-%m-%d")
+        deleted = scan(["-r", f"{{{(center - timedelta(days=45)):%Y-%m-%d}}}:{{{(center + timedelta(days=240)):%Y-%m-%d}}}"])
+    except (ValueError, AttributeError):
+        pass
+    if not deleted:
+        deleted = scan(["-l", "500"])  # ponytail: no/odd date hint -> last 500 revs of this dir
+
+    exported = {}
+    os.makedirs(dest_dir, exist_ok=True)  # a folder export creates its own path; a single-file export doesn't
+    for name, (rev, path) in deleted.items():
+        dest = os.path.join(dest_dir, name)
+        if _svn(["export", "-q", "--force", f"{root_url}{path}@{rev - 1}", dest], wc_dir) is not None and os.path.exists(dest):
+            exported[name] = dest
+            log(f"  recovered {name} from SVN ({path}@{rev - 1}, deleted in r{rev})")
+        else:
+            log(f"  Warning: {name} was deleted in r{rev} but couldn't be exported from r{rev - 1}.")
+    return exported
+
+
+def _chronicle_numbers(proj_root, src_evt, tgt_evt):
+    """(source, target) chronicle numbers as written, e.g. ("90", "92"), from asset_ref.xlsx
+    key_asset rows ACHIEVEMENT_E_<EVENT> -> .../EventAchieve/icon_ChronicleNN.png."""
+    import openpyxl
+    path = os.path.join(proj_root, "design", "DesignData", WORKSPACE_NAME, "design", "asset_ref.xlsx")
+    if not os.path.exists(path):
+        return None, None
+    wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    found = {}
+    if "key_asset" in wb.sheetnames:
+        want = {f"ACHIEVEMENT_E_{src_evt.upper()}": "src", f"ACHIEVEMENT_E_{tgt_evt.upper()}": "tgt"}
+        for row in wb["key_asset"].iter_rows(min_col=1, max_col=3, values_only=True):
+            key = str(row[0] or "").replace("//", "").strip().upper()
+            m = re.search(r'icon_Chronicle(\d+)', str(row[2] or ""), re.IGNORECASE)
+            if m:
+                for k, role in want.items():
+                    if key == k:
+                        found[role] = m.group(1)
+    wb.close()
+    return found.get("src"), found.get("tgt")
+
+
+def _clone_chronicle_icon(proj_root, src_evt, tgt_evt, log_dir, step_index):
+    """
+    Texture/EventAchieve/icon_ChronicleNN.png — the event's chronicle (album) icon, loaded by
+    path from asset_ref's ACHIEVEMENT_E_<EVENT> row. Numbers are sequential with one NEW
+    number per event, reopens included (Sim2605=82, Sim2607=86, Sim2609=90). Step 15 already
+    gives the target its number (max+1) in asset_ref.xlsx but nothing creates the PNG, so the
+    new row points at a missing file. Both numbers are read back from those rows rather than
+    recounted, so this can never disagree with step 15. Returns the files it created.
+    """
+    import stat
+    import tempfile
+
+    if src_evt.lower() == tgt_evt.lower():
+        log(f"EventAchieve: reopening {tgt_evt} under its own name keeps its existing chronicle icon — nothing to copy.")
+        return []
+    src_n, tgt_n = _chronicle_numbers(proj_root, src_evt, tgt_evt)
+    if not tgt_n:
+        log(f"EventAchieve: no ACHIEVEMENT_E_{tgt_evt.upper()} row in {WORKSPACE_NAME}/asset_ref.xlsx yet — run step 15 first (it assigns the number). Skipped.")
+        return []
+    if not src_n:
+        log(f"EventAchieve: no ACHIEVEMENT_E_{src_evt.upper()} row for the source in asset_ref.xlsx — skipped.")
+        return []
+    if src_n == tgt_n:
+        log(f"EventAchieve: {tgt_evt} and {src_evt} both point at icon_Chronicle{tgt_n} in asset_ref.xlsx — nothing to copy.")
+        return []
+
+    folder = os.path.join(proj_root, "develop", "client", "Skipbo", "Assets", "ResourcesAb", "Texture", "EventAchieve")
+    src_name, tgt_name = f"icon_Chronicle{src_n}.png", f"icon_Chronicle{tgt_n}.png"
+    dst = os.path.join(folder, tgt_name)
+    if os.path.exists(dst):
+        log(f"EventAchieve: {tgt_name} already exists — left untouched.")
+        return []
+
+    tmp = tempfile.mkdtemp(prefix="chron_svn_")
+    try:
+        sources = {n: os.path.join(folder, n) for n in (src_name, src_name + ".meta") if os.path.isfile(os.path.join(folder, n))}
+        if src_name not in sources:  # never happened so far (86 of 86 present), but cheap to cover
+            log(f"EventAchieve: {src_name} not in the live folder — checking SVN history...")
+            sources = {**sources, **_svn_export_deleted(folder, src_name, "", tmp)}
+        if src_name not in sources:
+            log(f"Warning: EventAchieve: {src_name} not found (live or SVN) — {tgt_name} not created.")
+            return []
+        created = []
+        for n, p in sources.items():
+            d = os.path.join(folder, tgt_name + n[len(src_name):])
+            shutil.copy2(p, d)
+            os.chmod(d, stat.S_IWRITE | stat.S_IREAD)
+            record_file_creation(log_dir, step_index, d)
+            created.append(d)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    _rewrite_unity_text_files(created, _fresh_guid_map(created), lambda b: b)
+    log(f"EventAchieve: {src_name} -> {tgt_name} (matches asset_ref.xlsx ACHIEVEMENT_E_{tgt_evt.upper()}; new GUID).")
+    return created
+
+
+def clone_event_id_resources(proj_root, src_evt, tgt_evt, log_dir, step_index):
+    """
+    Step 25 (docx Step 10b): the event resources keyed by EVENT ID (yyyymmnn from
+    events.xlsx) rather than event name, all under ResourcesAb/Events/Common:
+      - Cell/Entrance/<id>TabEventBtn.prefab — the HUD tab button. UIEventTabWidget.lua loads
+        "<eventId>TabEventBtn" with no fallback, so without it the event has no HUD entry.
+      - UI/<id>TabEventBtn/ — that prefab's sprites, linked by GUID (14 of its 45 references).
+      - Icon/CommonEventImg/<id>_* — buff/token images. Step 13 already rewrites icon.xlsx
+        sprite names to "<newId>_img_*", so these files must exist or those icons are blank.
+      - Icon/PropIcon/<id>_* — the event token / rescue-token / tool item icons (icon_item rows
+        with no atlas), same naming and lifecycle as CommonEventImg.
+    Plus Texture/EventAchieve/icon_ChronicleNN.png, keyed by a sequential number rather than
+    the event ID (see _clone_chronicle_icon) — run first, since it doesn't need event IDs.
+
+    Each piece comes from the live folder, else from SVN (these get deleted once an event
+    ends). Nothing is cached: an SVN lookup here costs seconds, not the minutes the xlsx
+    history scans take — and the log dir sits inside Assets/, where Unity would import
+    cached PNGs/prefabs as real assets.
+    """
+    import stat
+    import tempfile
+
+    _clone_chronicle_icon(proj_root, src_evt, tgt_evt, log_dir, step_index)
+
+    extra = load_extra_args(log_dir)
+    tgt_id = str(extra.get("event_id", "")).strip()
+    if not re.fullmatch(r'\d{8}', tgt_id):
+        log(f"Warning: no valid target event ID supplied (got '{tgt_id}') — skipping event-ID resources.")
+        return True
+    src_id, src_start = _lookup_event_id_and_start(proj_root, src_evt, exclude_id=tgt_id)
+    if not src_id:
+        if _lookup_event_id_and_start(proj_root, src_evt)[0] == tgt_id:
+            log(f"{src_evt}'s only event ID is the target's own ({tgt_id}) — nothing to copy.")
+        else:
+            log(f"Warning: {src_evt} not found in {WORKSPACE_NAME}/events.xlsx — can't tell which event-ID resources to copy. Skipping.")
+        return True
+    log(f"Event-ID resources: {src_evt} ({src_id}) -> {tgt_evt} ({tgt_id})")
+
+    common = os.path.join(proj_root, "develop", "client", "Skipbo", "Assets", "ResourcesAb", "Events", "Common")
+    pieces = [  # (label, folder, name prefix shared by every item of the piece)
+        ("tab button prefab", os.path.join(common, "Cell", "Entrance"), f"{src_id}TabEventBtn"),
+        ("tab button sprites", os.path.join(common, "UI"), f"{src_id}TabEventBtn"),
+        ("CommonEventImg images", os.path.join(common, "Icon", "CommonEventImg"), f"{src_id}_"),
+        # icon.xlsx icon_item rows with no atlas (<EVENT>_TOKEN -> "<id>_img_token", _RESCUE_TOKEN
+        # -> "<id>_img_prop", plus tools like _img_hammer) resolve here, and are deleted with the event.
+        ("PropIcon item icons", os.path.join(proj_root, "develop", "client", "Skipbo", "Assets", "ResourcesAb", "Icon", "PropIcon"), f"{src_id}_"),
+    ]
+
+    # Only whole-name uses of the ID: Unity files are full of long fileIDs and hex GUIDs
+    # that can contain the same 8 digits.
+    id_re = re.compile(rb'(?<![0-9A-Za-z])' + src_id.encode() + rb'(?=TabEventBtn|_)')
+    def swap_bytes(b):
+        return id_re.sub(tgt_id.encode(), b)
+    def tgt_name(name):
+        return tgt_id + name[len(src_id):]
+
+    def has_content(p):  # a leftover .meta or an emptied folder (e.g. Merge2608's today) isn't the asset
+        if p.endswith(".meta"):
+            return False
+        return os.path.isfile(p) or (os.path.isdir(p) and any(not n.endswith(".meta") for n in os.listdir(p)))
+
+    tmp = tempfile.mkdtemp(prefix="evtid_svn_")
+    created, guid_map, summary = [], {}, []
+    try:
+        for label, folder, prefix in pieces:
+            if not os.path.isdir(folder):
+                log(f"Warning: {folder} not found — skipping {label}.")
+                continue
+            live = {n: os.path.join(folder, n) for n in os.listdir(folder) if n.startswith(prefix)}
+            if not any(has_content(p) for p in live.values()):
+                log(f"{label}: not in the live folder — checking SVN history...")
+                recovered = _svn_export_deleted(folder, prefix, src_start, os.path.join(tmp, os.path.basename(folder)))
+                # Keep a leftover live .meta the deletion missed (Misc still has an orphaned
+                # UI/20260901TabEventBtn.meta) rather than letting Unity invent a new one.
+                live = {**{n: p for n, p in live.items() if n.endswith(".meta")}, **recovered} if recovered else {}
+            if not live:
+                log(f"Warning: no {label} found for {src_id} (live or SVN) — skipped.")
+                summary.append(f"{label}: none")
+                continue
+
+            existing = [n for n in live if os.path.exists(os.path.join(folder, tgt_name(n)))]
+            if existing:
+                # Something (usually art) already made the target's version — never overwrite.
+                # Still link it: map each source GUID to the existing target file's GUID by name,
+                # so a freshly cloned prefab points at these sprites rather than the source's.
+                for n in existing:
+                    src_p, tgt_p = live[n], os.path.join(folder, tgt_name(n))
+                    pairs = [(src_p, tgt_p)] if os.path.isfile(src_p) else [
+                        (os.path.join(dp, f), os.path.join(tgt_p, os.path.relpath(os.path.join(dp, f), src_p)))
+                        for dp, _, fn in os.walk(src_p) for f in fn]
+                    for s, t in pairs:
+                        if s.endswith(".meta") and os.path.exists(t):
+                            gs, gt = _meta_guid(s), _meta_guid(t)
+                            if gs and gt:
+                                guid_map[gs] = gt
+                log(f"{label}: {tgt_id} version already exists — left untouched, linked by name.")
+                summary.append(f"{label}: already existed")
+                continue
+
+            for n, src_p in live.items():
+                dst = os.path.join(folder, tgt_name(n))
+                if os.path.isdir(src_p):
+                    shutil.copytree(src_p, dst)
+                    new_files = [os.path.join(dp, f) for dp, _, fn in os.walk(dst) for f in fn]
+                else:
+                    shutil.copy2(src_p, dst)
+                    new_files = [dst]
+                record_file_creation(log_dir, step_index, dst)
+                for p in new_files:
+                    os.chmod(p, stat.S_IWRITE | stat.S_IREAD)  # svn:needs-lock files copy over read-only
+                created += new_files
+            summary.append(f"{label}: {len(live)} item(s) copied")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    guid_map.update(_fresh_guid_map(created))
+    remapped, rewritten, _ = _rewrite_unity_text_files(created, guid_map, swap_bytes)
+    log(f"Event-ID resources {src_id} -> {tgt_id}: {'; '.join(summary)}. {len(created)} files created, "
+        f"{remapped} GUID references remapped, {rewritten} files rewritten.")
+
+    # Repoint the new event's own prefabs (the folder step 24 cloned) from the source's
+    # ID-keyed images to the target's. The clone still links the source's GUIDs: fine while
+    # the source's images are live, broken once they're cleaned up — Merge2611 inherited 56
+    # such links to Merge2608's token/prop/buff images, deleted in r132788. The team renames
+    # these files forward, which keeps the GUID; this tool copies, so the links must move too.
+    evt_dir = os.path.join(proj_root, "develop", "client", "Skipbo", "Assets", "ResourcesAb", "Events", tgt_evt[0].upper() + tgt_evt[1:])
+    moves = {old: new for old, new in guid_map.items() if old != new}
+    if moves and os.path.isdir(evt_dir):
+        touched = []
+        for dp, _, fn in os.walk(evt_dir):
+            for n in fn:
+                if n.endswith(".meta"):
+                    continue
+                p = os.path.join(dp, n)
+                with open(p, 'rb') as f:
+                    data = f.read()
+                if data.startswith(b'%YAML') and any(old in data for old in moves):
+                    touched.append(p)
+        for p in touched:
+            os.chmod(p, stat.S_IWRITE | stat.S_IREAD)
+            record_file_backup(log_dir, step_index, p)
+        relinked, n_files, _ = _rewrite_unity_text_files(touched, moves, lambda b: b)
+        log(f"Relinked {relinked} reference(s) in {n_files} {os.path.basename(evt_dir)} file(s) from {src_id}'s images to {tgt_id}'s.")
+    return True
 
 
 def register_event_lua_configs(proj_root, src_evt, tgt_evt, log_dir, step_index):
@@ -6985,6 +7607,14 @@ def main():
     elif step_index == 22:
         # Step 23: Copy & rename event code folders (Core<Event> + UI<Event>Panel)
         success = clone_event_code_folders(proj_root, src_evt, tgt_evt, log_dir, step_index)
+        if not success: sys.exit(1)
+    elif step_index == 23:
+        # Step 24: Copy & rename ResourcesAb/Events/<Event> (GUIDs regenerated + remapped)
+        success = clone_event_resources(proj_root, src_evt, tgt_evt, log_dir, step_index)
+        if not success: sys.exit(1)
+    elif step_index == 24:
+        # Step 25: Copy & rename event-ID resources (TabEventBtn prefab + sprites, CommonEventImg)
+        success = clone_event_id_resources(proj_root, src_evt, tgt_evt, log_dir, step_index)
         if not success: sys.exit(1)
     else:
         log(f"Step {step_index} execution mock succeeded.")

@@ -287,7 +287,7 @@
     });
   }
 
-  // Chapter Update tool paths. Folder pickers, persisted like unityExePath.
+  // Chapter Update tool paths. Folder pickers, persisted in config.
   for (const [btn, input, key] of [
     ['#browse-chapter-lvlpy-btn', '#chapter-lvlpy-input', 'chapterLvlPyPath'],
     ['#browse-chapter-mapbuilder-btn', '#chapter-mapbuilder-input', 'chapterMapBuilderPath'],
@@ -303,14 +303,6 @@
     });
   }
 
-  $('#browse-unity-exe-btn').addEventListener('click', async () => {
-    const picked = await window.api.browseFile({ startPath: cfg.unityExePath, filters: [{ name: 'Unity Editor', extensions: ['exe'] }] });
-    if (picked) {
-      $('#unity-exe-input').value = picked;
-      cfg.unityExePath = picked;
-      await window.api.saveConfig({ unityExePath: picked });
-    }
-  });
 
   // ---------------- Profile & avatars ----------------
   const AVATAR_COLORS = ['#7c5cfc', '#34d399', '#fbbf24', '#fb7185', '#38bdf8', '#f472b6', '#2dd4bf', '#fb923c'];
@@ -825,7 +817,6 @@
       isRevert,
       branchRoot: activeBranchRoot(),
       workspace: cfg.activeWorkspace,
-      unityExePath: cfg.unityExePath || '',
       eventId: $('#event-id-input').value.trim(),
       startTime: times.startTime,
       endTime: times.endTime,
@@ -1667,7 +1658,7 @@
   }
 
   // The simulation folder is a machine-level tool path, so it persists in
-  // config like robotCalcPath / unityExePath rather than being retyped per run.
+  // config like robotCalcPath rather than being retyped per run.
   // Blank means "derive from the active branch", which is right on every normal
   // checkout — the box shows the resolved path either way so it is never a
   // guess what Level Balancing will read.
@@ -4156,7 +4147,6 @@
     defaults = data.defaults;
     pipelineSteps = data.pipelineSteps;
 
-    $('#unity-exe-input').value = cfg.unityExePath || '';
     $('#chapter-lvlpy-input').value = cfg.chapterLvlPyPath || '';
     $('#chapter-mapbuilder-input').value = cfg.chapterMapBuilderPath || '';
     updateRobotPvpPathDisplay();

@@ -69,7 +69,7 @@ function detectIdentity() {
 
 const PIPELINE_STEPS = [
   '1. Configure storagedata.proto',
-  '2. Execute ProtoToLua in Unity',
+  '2. Convert proto files to Lua (ProtoToLua)',
   '3. Add active save file in local service',
   '4. Register in LocalServiceMgr.lua',
   '5. Clone WorkSpace3 configuration to active workspace',
@@ -90,7 +90,9 @@ const PIPELINE_STEPS = [
   '20. Update sys.xlsx (DeepLink registration)',
   '21. Execute coder_convert script',
   '22. Register event in EventConfig.lua, BIDef.lua, UIManager.lua, PanelConfig.lua & GuideRefuiMgr.lua',
-  '23. Copy & rename event code folders (Core<Event> + UI<Event>Panel)'
+  '23. Copy & rename event code folders (Core<Event> + UI<Event>Panel)',
+  '24. Copy & rename ResourcesAb event data (ResourcesAb/Events/<Event>)',
+  '25. Copy & rename event-ID resources (TabEventBtn, CommonEventImg, PropIcon, EventAchieve)'
 ];
 
 // Guessed repo root: this app lives at <repoRoot>/tools/EventAutomationDesktop
@@ -120,7 +122,6 @@ function loadConfig() {
     anthropicApiKey: '',
     ollamaBaseUrl: '',
     ollamaModel: 'qwen3:32b',
-    unityExePath: '',
     robotCalcPath: '',
     // Blank = derive from the active branch (<branch>/develop/tools/RunCardEx2).
     // Only set when the simulation output lives somewhere else on this machine.
@@ -195,6 +196,56 @@ function resolveDesignPath(branchRoot, workspace) {
 
 function resolveUnityProjectPath(branchRoot) {
   return path.join(branchRoot, 'develop', 'client', 'Skipbo');
+}
+
+// Direct port of ProtoTool.ProtoToLua (Assets/Editor/ABBuilder/ProtoTool.cs): each
+// develop/protocol/<name>.proto becomes PB/<name>.lua containing `return [[<proto text>]]`.
+// That's the whole conversion — no reason to boot a 22GB Unity project headlessly for it
+// (which took >10 min and refused to start whenever the Editor had the project open).
+// Verified byte-identical to the Unity-generated files for every untouched proto in
+// trunk/Misc/Feature. Differences from the C# original, both deliberate:
+//  - only *.proto files: the C# reads EVERY file in the folder, so step 1's
+//    storagedata.proto.bak would have produced a junk PB/storagedata.proto.lua asset;
+//  - no TortoiseProc SVN update: it pops a GUI dialog, and step 1 has just edited
+//    storagedata.proto locally, so updating here risks a conflict mid-pipeline.
+// useBackups: read <name>.proto.bak when present (step 1's pre-edit copy) — used by Undo.
+function protoToLua(branchRoot, useBackups) {
+  const protoDir = path.join(branchRoot, 'develop', 'protocol');
+  const pbDir = path.join(resolveUnityProjectPath(branchRoot), 'Assets', 'Lua', 'Game', 'Module', 'Protocol', 'PB');
+  if (!fs.existsSync(protoDir)) return { success: false, output: `Protocol folder not found: ${protoDir}` };
+  if (!fs.existsSync(pbDir)) return { success: false, output: `PB output folder not found: ${pbDir}` };
+
+  // Build every output first so a bad file aborts before anything is written.
+  const outputs = [];
+  for (const file of fs.readdirSync(protoDir).filter(f => f.endsWith('.proto'))) {
+    const src = path.join(protoDir, file);
+    const bak = src + '.bak';
+    const readFrom = useBackups && fs.existsSync(bak) ? bak : src;
+    let text = fs.readFileSync(readFrom, 'utf8');
+    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1); // C# File.ReadAllText drops the BOM
+    // Lua long string `[[...]]` ends at the first `]]`; one inside the proto would silently
+    // truncate the embedded schema. The C# original has the same hole — fail loudly instead.
+    if (text.includes(']]')) return { success: false, output: `${file} contains "]]", which would break the Lua long string. Nothing written.` };
+    outputs.push({
+      readFrom,
+      out: path.join(pbDir, file.replace(/\.proto$/, '.lua')),
+      content: Buffer.from('return [[' + text + ']]', 'utf8') // UTF-8, no BOM, line endings kept
+    });
+  }
+
+  const lines = [];
+  let changed = 0;
+  for (const { readFrom, out, content } of outputs) {
+    if (fs.existsSync(out) && fs.readFileSync(out).equals(content)) {
+      lines.push(`  unchanged  ${path.basename(out)}`);
+      continue;
+    }
+    fs.writeFileSync(out, content);
+    changed++;
+    lines.push(`  written    ${path.basename(out)}  (from ${path.basename(readFrom)}, ${content.length} bytes)`);
+  }
+  lines.unshift(`ProtoToLua: ${changed} file(s) written to ${pbDir}`);
+  return { success: true, output: lines.join('\n') };
 }
 
 function resolveLogDir(branchRoot) {
@@ -299,7 +350,7 @@ function runPython(scriptId, args) {
 ipcMain.handle('pipeline:runStep', async (evt, params) => {
   const {
     stepIndex, srcEvt, tgtEvt, isRevert,
-    branchRoot, workspace, unityExePath,
+    branchRoot, workspace,
     eventId, startTime, endTime, nearEndTime, closeTime, isReopen, srcStartTime
   } = params;
 
@@ -321,28 +372,15 @@ ipcMain.handle('pipeline:runStep', async (evt, params) => {
   };
   fs.writeFileSync(path.join(logDir, 'extra_args.json'), JSON.stringify(extraArgs), 'utf-8');
 
-  // Step index 1: ProtoToLua — the one genuinely Unity-coupled step.
-  // Run Unity headlessly instead of requiring the editor to be open.
+  // Step index 1: ProtoToLua — done directly (see protoToLua above), no Unity launch.
+  // Revert regenerates from step 1's storagedata.proto.bak while it still exists: Undo All
+  // runs this before step 1's own revert, so the .bak is the true pre-pipeline proto.
   if (stepIndex === 1) {
-    if (isRevert) {
-      return { success: true, output: 'Reverting ProtoToLua is not strictly trackable. Skipping.' };
+    try {
+      return protoToLua(branchRoot, isRevert);
+    } catch (e) {
+      return { success: false, output: `ProtoToLua failed: ${e.message}` };
     }
-    if (!unityExePath || !fs.existsSync(unityExePath)) {
-      return { success: false, output: 'Unity executable path is not configured (Settings > Unity Executable Path). Cannot run ProtoToLua headlessly.' };
-    }
-    const projectPath = resolveUnityProjectPath(branchRoot);
-    if (!fs.existsSync(projectPath)) {
-      return { success: false, output: `Unity project not found at ${projectPath}` };
-    }
-    return new Promise((resolve) => {
-      const args = ['-batchmode', '-quit', '-nographics', '-projectPath', projectPath, '-executeMethod', 'ProtoTool.ProtoToLua', '-logFile', '-'];
-      execFile(unityExePath, args, { maxBuffer: 20 * 1024 * 1024, timeout: 10 * 60 * 1000 }, (error, stdout, stderr) => {
-        resolve({
-          success: !error,
-          output: `Launched Unity headless: ${unityExePath} ${args.join(' ')}\n` + (stdout || '') + (stderr ? '\n' + stderr : '')
-        });
-      });
-    });
   }
 
   // Step index 20: coder_convert — a standalone batch file, no Unity involved.

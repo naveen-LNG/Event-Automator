@@ -1081,11 +1081,6 @@
       <div class="stacked-card">
         <h2 class="card-title">Environment</h2>
         <div class="form-row">
-          <label class="form-label" for="unity-exe-input">Unity Executable</label>
-          <input type="text" id="unity-exe-input" class="text-input mono" placeholder="C:\Program Files\Unity\Hub\Editor\...\Unity.exe" readonly />
-          <button class="secondary-btn" id="browse-unity-exe-btn">Browse</button>
-        </div>
-        <div class="form-row">
           <label class="form-label" for="chapter-lvlpy-input">Level Builder (Magic Builder) Py folder</label>
           <input type="text" id="chapter-lvlpy-input" class="text-input mono" placeholder="(guessing &lt;repo&gt;/tools/Level_Builder3/Magic_Builder/Assets/Py)" readonly />
           <button class="secondary-btn" id="browse-chapter-lvlpy-btn" type="button">Browse</button>
@@ -1096,7 +1091,6 @@
           <button class="secondary-btn" id="browse-chapter-mapbuilder-btn" type="button">Browse</button>
         </div>
         <p class="settings-hint">Used by the Chapter Update tab. <code>tools/</code> lives outside the branch checkout, so unlike the design and client folders these cannot be derived from the branch path — the app guesses the standard layout and falls back to whatever you browse to here.</p>
-        <p class="settings-hint">Needed only for step 2 (ProtoToLua), run headlessly via <code>Unity.exe -batchmode -executeMethod ProtoTool.ProtoToLua</code> against the active branch's Unity project.</p>
       </div>
 
       <div class="stacked-card">
