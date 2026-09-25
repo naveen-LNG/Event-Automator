@@ -570,6 +570,37 @@ check(!!(link && link[2]), 'stylesheet link carries a ?v= cache-buster',
   }
 }
 
+// ---- 9. nothing mkdirs under an unusable branch root ------------------------
+// With no branch selected, path.join('', 'develop', ...) is RELATIVE and every
+// resolveLogDir caller then mkdirSync({recursive})'d it inside the app's own
+// folder - a stray develop/client/Skipbo/... with an empty extra_args.json,
+// found only because the drift check refused to push past it.
+{
+  // Run the real function, lifted out of main.js, rather than trusting its text.
+  const m = /function branchRootProblem\([^)]*\)\s*\{[\s\S]*?\n\}/.exec(main);
+  check(!!m, 'main.js defines branchRootProblem');
+  if (m) {
+    const fn = new Function('path', 'fs', `${m[0]}; return branchRootProblem;`)(path, fs);
+    const os = require('os');
+    check(!!fn(''), 'an empty branch root is refused');
+    check(!!fn('   '), 'a whitespace-only branch root is refused');
+    check(!!fn('develop'), 'a relative branch root is refused - it would resolve inside the app');
+    check(!!fn(path.join(os.tmpdir(), 'no-such-branch-' + Date.now())), 'a branch folder that does not exist is refused');
+    check(fn(os.tmpdir()) === null, 'an existing absolute branch folder is accepted');
+  }
+
+  // And every handler that builds the log dir asks first. A new caller added
+  // without the guard fails here instead of writing into the app folder.
+  const lines = main.split('\n');
+  lines.forEach((ln, i) => {
+    if (!/=\s*resolveLogDir\(/.test(ln)) return;
+    const before = lines.slice(Math.max(0, i - 4), i).join('\n');
+    check(/branchRootProblem\(/.test(before),
+      `main.js:${i + 1} checks branchRootProblem before resolveLogDir`,
+      'call branchRootProblem(branchRoot) and return its message before building the log dir');
+  });
+}
+
 console.log('');
 if (failures) { console.error(`${failures} CONTRACT CHECK(S) FAILED`); process.exit(1); }
 console.log('UI CONTRACT INTACT');

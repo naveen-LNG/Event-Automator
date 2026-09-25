@@ -254,6 +254,21 @@ function resolveLogDir(branchRoot) {
   return path.join(branchRoot, 'develop', 'client', 'Skipbo', 'Assets', 'Editor', 'EventAutomation', 'PythonBackend');
 }
 
+// Every caller of resolveLogDir mkdirs the result, so a missing branch is not a
+// harmless "not found". path.join('', 'develop', ...) is RELATIVE, it resolves
+// against the app's own folder, and mkdirSync({recursive}) quietly creates
+// develop/client/Skipbo/... inside EventAutomationDesktop - which is exactly how
+// a stray extra_args.json full of empty values turned up there and blocked a
+// push on the drift check. A branch folder that does not exist (an unplugged
+// drive, a stale path in config) would do the same on whatever drive it names.
+// Returns the reason to refuse, or null when the branch root is usable.
+function branchRootProblem(branchRoot) {
+  if (!branchRoot || !String(branchRoot).trim()) return 'No branch is selected - pick one in the top bar first.';
+  if (!path.isAbsolute(branchRoot)) return `Branch path is not absolute, refusing to write relative to the app: ${branchRoot}`;
+  if (!fs.existsSync(branchRoot)) return `Branch folder not found: ${branchRoot}`;
+  return null;
+}
+
 // ---- Window ----
 
 function createWindow() {
@@ -354,6 +369,8 @@ ipcMain.handle('pipeline:runStep', async (evt, params) => {
     eventId, startTime, endTime, nearEndTime, closeTime, isReopen, srcStartTime
   } = params;
 
+  const problem = branchRootProblem(branchRoot);
+  if (problem) return { success: false, code: 1, output: problem };
   const logDir = resolveLogDir(branchRoot);
   fs.mkdirSync(logDir, { recursive: true });
 
@@ -602,6 +619,8 @@ ipcMain.handle('trivia:get', async (evt, { branchRoot, workspace }) => {
 });
 
 ipcMain.handle('trivia:run', async (evt, { branchRoot, workspace }) => {
+  const problem = branchRootProblem(branchRoot);
+  if (problem) return { success: false, code: 1, output: problem };
   const logDir = resolveLogDir(branchRoot);
   fs.mkdirSync(logDir, { recursive: true });
 
@@ -766,6 +785,8 @@ ipcMain.handle('eventtypes:get', async (evt, { designPath }) => {
 // ---- IPC: manual "Update local cache from SVN" (convert_layout.lua source-event data) ----
 
 ipcMain.handle('convertLayoutCache:refresh', async (evt, { branchRoot, workspace, eventNames }) => {
+  const problem = branchRootProblem(branchRoot);
+  if (problem) return { success: false, code: 1, output: problem };
   const logDir = resolveLogDir(branchRoot);
   fs.mkdirSync(logDir, { recursive: true });
 
@@ -2026,6 +2047,8 @@ ipcMain.handle('ideation:dataFolderInfo', async () => {
 // icon.xlsx/item.xlsx, and localization.xlsx source-event data in one pass ----
 
 ipcMain.handle('caches:refreshAll', async (evt, { branchRoot, workspace, eventNames }) => {
+  const problem = branchRootProblem(branchRoot);
+  if (problem) return { success: false, code: 1, output: problem };
   const logDir = resolveLogDir(branchRoot);
   fs.mkdirSync(logDir, { recursive: true });
 

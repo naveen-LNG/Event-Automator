@@ -7104,8 +7104,30 @@ def clone_event_resources(proj_root, src_evt, tgt_evt, log_dir, step_index):
     tgt_dir = os.path.join(events_dir, tgt_pascal)
     tgt_meta = tgt_dir + ".meta"
     if os.path.exists(tgt_dir):
-        log(f"ResourcesAb/Events/{tgt_pascal} already exists — skipping (idempotent, never overwritten).")
-        return True
+        # Existing is not the same as done. An empty <Tgt> folder - left by a reverted
+        # run, or recreated by SVN/Unity - used to count as "already cloned", so nothing
+        # was copied and the event shipped with no resources at all. That is the exact
+        # mistake chapter update's dynamic_map copy made three runs in a row. Only real
+        # assets make the folder somebody's work; orphan .meta files don't.
+        assets = [n for _, _, fn in os.walk(tgt_dir) for n in fn if not n.endswith(".meta")]
+        if assets:
+            log(f"ResourcesAb/Events/{tgt_pascal} already holds {len(assets)} asset file(s) — "
+                f"skipping (never overwritten).")
+            return True
+        # Cleared rather than copied into. What a reverted clone leaves behind is orphan
+        # .meta files that ALREADY carry the target's names (bg_sim2609.png.meta), so the
+        # rename pass below collides with them and Windows refuses the rename. With no
+        # assets in the folder they are metadata for nothing - Unity deletes them on
+        # import, and every GUID is regenerated here anyway - so nothing is lost.
+        # ponytail: Undo then removes the folder even though it existed (empty) before.
+        # Recording files individually would go stale the moment the rename pass runs,
+        # and an empty folder is not worth that.
+        for dp, _, fn in os.walk(tgt_dir):   # svn:needs-lock files are read-only, and
+            for n in fn:                     # rmtree cannot delete those on Windows
+                os.chmod(os.path.join(dp, n), stat.S_IWRITE | stat.S_IREAD)
+        shutil.rmtree(tgt_dir)
+        log(f"ResourcesAb/Events/{tgt_pascal} existed but held no assets (only orphan .meta "
+            f"files, if any) — cleared it and cloning from {src_pascal}.")
 
     src_dir = os.path.join(events_dir, src_pascal)
     if not os.path.isdir(src_dir):
