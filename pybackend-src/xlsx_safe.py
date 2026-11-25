@@ -74,3 +74,43 @@ def load_workbook_frozen(path, **kwargs):
             f"and save once to recalculate, then re-run."
         )
     return wb
+
+
+# mini_mgr.xlsx 活动数据 columns, found by header text: the team inserts columns
+# (e.g. '控制开关$LNMN2' for AB tests after 控制开关), so fixed positions break.
+MINI_MGR_HEADERS = {"id": "ID", "switch": "控制开关", "start": "开始时间", "end": "结束时间",
+                    "type": "活动类型", "double_week": "双周活动ID", "discount": "折扣链ID"}
+
+
+def mini_mgr_columns(header_row):
+    """{field: 1-based column} for 活动数据, from its header row values (exact text match,
+    so '控制开关$LNMN2' never stands in for 控制开关). Raises ValueError naming any missing."""
+    names = [str(v).strip() if v is not None else "" for v in header_row]
+    cols = {k: names.index(h) + 1 for k, h in MINI_MGR_HEADERS.items() if h in names}
+    missing = [h for k, h in MINI_MGR_HEADERS.items() if k not in cols]
+    if missing:
+        raise ValueError(f"mini_mgr.xlsx 活动数据 has no column headed: {', '.join(missing)}")
+    return cols
+
+
+def mini_mgr_ab_columns(header_row):
+    """{header: 1-based column} of the AB-test switch columns ('控制开关 $LNMN2', ...)."""
+    return {str(v).strip(): i + 1 for i, v in enumerate(header_row)
+            if v is not None and str(v).strip().startswith("控制开关") and "$" in str(v)}
+
+
+if __name__ == "__main__":
+    old = ["ID", "控制开关", "开始时间", "结束时间", "持续时间", "活动类型", "双周活动ID", "折扣链ID", "兼容ID"]
+    new = old[:2] + ["控制开关 $LNMN2"] + old[2:]
+    assert mini_mgr_columns(old) == {"id": 1, "switch": 2, "start": 3, "end": 4, "type": 6,
+                                     "double_week": 7, "discount": 8}
+    assert mini_mgr_columns(new) == {"id": 1, "switch": 2, "start": 4, "end": 5, "type": 7,
+                                     "double_week": 8, "discount": 9}
+    assert mini_mgr_ab_columns(old) == {}
+    assert mini_mgr_ab_columns(new) == {"控制开关 $LNMN2": 3}
+    try:
+        mini_mgr_columns(old[:5])
+        raise AssertionError("missing header not reported")
+    except ValueError as e:
+        assert "活动类型" in str(e)
+    print("mini_mgr_columns: ok")

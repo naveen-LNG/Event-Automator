@@ -6,7 +6,7 @@ import traceback
 import re
 import copy as _copy
 import builtins
-from xlsx_safe import load_workbook_frozen
+from xlsx_safe import load_workbook_frozen, mini_mgr_columns
 
 
 def open(file, mode='r', *args, **kwargs):  # noqa: A001 - deliberately shadows builtins.open
@@ -6138,6 +6138,11 @@ def get_quiz_prefix_from_mini_mgr(proj_root):
         log("Error: 活动数据 sheet not found in mini_mgr.xlsx")
         return None
     ws = wb["活动数据"]
+    try:
+        cols = mini_mgr_columns([c.value for c in ws[1]])
+    except ValueError as e:
+        log(f"Error: {e}")
+        return None
 
     def as_date(v):
         if isinstance(v, datetime):
@@ -6148,12 +6153,13 @@ def get_quiz_prefix_from_mini_mgr(proj_root):
 
     dated = []  # (start_date, enabled, row)
     for r in range(1, ws.max_row + 1):
-        if ws.cell(r, 6).value != "答题挑战" or ws.cell(r, 3).value is None:  # type: ignore
+        start = ws.cell(r, cols["start"]).value
+        if ws.cell(r, cols["type"]).value != "答题挑战" or start is None:  # type: ignore
             continue
         try:
-            dated.append((as_date(ws.cell(r, 3).value), ws.cell(r, 2).value is True, r))  # type: ignore
+            dated.append((as_date(start), ws.cell(r, cols["switch"]).value is True, r))  # type: ignore
         except ValueError:
-            log(f"Warning: mini_mgr.xlsx row {r}: unreadable 答题挑战 start date {ws.cell(r, 3).value!r}, skipped")  # type: ignore
+            log(f"Warning: mini_mgr.xlsx row {r}: unreadable 答题挑战 start date {start!r}, skipped")
 
     if not dated:
         log("Error: mini_mgr.xlsx has no dated 答题挑战 rows at all — add the next minigame set (Minigame Configs tab) first")

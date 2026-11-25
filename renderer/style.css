@@ -2205,3 +2205,12 @@ select.text-input option { background: #121834; color: var(--fg); }
 .sidebar-board { gap: 5px; }
 .nav-group, .nav-group-items { gap: 5px; }
 @media (max-width: 1360px) { .brand-text { display: none; } .brand { padding-right: 4px; margin-right: 2px; } }
+
+/* Minigame Configs: editable preview set. */
+.mg-edit-wrap { overflow-x: auto; }
+.mg-edit-table td { padding: 5px 6px; }
+.mg-edit-table .mg-cell { flex: none; width: 100%; min-width: 64px; padding: 5px 7px; font-size: 11.5px; font-family: var(--font-mono); }
+.mg-edit-table input.mg-cell:not(.mg-id) { min-width: 152px; }
+.mg-edit-table .mg-id { min-width: 72px; }
+.mg-edit-table .mg-invalid { border-color: var(--bad); box-shadow: 0 0 0 2px rgba(255,107,129,0.35); }
+.mg-edit-table .mg-del { padding: 5px 9px; }

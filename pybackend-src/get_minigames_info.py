@@ -2,6 +2,7 @@ import sys
 import os
 import json
 import openpyxl
+from xlsx_safe import mini_mgr_columns, mini_mgr_ab_columns
 
 def main():
     sys.stdout.reconfigure(encoding='utf-8')
@@ -35,11 +36,19 @@ def main():
         print(json.dumps({"error": "Missing required sheets in mini_mgr.xlsx"}))
         sys.exit(1)
 
+    header = [c.value for c in ws_data[1]]
+    try:
+        cols = mini_mgr_columns(header)
+    except ValueError as e:
+        print(json.dumps({"error": str(e)}, ensure_ascii=False))
+        sys.exit(1)
+    result["ab_columns"] = list(mini_mgr_ab_columns(header))
+
     # 1. Get max ID from 活动数据
     max_id = 0
     # Search from the bottom up to find the last valid numeric ID
     for r in range(ws_data.max_row, 1, -1):
-        val = ws_data.cell(row=r, column=1).value
+        val = ws_data.cell(row=r, column=cols["id"]).value
         try:
             val_int = int(val)
             max_id = val_int
@@ -52,15 +61,13 @@ def main():
     # 2. Build history dict from 活动数据 to find 折扣链ID and 双周活动ID requirement
     history_map = {}
     
-    # Columns in 活动数据 (1-indexed, matches real header row):
-    # column=6 is 活动类型 (Minigame Name), column=7 is 双周活动ID, column=8 is 折扣链ID
     for r in range(ws_data.max_row, 3, -1):
-        mg_name = ws_data.cell(row=r, column=6).value
+        mg_name = ws_data.cell(row=r, column=cols["type"]).value
         if not mg_name or not isinstance(mg_name, str):
             continue
 
-        discount_id = ws_data.cell(row=r, column=8).value
-        double_week_id = ws_data.cell(row=r, column=7).value
+        discount_id = ws_data.cell(row=r, column=cols["discount"]).value
+        double_week_id = ws_data.cell(row=r, column=cols["double_week"]).value
         
         if mg_name not in history_map:
             history_map[mg_name] = {
@@ -98,7 +105,7 @@ def main():
 
     last_position1 = None
     for r in range(ws_data.max_row, 3, -1):
-        mg_name = ws_data.cell(row=r, column=6).value
+        mg_name = ws_data.cell(row=r, column=cols["type"]).value
         if mg_name in SET_ALTERNATES:
             last_position1 = mg_name
             break
@@ -106,8 +113,8 @@ def main():
 
     last_quiz_dw = None
     for r in range(ws_data.max_row, 3, -1):
-        if str(ws_data.cell(row=r, column=6).value or "").strip() == "答题挑战":
-            dw_val = ws_data.cell(row=r, column=7).value
+        if str(ws_data.cell(row=r, column=cols["type"]).value or "").strip() == "答题挑战":
+            dw_val = ws_data.cell(row=r, column=cols["double_week"]).value
             if dw_val is not None and str(dw_val).strip() != "":
                 last_quiz_dw = str(dw_val).strip()
                 break

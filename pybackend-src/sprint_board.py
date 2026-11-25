@@ -82,8 +82,9 @@ TAB_LABELS = {
 # date column, so it cannot be detected by window overlap. Reporting it as
 # "manual check" is honest; reporting it as missing would be a false alarm.
 CONFIG_SOURCES = {
-    "minigames":        dict(file="mini_mgr.xlsx",         sheet="活动数据",   start=2, end=3,  switch=1,    name=5),
-    "trivia":           dict(file="mini_mgr.xlsx",         sheet="活动数据",   start=2, end=3,  switch=1,    name=5, only_type="答题挑战"),
+    # Header names instead of positions: the team inserts AB-test columns into 活动数据.
+    "minigames":        dict(file="mini_mgr.xlsx",         sheet="活动数据",   start="开始时间", end="结束时间", switch="控制开关", name="活动类型"),
+    "trivia":           dict(file="mini_mgr.xlsx",         sheet="活动数据",   start="开始时间", end="结束时间", switch="控制开关", name="活动类型", only_type="答题挑战"),
     "battlepass":       dict(file="battle_pass.xlsx",      sheet="battle_pass", start=2, end=3, switch=1,    name=4),
     "holiday_bp":       dict(file="festivals_bp.xlsx",     sheet="festivals_bp", start=2, end=3, switch=1,   name=4),
     "endless_treasure": dict(file="endless_treasure.xlsx", sheet="折扣链推荐", start=3, end=4,  switch=8,    name=9),
@@ -254,6 +255,7 @@ def _to_date(v):
 
 
 _WB_CACHE = {}
+_HEADER_CACHE = {}
 
 
 def _sheet_rows(design_path, filename, sheet):
@@ -266,17 +268,33 @@ def _sheet_rows(design_path, filename, sheet):
         try:
             wb = openpyxl.load_workbook(p, data_only=True, read_only=True)
             if sheet in wb.sheetnames:
-                rows = list(wb[sheet].iter_rows(min_row=2, values_only=True))
+                rows = list(wb[sheet].iter_rows(min_row=1, values_only=True))
         except Exception as e:
             log(f"Warning: could not read {filename}/{sheet}: {e}")
-    _WB_CACHE[key] = rows
-    return rows
+    _HEADER_CACHE[key] = rows[0] if rows else ()
+    _WB_CACHE[key] = rows[1:]
+    return rows[1:]
+
+
+def _column_index(design_path, src, field):
+    """0-based column for src[field]: an int as is, a header name looked up in the sheet's row 1."""
+    v = src[field]
+    if not isinstance(v, str):
+        return v
+    _sheet_rows(design_path, src["file"], src["sheet"])
+    names = [str(h).strip() if h is not None else "" for h in _HEADER_CACHE[(design_path, src["file"], src["sheet"])]]
+    return names.index(v) if v in names else None
 
 
 def _configured_rows(design_path, tab, win_start, win_end):
     src = CONFIG_SOURCES.get(tab)
     if not src:
         return None          # not auto-detectable
+    src = dict(src, **{f: _column_index(design_path, src, f)
+                       for f in ("start", "end", "switch", "name") if f in src})
+    if src["start"] is None or (src.get("only_type") and src["name"] is None):
+        log(f"Warning: {src['file']}/{src['sheet']} is missing a start-date or type column; skipped")
+        return []
     hits = []
     for r in _sheet_rows(design_path, src["file"], src["sheet"]):
         if not r:

@@ -878,26 +878,134 @@
   // ---------------- Minigames tab ----------------
   let generatedMinigameRows = [];
 
+  // AB-test switch columns found in 活动数据 (e.g. '控制开关 $LNMN2').
+  const mgAbColumns = () => (cachedMinigames && cachedMinigames.ab_columns) || [];
+
+  function mgEl(tag, props, field, i) {
+    const el = Object.assign(document.createElement(tag), props);
+    el.dataset.f = field; el.dataset.i = i;
+    return el;
+  }
+  function mgSelect(options, value, field, i) {
+    const s = mgEl('select', { className: 'text-input mg-cell' }, field, i);
+    for (const [v, label] of options) s.add(new Option(label, v));
+    s.value = value;
+    return s;
+  }
+  const MG_BOOL = [['true', 'TRUE'], ['false', 'FALSE']];
+  const MG_AB = [['', '-'], ...MG_BOOL];
+
   function renderMinigamePreview() {
     const container = $('#minigame-preview-container');
-    if (!generatedMinigameRows.length) {
-      container.innerHTML = '<p class="header-subtitle small" style="margin:0;">Generate a set above to preview the rows here.</p>';
-      return;
+    container.textContent = '';
+    if (generatedMinigameRows.length) {
+      const ab = mgAbColumns();
+      const table = document.createElement('table');
+      table.className = 'mg-preview-table mg-edit-table';
+      const head = table.createTHead().insertRow();
+      for (const h of ['ID', 'Minigame', 'Start', 'End', 'Double Wk ID', 'Discount ID', '控制开关', ...ab, ''])
+        head.appendChild(Object.assign(document.createElement('th'), { textContent: h }));
+      const body = table.createTBody();
+      const names = (cachedMinigames ? cachedMinigames.minigames : []).map(m => [m.name, m.name]);
+      generatedMinigameRows.forEach((r, i) => {
+        if (!names.some(([n]) => n === r.minigame)) names.push([r.minigame, r.minigame]);
+        const tr = body.insertRow();
+        const cells = [
+          mgEl('input', { className: 'mg-time mg-cell mg-id', type: 'number', value: r.id }, 'id', i),
+          mgSelect(names, r.minigame, 'minigame', i),
+          mgEl('input', { className: 'mg-time mg-cell', value: r.start_time }, 'start_time', i),
+          mgEl('input', { className: 'mg-time mg-cell', value: r.end_time }, 'end_time', i),
+          mgEl('input', { className: 'mg-time mg-cell', value: r.double_week_id || '' }, 'double_week_id', i),
+          mgEl('input', { className: 'mg-time mg-cell mg-id', value: r.discount_id === -1 ? '' : r.discount_id }, 'discount_id', i),
+          mgSelect(MG_BOOL, String(r.switch !== false), 'switch', i),
+          ...ab.map(h => mgSelect(MG_AB, r.ab && r.ab[h] != null ? String(r.ab[h]) : '', 'ab:' + h, i)),
+          mgEl('button', { className: 'secondary-btn small mg-del', textContent: '✕', title: 'Delete row' }, 'delete', i),
+        ];
+        for (const el of cells) tr.insertCell().appendChild(el);
+      });
+      const wrap = document.createElement('div');
+      wrap.className = 'mg-edit-wrap';
+      wrap.appendChild(table);
+      container.appendChild(wrap);
+    } else {
+      container.appendChild(Object.assign(document.createElement('p'), {
+        className: 'header-subtitle small', style: 'margin:0;',
+        textContent: 'Generate a set above, or add rows one by one.' }));
     }
-    const rowsHtml = generatedMinigameRows.map(r => `
-      <tr>
-        <td>${r.id}</td>
-        <td>${r.minigame}</td>
-        <td>${r.start_time}</td>
-        <td>${r.end_time}</td>
-        <td>${r.double_week_id || '-'}</td>
-        <td>${r.discount_id !== -1 ? r.discount_id : '-'}</td>
-      </tr>`).join('');
-    container.innerHTML = `
-      <table class="mg-preview-table">
-        <thead><tr><th>ID</th><th>Minigame</th><th>Start</th><th>End</th><th>Double Wk ID</th><th>Discount ID</th></tr></thead>
-        <tbody>${rowsHtml}</tbody>
-      </table>`;
+    const add = Object.assign(document.createElement('button'), { className: 'secondary-btn small', textContent: '+ Add row' });
+    add.dataset.f = 'add';
+    add.style.marginTop = '10px';
+    add.disabled = !cachedMinigames;
+    container.appendChild(add);
+  }
+
+  function newMinigameRow() {
+    const last = generatedMinigameRows[generatedMinigameRows.length - 1];
+    const ids = generatedMinigameRows.map(r => Number(r.id)).filter(n => !isNaN(n));
+    let start = last ? addMgDays(parseMgDateTime(last.end_time), cachedMinigames.gap_days || 1)
+                     : parseMgDateTime($('#minigame-set-start-input').value);
+    if (isNaN(start.getTime())) start = new Date();
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(start); end.setHours(23, 59, 59);
+    const mg = cachedMinigames.minigames[0];
+    return {
+      id: Math.max(cachedMinigames.max_id, ...ids) + 1,
+      minigame: mg ? mg.name : '',
+      start_time: formatMgDateTime(start), end_time: formatMgDateTime(end),
+      double_week_id: '', discount_id: mg ? mg.discount_id : -1,
+      switch: true, ab: Object.fromEntries(mgAbColumns().map(h => [h, null])),
+    };
+  }
+
+  // Edits write straight into generatedMinigameRows; only structural changes re-render,
+  // so typing never loses focus.
+  function onMinigameEdit(e) {
+    const el = e.target, f = el.dataset.f;
+    if (!f || f === 'add' || f === 'delete') return;
+    const r = generatedMinigameRows[Number(el.dataset.i)];
+    const v = el.value;
+    el.classList.remove('mg-invalid');
+    if (f.startsWith('ab:')) (r.ab ||= {})[f.slice(3)] = v === '' ? null : v === 'true';
+    else if (f === 'switch') r.switch = v === 'true';
+    else if (f === 'id') r.id = v === '' ? '' : Number(v);
+    else if (f === 'discount_id') r.discount_id = v.trim() === '' ? -1 : (isNaN(Number(v)) ? v.trim() : Number(v));
+    else if (f === 'minigame') {
+      r.minigame = v;
+      const mg = cachedMinigames.minigames.find(m => m.name === v);
+      r.discount_id = mg ? mg.discount_id : -1;
+      renderMinigamePreview();
+    } else r[f] = v.trim();
+  }
+  $('#minigame-preview-container').addEventListener('input', onMinigameEdit);
+  $('#minigame-preview-container').addEventListener('change', onMinigameEdit);
+  $('#minigame-preview-container').addEventListener('click', (e) => {
+    const f = e.target.dataset && e.target.dataset.f;
+    if (f === 'add' && cachedMinigames) generatedMinigameRows.push(newMinigameRow());
+    else if (f === 'delete') generatedMinigameRows.splice(Number(e.target.dataset.i), 1);
+    else return;
+    renderMinigamePreview();
+  });
+
+  // Returns a list of problems (empty = ok) and marks the offending cells.
+  function validateMinigameRows() {
+    const problems = [];
+    const DT = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
+    const seen = new Set();
+    const mark = (i, f) => {
+      const el = $(`#minigame-preview-container [data-i="${i}"][data-f="${f}"]`);
+      if (el) el.classList.add('mg-invalid');
+    };
+    generatedMinigameRows.forEach((r, i) => {
+      const n = i + 1;
+      if (!Number.isInteger(r.id) || r.id <= cachedMinigames.max_id) { problems.push(`Row ${n}: ID must be a whole number above ${cachedMinigames.max_id} (the sheet's last ID)`); mark(i, 'id'); }
+      else if (seen.has(r.id)) { problems.push(`Row ${n}: ID ${r.id} is used twice`); mark(i, 'id'); }
+      seen.add(r.id);
+      if (!r.minigame) { problems.push(`Row ${n}: pick a minigame`); mark(i, 'minigame'); }
+      for (const f of ['start_time', 'end_time'])
+        if (!DT.test(String(r[f]).trim()) || isNaN(parseMgDateTime(r[f]).getTime())) { problems.push(`Row ${n}: ${f === 'start_time' ? 'Start' : 'End'} must be YYYY-MM-DD HH:MM:SS`); mark(i, f); }
+      if (DT.test(r.start_time) && DT.test(r.end_time) && parseMgDateTime(r.end_time) < parseMgDateTime(r.start_time)) { problems.push(`Row ${n}: End is before Start`); mark(i, 'end_time'); }
+    });
+    return problems;
   }
 
   function setMinigameControlsEnabled(enabled) {
@@ -928,6 +1036,7 @@
       log(`Error parsing minigame JSON: ${e.message}`, 'console-log-error');
     } finally {
       setMinigameControlsEnabled(!!cachedMinigames);
+      renderMinigamePreview();
     }
   }
 
@@ -981,7 +1090,9 @@
         start_time: formatMgDateTime(start),
         end_time: formatMgDateTime(end),
         double_week_id: dw,
-        discount_id: mg ? mg.discount_id : -1
+        discount_id: mg ? mg.discount_id : -1,
+        switch: true,
+        ab: Object.fromEntries(mgAbColumns().map(h => [h, null]))
       });
 
       cursor = addMgDays(end, gapDays);
@@ -996,6 +1107,12 @@
   $('#minigame-execute-btn').addEventListener('click', async () => {
     const rows = generatedMinigameRows;
     if (rows.length === 0) { log('No generated minigame set to commit.', 'console-log-error'); return; }
+    const problems = validateMinigameRows();
+    if (problems.length) {
+      problems.forEach(p => log(p, 'console-log-error'));
+      toast(`Fix ${problems.length} problem(s) in the preview first:<br>${problems.slice(0, 4).map(escapeHtml).join('<br>')}`, 'error');
+      return;
+    }
 
     const root = activeBranchRoot();
     const designPath = await window.api.resolveDesignPath(root, cfg.activeWorkspace);
