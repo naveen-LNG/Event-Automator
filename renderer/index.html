@@ -494,11 +494,21 @@
         <h2 class="card-title">Upcoming Cycle</h2>
         <div class="preview-grid four">
           <div class="preview-cell"><span class="preview-label">Quiz ID Prefix</span><span id="trivia-preview-prefix" class="preview-value">...</span></div>
-          <div class="preview-cell"><span class="preview-label">Batch # (this branch)</span><span id="trivia-preview-batch" class="preview-value">...</span></div>
+          <div class="preview-cell"><span class="preview-label">Batch # to write</span><span id="trivia-preview-batch" class="preview-value">...</span></div>
           <div class="preview-cell"><span class="preview-label">Questions Ready</span><span id="trivia-preview-count" class="preview-value">...</span></div>
           <div class="preview-cell"><span class="preview-label">Tier 1 / 2 / 3</span><span id="trivia-preview-tiers" class="preview-value">...</span></div>
+          <div class="preview-cell"><span class="preview-label">Answer is Option 1 / 2</span><span id="trivia-preview-answers" class="preview-value">...</span></div>
           <div class="preview-cell"><span class="preview-label">Status</span><span id="trivia-preview-status" class="preview-value">...</span></div>
         </div>
+        <div class="form-row">
+          <label class="form-label" for="trivia-batch-select">Question Batch</label>
+          <select id="trivia-batch-select" class="text-input"><option value="">Auto: next unused batch</option></select>
+        </div>
+        <h2 class="card-title">Batch Usage by Branch</h2>
+        <table class="mg-preview-table">
+          <thead><tr><th>Branch / Workspace</th><th>Live Cycle</th><th>Live Batch</th><th>Earlier Batches</th></tr></thead>
+          <tbody id="trivia-usage-body"></tbody>
+        </table>
         <details class="info-disclosure">
           <summary>
             <span class="info-disclosure-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>
@@ -506,7 +516,7 @@
             <svg class="info-disclosure-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
           </summary>
           <div class="info-disclosure-body">
-            <p class="settings-hint">Quiz ID prefix is derived from the 答题挑战 row in mini_mgr.xlsx's 活动数据 sheet whose 控制开关 is TRUE (e.g. a 2026-08-27 start date produces QUIZ260827). Question content comes from a numbered batch pool (trivia_questions_batch_01.py, _02.py, ...) — not tied to the date — and each branch tracks its own progress through the pool independently, so parallel branches never need to agree on a schedule. When the current batch runs out, author the next trivia_questions_batch_NN.py before running this.</p>
+            <p class="settings-hint">Quiz ID prefix is derived from the 答题挑战 row in mini_mgr.xlsx's 活动数据 sheet whose 控制开关 is TRUE (e.g. a 2026-08-27 start date produces QUIZ260827). Question content comes from a numbered batch pool (trivia_questions_batch_01.py, _02.py, ...) — not tied to the date — and each branch tracks its own progress through the pool independently, so parallel branches never need to agree on a schedule. Auto picks the next batch no branch has used yet; pick a batch number instead to reuse one another branch already committed (the Batch Usage table shows who uses what). When the pool runs out, author the next trivia_questions_batch_NN.py before running this.</p>
           </div>
         </details>
         <div class="board-divider"></div>

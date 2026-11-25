@@ -18,3 +18,11 @@ did. Do not move this file up a level.
 
 If Toy Car World is ever needed as an anchor, take a clean render of it — not
 this page.
+
+## merge2606_scene1_plush_kingdom.png, merge2606_scene2_brick_town.png
+
+Quarantined 2026-11-09. Merge2606 pre-production concept paintings that seeded
+the first Merge_RENDER_STYLE.md. Their glossy rendered finish is not what
+shipped: art generated against them was rejected as "not the Merge event art
+style". The style anchors are now shipped share pictures (see
+Merge_RENDER_STYLE.md section 8).

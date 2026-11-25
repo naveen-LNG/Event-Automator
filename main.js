@@ -606,19 +606,25 @@ ipcMain.handle('endlesstreasure:commit', async (evt, { designPath, payload }) =>
 // so a genuinely new cycle picks the next batch nobody else has used yet, even
 // though each branch is a separate checkout (possibly on a separate machine for a
 // separate team). A branch with no path configured yet is just skipped.
-function allBranchDesignDirs(workspace) {
+// Every configured branch × workspace, labelled for the batch usage table. The next
+// batch avoids anything used in any of them, not just this workspace.
+function allQuizDesignDirs() {
   const cfg = loadConfig();
-  return BRANCH_KEYS
-    .map((key) => cfg.branchPaths[key])
-    .filter(Boolean)
-    .map((root) => resolveDesignPath(root, workspace));
+  const dirs = {};
+  for (const key of BRANCH_KEYS) {
+    const root = cfg.branchPaths[key];
+    if (!root) continue;
+    for (const ws of WORKSPACES) dirs[`${key} / ${ws}`] = resolveDesignPath(root, ws);
+  }
+  return dirs;
 }
 
-ipcMain.handle('trivia:get', async (evt, { branchRoot, workspace }) => {
-  return runPython('get_trivia_challenge_info', [branchRoot, workspace, JSON.stringify(allBranchDesignDirs(workspace))]);
+// questionsSource: '' = next unused batch, else a pool module like 'trivia_questions_batch_03'.
+ipcMain.handle('trivia:get', async (evt, { branchRoot, workspace, questionsSource }) => {
+  return runPython('get_trivia_challenge_info', [branchRoot, workspace, JSON.stringify(allQuizDesignDirs()), questionsSource || '']);
 });
 
-ipcMain.handle('trivia:run', async (evt, { branchRoot, workspace }) => {
+ipcMain.handle('trivia:run', async (evt, { branchRoot, workspace, questionsSource }) => {
   const problem = branchRootProblem(branchRoot);
   if (problem) return { success: false, code: 1, output: problem };
   const logDir = resolveLogDir(branchRoot);
@@ -627,7 +633,7 @@ ipcMain.handle('trivia:run', async (evt, { branchRoot, workspace }) => {
   return new Promise((resolve) => {
     let output = '';
     const proc = spawn(PYTHON_EXE, [
-      PYBACKEND_SCRIPT, 'trivia_challenge_cycle', branchRoot, workspace, 'run', JSON.stringify(allBranchDesignDirs(workspace))
+      PYBACKEND_SCRIPT, 'trivia_challenge_cycle', branchRoot, workspace, 'run', JSON.stringify(allQuizDesignDirs()), questionsSource || ''
     ], { cwd: PYBACKEND_CWD });
 
     proc.stdout.on('data', (d) => { output += d.toString(); evt.sender.send('pipeline:log-line', d.toString()); });

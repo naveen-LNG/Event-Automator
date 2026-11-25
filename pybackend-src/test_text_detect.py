@@ -237,7 +237,7 @@ if td.ocr_available():
         shutil.rmtree(tmp4, ignore_errors=True)
 
     SEEDED = (r"C:\SkipBo\tools\EventAutomationDesktop\ideationData"
-              r"\StyleReference\images\Merge\merge2606_scene2_brick_town.png")
+              r"\StyleReference\images\Merge\_excluded\merge2606_scene2_brick_town.png")
     if os.path.exists(SEEDED):
         w = td.read_text(SEEDED) or []
         blob = " ".join(x["text"].upper() for x in w)

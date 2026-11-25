@@ -205,18 +205,20 @@ pd = ar.build_scene_prompt(DATA, "Dessert", zone, doc_title="Dessert2611",
 ok("SHIPPED GAME ART" in pd and "must depart from them" not in pd,
    "and build_scene_prompt injects the type's own block, not the default")
 
-# ---- Merge carries its own block too, from Merge Art.docx section 27 --------
-# The default contradicted that document twice: matte-only with no specular, and
-# a blanket ban on material texture, where it asks for glossy clean materials,
-# PBR-inspired shading and controlled emissive glow.
+# ---- Merge carries its own block too, read off the SHIPPED scenes ------------
+# 2D hand-painted, even bright light. Its first version came from Merge Art.docx
+# and banned that finish; art built on it was rejected as off-style (2026-11-09).
 mrg = ar.named_failures("Merge")
-ok("ultra-wide-angle perspective" in mrg, "Merge carries its document's own negatives")
+ok("ultra-wide-angle perspective" in mrg, "Merge carries its own negatives")
+ok("flat 2D illustration" not in mrg and "painterly brush strokes" not in mrg,
+   "and does not ban the 2D painted finish the game ships")
+ok("3D render" in mrg, "it bans the rendered 3D look instead")
 ok("Matte only" not in mrg, "and not the matte-only rule that contradicted it")
 ok("No material texture of any kind" not in mrg, "nor the blanket texture ban")
-ok("LINELESS" in mrg,
-   "while KEEPING lineless scene art, which the Merge spec section 6.2 depends on")
-ok("Do NOT light the whole scene equally" in mrg,
-   "and the document's strongest rule - dark surroundings, lit hero")
+ok("no black ink outline" in mrg,
+   "while KEEPING outline-free scene art, which the Merge spec's icon rule depends on")
+ok("LIGHT IS EVEN AND BRIGHT" in mrg and "Do NOT light the whole scene equally" not in mrg,
+   "and even, bright light - shipped night scenes are never dark")
 
 # ---- a zone's BUILDINGS reach the scene prompt --------------------------------
 # They did not. build_scene_prompt only read construction_steps, and a Merge zone

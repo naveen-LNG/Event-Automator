@@ -20,8 +20,11 @@ def main():
 
     proj_root = sys.argv[1]
     ep.WORKSPACE_NAME = sys.argv[2]
+    # A list of design dirs, or {label: design_dir} so the usage table can name branches.
     all_branch_design_dirs = json.loads(sys.argv[3]) if len(sys.argv) > 3 and sys.argv[3] else []
     questions_source = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] else None
+    labeled_dirs = all_branch_design_dirs if isinstance(all_branch_design_dirs, dict) \
+        else {d: d for d in all_branch_design_dirs}
 
     result = {}
 
@@ -36,9 +39,15 @@ def main():
 
     design_dir = os.path.join(proj_root, "design", "DesignData", ep.WORKSPACE_NAME, "design")
 
-    batch_number = None
-    if not questions_source:
-        questions_source, batch_number = ep.resolve_questions_source(design_dir, all_branch_design_dirs, prefix)
+    usage = ep.scan_batch_usage(labeled_dirs)
+    result["batch_usage"] = usage
+    result["available_batches"] = ep.available_batch_numbers()
+    result["next_unused_batch"] = ep.max_used_batch(usage) + 1
+
+    if questions_source:
+        batch_number = ep.batch_number_from_source(questions_source)
+    else:
+        questions_source, batch_number = ep.resolve_questions_source(design_dir, labeled_dirs, prefix)
     result["questions_module"] = questions_source
     result["batch_number"] = batch_number
 
@@ -58,21 +67,9 @@ def main():
     for q in questions:
         tiers[q["tier"]] = tiers.get(q["tier"], 0) + 1
     result["tier_counts"] = tiers
+    result["correct_counts"] = {i: sum(1 for q in questions if q["correct_index"] == i) for i in (1, 2)}
 
-    quiz_path = os.path.join(design_dir, "localization_quiz.xlsx")
-    already_current = False
-    if os.path.exists(quiz_path):
-        import openpyxl
-        import re
-        wb = openpyxl.load_workbook(quiz_path, read_only=True, data_only=True)
-        ws = wb["Quiz"]
-        live_id = str(ws.cell(2, 1).value or "")
-        m = re.match(r"(QUIZ\d+)_", live_id)
-        prefix_matches = bool(m and m.group(1) == prefix)
-        translations_present = bool(ws.cell(2, 3).value)  # German column
-        marker_present = isinstance(ws.cell(2, ep.BATCH_MARKER_COL).value, (int, float))
-        already_current = prefix_matches and translations_present and marker_present
-    result["already_current"] = already_current
+    result["already_current"] = ep.quiz_cycle_is_current(design_dir, prefix, batch_number, questions)
 
     print(json.dumps(result, ensure_ascii=False))
 

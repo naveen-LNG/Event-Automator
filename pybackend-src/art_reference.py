@@ -387,26 +387,27 @@ _BLOCKS_FAILURES = (
     "No text, letters or numbers anywhere."
 )
 
-# Merge's negatives are the studio's own, from section 27 of Merge Art.docx,
-# plus the lineless rule the Merge spec's section 6.2 depends on. The default
-# block contradicts the document twice - it demands matte-only with no specular
-# and bans material texture, where the document asks for glossy clean materials,
-# PBR-inspired shading and controlled emissive glow. Same bug class as Blocks.
+# Merge's negatives, read off the SHIPPED scenes (Texture/Map/img_share_N.png of
+# Merge2511-2610), plus the no-black-outline rule the Merge spec's icon section
+# depends on. Until 2026-11-09 this block came from section 27 of Merge Art.docx,
+# which describes a glossy rendered diorama and banned the 2D painted finish the
+# game actually ships; art built on it was rejected as "not the Merge style".
 _MERGE_FAILURES = (
-    "Avoid all of the following: photorealistic, realistic architecture, realistic proportions, "
-    "gritty textures, dark horror aesthetic, realistic human anatomy, ultra-wide-angle "
-    "perspective, fisheye lens, excessive perspective distortion, low-poly assets, flat 2D "
-    "illustration, anime, manga, watercolour, painterly brush strokes, realistic environmental "
-    "wear, dirty surfaces, excessive texture noise, desaturated palette, monochromatic palette, "
-    "harsh shadows, dramatic photographic lighting, excessive bloom, overly thin geometry, "
-    "microscopic details, cluttered composition, physically realistic industrial design.\n"
-    "EDGES: the SCENE art is LINELESS - no dark contour, keyline or ink line around anything, and "
-    "no darker band ringing a shape. Forms separate by colour, shading and ambient occlusion. "
-    "(Item and producer ICONS are the opposite and do carry a rim - do not confuse the two.)\n"
-    "LIGHT IS NOT EVEN: dark atmospheric surroundings with bright, readable, illuminated hero "
-    "objects. Do NOT light the whole scene equally, and keep the background darker, softer and "
-    "less saturated than the play area.\n"
-    "GLOW IS CONTROLLED: soft and magical, never neon cyberpunk, never blown-out bloom.\n"
+    "Avoid all of the following: 3D render, clay or plastic toy look, glossy CG materials, "
+    "photorealistic, realistic architecture, realistic proportions, gritty textures, dark horror "
+    "aesthetic, realistic human anatomy, ultra-wide-angle perspective, fisheye lens, low eye-level "
+    "camera, a floating island or plinth under the scene, a large sky, low-poly assets, anime, "
+    "manga, watercolour bleed, rough sketchy brush strokes, dirty surfaces, excessive texture noise, "
+    "desaturated palette, monochromatic palette, harsh shadows, dramatic spot lighting, excessive "
+    "bloom, overly thin geometry, microscopic details, cluttered composition, buildings overlapping "
+    "or merged into each other.\n"
+    "FINISH: clean 2D hand-painted casual-game illustration - soft gradients, painted highlights, "
+    "crisp readable shapes.\n"
+    "EDGES: no black ink outline or keyline around scene art; shapes separate by colour and a "
+    "slightly darker edge tone. (Item and producer ICONS are the opposite and do carry a stroke - "
+    "do not confuse the two.)\n"
+    "LIGHT IS EVEN AND BRIGHT: soft, even light over the whole map; night scenes stay saturated "
+    "violet-blue with glowing lights, never dark or gloomy.\n"
     "No text, letters or numbers anywhere except signage the brief explicitly authorises."
 )
 

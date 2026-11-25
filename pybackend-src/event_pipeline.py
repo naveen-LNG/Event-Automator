@@ -2378,6 +2378,20 @@ def parse_buff_header(line):
     return name or None
 
 
+def rekey_id_prefixed(value, src_id, tgt_id, swap):
+    """
+    Re-keys a "<event id>_<key>" cell (活动buff常量 col 1) to the target event id and
+    swaps names in the rest. The prefix is tested on the ORIGINAL value: swap's digit
+    fallback rewrites the month ("202610" -> "202611"), so testing after the swap missed
+    every cross-month clone — Blocks2610 -> Tiles2611 got 20261101_* (Merge2611's id)
+    instead of the GUI's 20261102_*, and Tiles2611EventCtrl crashed on every game end.
+    """
+    s = "" if value is None else str(value)
+    if src_id and tgt_id and s.startswith(src_id):
+        return str(tgt_id) + swap(s[len(src_id):])
+    return swap(value)
+
+
 def update_events_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
     """Step 10: Update events.xlsx with target event registration data."""
     import openpyxl
@@ -2928,11 +2942,11 @@ def update_events_excel(proj_root, src_evt, tgt_evt, root_path, step_index):
                     
                     for row_data in src_template_rows:
                         for c_idx, (val, src_c) in enumerate(row_data):
-                            new_val = swap_name(val)
-                            # Replacement for Col 1 (Program Enum with ID prefix)
-                            if c_idx == 0 and new_val and src_id_prefix and event_id:
-                                if str(new_val).startswith(src_id_prefix):
-                                    new_val = event_id + str(new_val)[len(src_id_prefix):]
+                            # Col 1 (Program Enum with ID prefix) takes the GUI's event id
+                            if c_idx == 0:
+                                new_val = rekey_id_prefixed(val, src_id_prefix, event_id, swap_name)
+                            else:
+                                new_val = swap_name(val)
                             dst_c = ws.cell(curr_row, c_idx + 1)
                             dst_c.value = new_val
                             copy_cell_format(src_c, dst_c)
@@ -6188,14 +6202,34 @@ def _questions_module_for_batch(batch_number):
     return f"trivia_questions_batch_{batch_number:02d}"
 
 
-def scan_max_used_batch_number(branch_design_dirs):
-    """Scans Quiz + Quiz_备份 in every given branch's localization_quiz.xlsx for the
-    highest batch-number marker ever written, across ALL branches — so a new cycle on
-    any one of them picks a batch nobody else has used yet. Missing files/sheets are
-    skipped silently (a branch that's never run this tool yet just contributes nothing)."""
+def batch_number_from_source(questions_source):
+    """Batch number of a bundled module name ('trivia_questions_batch_05' -> 5), else None."""
+    m = re.fullmatch(r"trivia_questions_batch_(\d+)", questions_source or "")
+    return int(m.group(1)) if m else None
+
+
+def available_batch_numbers():
+    """Batch numbers that have a trivia_questions_batch_NN.py file next to this module."""
+    import glob
+    here = os.path.dirname(os.path.abspath(__file__))
+    nums = (batch_number_from_source(os.path.splitext(os.path.basename(p))[0])
+            for p in glob.glob(os.path.join(here, "trivia_questions_batch_*.py")))
+    return sorted(n for n in nums if n is not None)
+
+
+def scan_batch_usage(labeled_design_dirs):
+    """{label: design_dir} -> [{label, live_prefix, live_batch, archived: [[prefix, batch], ...]}].
+    live = the Quiz sheet's current cycle; archived = cycles moved to Quiz_备份. Batch
+    markers sit on each cycle's first row (BATCH_MARKER_COL). Missing files are skipped."""
     import openpyxl
-    max_batch = 0
-    for design_dir in branch_design_dirs:
+    # Cycles merged in without column 9 lose their marker; their first question title
+    # still identifies the batch (unique per batch, and unchanged by option reshuffles).
+    title_to_batch = {}
+    for n in available_batch_numbers():
+        q = load_trivia_questions(_questions_module_for_batch(n))[0]["question"]
+        title_to_batch[q.get("en") if isinstance(q, dict) else q] = n
+    usage = []
+    for label, design_dir in labeled_design_dirs.items():
         path = os.path.join(design_dir, "localization_quiz.xlsx")
         if not os.path.exists(path):
             continue
@@ -6204,19 +6238,70 @@ def scan_max_used_batch_number(branch_design_dirs):
         except Exception as e:
             log(f"Warning: could not scan {path} for batch markers: {e}")
             continue
+        entry = {"label": label, "live_prefix": None, "live_batch": None, "live_batch_inferred": False, "archived": []}
         for sheet_name in ("Quiz", "Quiz_备份"):
             if sheet_name not in wb.sheetnames:
                 continue
-            ws = wb[sheet_name]
-            # read_only worksheets only support efficient *sequential* access — random
-            # access via ws.cell(r, c) re-walks the XML stream each call, making a
-            # per-row loop over a ~16k-row archive effectively O(n^2) (verified: hung
-            # for 30s+ on real Quiz_备份 data). iter_rows streams it in one pass instead.
-            for row in ws.iter_rows(min_row=2, min_col=BATCH_MARKER_COL, max_col=BATCH_MARKER_COL):
-                v = row[0].value
-                if isinstance(v, (int, float)) and int(v) > max_batch:
-                    max_batch = int(v)
-    return max_batch
+            # read_only sheets are only fast when streamed (ws.cell() per row re-walks
+            # the XML: 30s+ on the ~16k-row archive), so iter_rows in one pass.
+            for row in wb[sheet_name].iter_rows(min_row=2, max_col=BATCH_MARKER_COL, values_only=True):
+                m = re.match(r"(QUIZ\d+)_", str(row[0] or ""))
+                marker = row[BATCH_MARKER_COL - 1] if len(row) >= BATCH_MARKER_COL else None
+                batch = int(marker) if isinstance(marker, (int, float)) else None
+                if sheet_name == "Quiz":
+                    entry["live_prefix"] = m.group(1) if m else None
+                    entry["live_batch"] = batch
+                    if batch is None and row[1] in title_to_batch:
+                        entry["live_batch"] = title_to_batch[row[1]]
+                        entry["live_batch_inferred"] = True
+                    break
+                if batch is not None:
+                    entry["archived"].append([m.group(1) if m else None, batch])
+        usage.append(entry)
+    return usage
+
+
+def scan_max_used_batch_number(branch_design_dirs):
+    """Highest batch marker in any given branch's Quiz / Quiz_备份, so a new cycle picks
+    a batch nobody else has used yet. Accepts a list of dirs or a {label: dir} dict."""
+    dirs = branch_design_dirs if isinstance(branch_design_dirs, dict) else {d: d for d in branch_design_dirs}
+    return max_used_batch(scan_batch_usage(dirs))
+
+
+def max_used_batch(usage):
+    """Highest batch number in a scan_batch_usage() result (0 if none)."""
+    used = [e["live_batch"] for e in usage if e["live_batch"]]
+    used += [b for e in usage for _, b in e["archived"]]
+    return max(used, default=0)
+
+
+def quiz_cycle_is_current(design_dir, prefix, batch_number, questions=None):
+    """True when the live Quiz sheet already holds `prefix` with translations, the same
+    batch marker (any marker, when batch_number is None) and — when `questions` is given —
+    the same English text, so an edited batch file (e.g. reshuffled options) still counts
+    as needing a rewrite."""
+    import openpyxl
+    path = os.path.join(design_dir, "localization_quiz.xlsx")
+    if not os.path.exists(path):
+        return False
+    ws = openpyxl.load_workbook(path, read_only=True, data_only=True)["Quiz"]
+    n_rows = 3 * len(questions) if questions else 1
+    rows = [list(r) + [None] * (BATCH_MARKER_COL - len(r))
+            for r in ws.iter_rows(min_row=2, max_row=1 + n_rows, max_col=BATCH_MARKER_COL, values_only=True)]
+    if not rows:
+        return False
+    m = re.match(r"(QUIZ\d+)_", str(rows[0][0] or ""))
+    marker = rows[0][BATCH_MARKER_COL - 1]
+    if not (m and m.group(1) == prefix and rows[0][2] and isinstance(marker, (int, float))):
+        return False
+    if batch_number is not None and int(marker) != batch_number:
+        return False
+    if questions:
+        en = lambda v: v.get("en", "") if isinstance(v, dict) else v
+        expected = [en(q[k]) for q in questions for k in ("question", "opt1", "opt2")]
+        if [r[1] for r in rows] != expected:
+            return False
+    return True
 
 
 def resolve_questions_source(own_design_dir, all_branch_design_dirs, prefix):
@@ -6275,7 +6360,7 @@ def load_trivia_questions(questions_source):
 
 
 def update_localization_quiz_excel(proj_root, log_dir, step_index, questions_source=None,
-                                    all_branch_design_dirs=None, batch_number=None):
+                                    all_branch_design_dirs=None, batch_number=None, force=False):
     """Refreshes localization_quiz.xlsx's 'Quiz' sheet for the upcoming 答题挑战 cycle:
     archives the current live batch into 'Quiz_备份' (skipped if already archived),
     then writes the fresh batch (all 7 language columns) under the new cycle's ID prefix,
@@ -6326,11 +6411,18 @@ def update_localization_quiz_excel(proj_root, log_dir, step_index, questions_sou
             # re-run only the write step (same content, same row positions) to backfill,
             # rather than silently leaving those columns incomplete forever.
             has_translations = bool(ws_live.cell(2, 3).value)  # German column
-            has_marker = isinstance(ws_live.cell(2, BATCH_MARKER_COL).value, (int, float))
-            if has_translations and has_marker:
+            live_marker = ws_live.cell(2, BATCH_MARKER_COL).value
+            has_marker = isinstance(live_marker, (int, float))
+            same_batch = batch_number is None or (has_marker and int(live_marker) == batch_number)
+            if has_translations and has_marker and same_batch and not force:
                 log(f"Quiz sheet already contains {prefix} data with translations and batch marker. Nothing to do.")
                 return True
-            log(f"Quiz sheet has {prefix} data but is missing translations and/or the batch marker — backfilling.")
+            if force and has_marker and same_batch:
+                log(f"Quiz sheet has {prefix} as batch {batch_number} but its text differs from the batch file — rewriting.")
+            elif has_marker and not same_batch:
+                log(f"Quiz sheet has {prefix} as batch {int(live_marker)} — replacing it with batch {batch_number}.")
+            else:
+                log(f"Quiz sheet has {prefix} data but is missing translations and/or the batch marker — backfilling.")
         elif live_prefix:
             already_archived = any(
                 str(ws_backup.cell(r, 1).value or "").startswith(live_prefix + "_")
@@ -6399,7 +6491,7 @@ def update_localization_quiz_excel(proj_root, log_dir, step_index, questions_sou
         return False
 
 
-def update_answer_challenge_quiz_excel(proj_root, log_dir, step_index, questions_source=None):
+def update_answer_challenge_quiz_excel(proj_root, log_dir, step_index, questions_source=None, force=False):
     """Refreshes answer_challenge.xlsx's '题目' sheet for the upcoming 答题挑战 cycle:
     replaces the question list with categories/correct answers matching the freshly
     written localization_quiz.xlsx batch, preserving the tier ID-range convention
@@ -6440,8 +6532,10 @@ def update_answer_challenge_quiz_excel(proj_root, log_dir, step_index, questions
             return False
         ws = wb["题目"]
 
+        # force: localization_quiz.xlsx was just rewritten, so correct_index must follow it
+        # even when the prefix is unchanged (another batch, or a backfill).
         existing_id = str(ws.cell(2, 6).value or "")
-        if existing_id.startswith(prefix + "_"):
+        if existing_id.startswith(prefix + "_") and not force:
             log(f"题目 sheet already references {prefix}. Nothing to do.")
             return True
 
@@ -6493,15 +6587,28 @@ def run_trivia_challenge_cycle(proj_root, log_dir, step_index, questions_source=
     prefix = get_quiz_prefix_from_mini_mgr(proj_root)
     if not prefix:
         return False
+    design_dir = os.path.join(proj_root, "design", "DesignData", WORKSPACE_NAME, "design")
     if not questions_source:
-        design_dir = os.path.join(proj_root, "design", "DesignData", WORKSPACE_NAME, "design")
         questions_source, batch_number = resolve_questions_source(design_dir, all_branch_design_dirs or [], prefix)
     else:
-        batch_number = None  # explicit override — not tracked in the batch pool
+        # A picked pool batch is stamped like an auto one; a JSON file stays untracked.
+        batch_number = batch_number_from_source(questions_source)
 
-    if not update_localization_quiz_excel(proj_root, log_dir, step_index, questions_source, batch_number=batch_number):
+    try:
+        questions = load_trivia_questions(questions_source)
+    except ModuleNotFoundError as e:
+        log(f"Error: {e}")
         return False
-    if not update_answer_challenge_quiz_excel(proj_root, log_dir, step_index, questions_source):
+
+    # Both workbooks are skipped or rewritten together: a half rewrite would leave
+    # 题目's correct_index pointing at the other option.
+    if quiz_cycle_is_current(design_dir, prefix, batch_number, questions):
+        log(f"{prefix} already uses batch {batch_number}. Nothing to do.")
+        return True
+    if not update_localization_quiz_excel(proj_root, log_dir, step_index, questions_source,
+                                          batch_number=batch_number, force=True):
+        return False
+    if not update_answer_challenge_quiz_excel(proj_root, log_dir, step_index, questions_source, force=True):
         return False
     return True
 

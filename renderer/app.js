@@ -1750,11 +1750,12 @@
     $('#trivia-preview-batch').textContent = '...';
     $('#trivia-preview-count').textContent = '...';
     $('#trivia-preview-tiers').textContent = '...';
+    $('#trivia-preview-answers').textContent = '...';
     $('#trivia-preview-status').textContent = '...';
     const root = activeBranchRoot();
     if (!root) { log('Cannot load Trivia Challenge info: branch path not set.', 'console-log-error'); return; }
     log('Loading Trivia Challenge cycle info from mini_mgr.xlsx...');
-    const res = await window.api.triviaGet({ branchRoot: root, workspace: cfg.activeWorkspace });
+    const res = await window.api.triviaGet({ branchRoot: root, workspace: cfg.activeWorkspace, questionsSource: triviaQuestionsSource() });
     if (!res.success) { log(`Error loading Trivia Challenge info: ${res.output}`, 'console-log-error'); toast('Could not compute the upcoming 答题挑战 cycle for this branch/workspace.', 'error'); return; }
     try {
       cachedTrivia = JSON.parse(res.stdout);
@@ -1773,9 +1774,46 @@
     $('#trivia-preview-count').textContent = cachedTrivia.question_count;
     const t = cachedTrivia.tier_counts || {};
     $('#trivia-preview-tiers').textContent = `${t['1'] ?? 0} / ${t['2'] ?? 0} / ${t['3'] ?? 0}`;
+    const c = cachedTrivia.correct_counts || {};
+    $('#trivia-preview-answers').textContent = `${c['1'] ?? 0} / ${c['2'] ?? 0}`;
     $('#trivia-preview-status').textContent = cachedTrivia.already_current ? 'Already current' : 'Needs refresh';
+    renderTriviaBatches();
   }
 
+  // '' = Auto (next unused); otherwise the pool module for the picked batch number.
+  function triviaQuestionsSource() {
+    const n = $('#trivia-batch-select').value;
+    return n ? `trivia_questions_batch_${String(n).padStart(2, '0')}` : '';
+  }
+
+  function renderTriviaBatches() {
+    const usage = cachedTrivia.batch_usage || [];
+    const live = {}, past = {};
+    for (const u of usage) {
+      if (u.live_batch != null) (live[u.live_batch] ||= []).push(u.label);
+      for (const [, b] of u.archived) (past[b] ||= new Set()).add(u.label);
+    }
+    const select = $('#trivia-batch-select');
+    const picked = select.value;
+    select.textContent = '';
+    select.add(new Option(`Auto: next unused batch (#${cachedTrivia.next_unused_batch})`, ''));
+    for (const n of cachedTrivia.available_batches || []) {
+      const where = live[n] ? `live in ${live[n].join(', ')}` : past[n] ? `used earlier in ${[...past[n]].join(', ')}` : 'unused';
+      select.add(new Option(`#${n}: ${where}`, String(n)));
+    }
+    select.value = picked;
+
+    const body = $('#trivia-usage-body');
+    body.textContent = '';
+    for (const u of usage) {
+      const tr = body.insertRow();
+      const liveBatch = u.live_batch == null ? 'unknown' : `#${u.live_batch}${u.live_batch_inferred ? ' (matched by text, no marker)' : ''}`;
+      const earlier = u.archived.map(([p, b]) => `#${b} (${p})`).join(', ') || '-';
+      for (const text of [u.label, u.live_prefix || '-', liveBatch, earlier]) tr.insertCell().textContent = text;
+    }
+  }
+
+  $('#trivia-batch-select').addEventListener('change', () => loadTrivia(true));
   $('#trivia-refresh-btn').addEventListener('click', () => loadTrivia(true));
 
   $('#trivia-execute-btn').addEventListener('click', async () => {
@@ -1787,7 +1825,7 @@
     const root = activeBranchRoot();
     const btn = $('#trivia-execute-btn');
     btn.disabled = true; btn.textContent = 'Running...';
-    const res = await window.api.triviaRun({ branchRoot: root, workspace: cfg.activeWorkspace });
+    const res = await window.api.triviaRun({ branchRoot: root, workspace: cfg.activeWorkspace, questionsSource: triviaQuestionsSource() });
     btn.disabled = false; btn.textContent = 'Run Trivia Challenge Cycle';
 
     if (res.success) {
