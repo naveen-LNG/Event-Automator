@@ -7,8 +7,8 @@ convert.json/convert_layout.lua registration, and more. No Unity Editor required
 ## For everyone — just run it
 
 1. Go to [Releases](../../releases/latest) and download **`Event-Automator-Setup-X.exe`**
-   (installer, adds a Start Menu shortcut, updates itself) or **`Event-Automator-X.exe`**
-   (portable, no install — just run it from wherever you put it).
+   (installer, adds a Start Menu shortcut, updates itself). There is no portable
+   build any more.
 2. Double-click it. That's it — no terminal, no Python install, nothing else needed.
    The Python backend is bundled inside the app.
 3. First launch: open **Settings** and point the three branch paths (trunk / Misc /
@@ -19,15 +19,22 @@ convert.json/convert_layout.lua registration, and more. No Unity Editor required
 
 From v1.31.0, the tool checks this repo's latest release on every launch. When a newer
 version exists it asks to download it; once downloaded, **Restart now** installs it
-(or it installs the next time the tool closes). The portable exe can't replace itself,
-so it opens the release page instead. Copies older than v1.31.0 have no checker:
-install v1.31.0 by hand once.
+(or it installs the next time the tool closes). Copies older than v1.31.0 have no
+checker: install the latest version by hand once.
 
-To publish an update, the release must carry **all three** of these files from
-`release/`, under these exact names, or installed copies won't see it:
-`latest.yml`, `Event-Automator-Setup-X.exe`, `Event-Automator-Setup-X.exe.blockmap`
-(plus the portable `Event-Automator-X.exe` for people who use it). Bump `version` in
-`package.json` first; the checker compares that number.
+To publish an update, the release must carry **all four** of these files, under
+these exact names: `latest.yml`, `Event-Automator-Setup-X.exe` and
+`Event-Automator-Setup-X.exe.blockmap` from `release/` (or installed copies won't see
+the update), and `event-automator.mcpb` (the app's "extension not set up" popup links to
+the latest release's copy). Bump `version` in `package.json` first; the checker compares
+that number.
+
+## Claude Desktop extension (.mcpb)
+
+Localization > Translate and the Art Requirement tools run through Claude Desktop, via the
+`event-automator.mcpb` extension. On launch the app checks Claude Desktop's extensions
+folder and `claude_desktop_config.json`; if neither has Event Automator, it shows a
+popup with a download button (**Don't show again** hides it for good).
 
 ## What it does
 
@@ -57,8 +64,7 @@ npm run dist
 build fails if that check doesn't pass), drops `openpyxl`/`et_xmlfile` into its
 `Lib/site-packages`, and copies `pybackend-src/*.py` alongside it — no compiler,
 no PyInstaller. `npm run dist` runs that, then packages the Electron app with
-`electron-builder`. Output lands in `release/` — both a portable `.exe` and an
-NSIS installer.
+`electron-builder`. Output lands in `release/` — an NSIS installer.
 
 We deliberately don't compile the backend into a custom executable (e.g. via
 PyInstaller): unsigned, freshly-compiled bootloaders routinely trip antivirus/EDR
@@ -77,7 +83,7 @@ npm start           # launches the app against the local pybackend_dist/ build
 The **Sprint Board** tab joins the studio roadmap (the plan) against what is
 actually configured in the design workbooks (the reality). The roadmap is the
 Feishu export committed at `ideationData/Roadmap/Roadmap.xlsx`, and it ships
-inside the installer and portable build, so the tab works with no setup.
+inside the installer, so the tab works with no setup.
 
 Either the Strict or the ordinary OOXML export flavour works — the parser
 handles both, so there is no save-as setting to remember.

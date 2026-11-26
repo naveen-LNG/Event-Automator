@@ -1,6 +1,6 @@
 {
   "name": "event-automation-desktop",
-  "version": "1.31.0",
+  "version": "1.31.1",
   "description": "Standalone desktop version of the SkipBo Event Automation Tool (no Unity Editor, no Python install required).",
   "main": "main.js",
   "author": "SkipBo Event Automation",
@@ -53,12 +53,6 @@
           "arch": [
             "x64"
           ]
-        },
-        {
-          "target": "portable",
-          "arch": [
-            "x64"
-          ]
         }
       ]
     },
@@ -78,10 +72,7 @@
         "owner": "naveen-LNG",
         "repo": "Event-Automator"
       }
-    ],
-    "portable": {
-      "artifactName": "Event-Automator-${version}.${ext}"
-    }
+    ]
   },
   "dependencies": {
     "electron-updater": "^6.3.9"

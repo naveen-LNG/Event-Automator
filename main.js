@@ -289,14 +289,14 @@ function createWindow() {
     }
   });
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  return win;
 }
 
-// Update check against GitHub releases; the portable exe can't self-install, so it gets a download link.
+// Update check against GitHub releases.
 const RELEASES_URL = 'https://github.com/naveen-LNG/Event-Automator/releases/latest';
 function checkForUpdates() {
   if (!app.isPackaged) return;
   const { autoUpdater } = require('electron-updater');
-  const portable = !!process.env.PORTABLE_EXECUTABLE_DIR;
   autoUpdater.autoDownload = false;
   autoUpdater.on('error', (e) => console.warn('Update check failed:', e && e.message));
   autoUpdater.on('update-available', async (info) => {
@@ -304,14 +304,11 @@ function checkForUpdates() {
       type: 'info',
       title: 'Update available',
       message: `Event Automator v${info.version} is available (you have v${app.getVersion()}).`,
-      detail: portable ? 'This is the portable version: download the new exe from GitHub.'
-                       : 'Download it now? It installs when you restart the tool.',
-      buttons: [portable ? 'Open download page' : 'Download', 'Later'],
+      detail: 'Download it now? It installs when you restart the tool.',
+      buttons: ['Download', 'Later'],
       defaultId: 0, cancelId: 1
     });
-    if (response !== 0) return;
-    if (portable) shell.openExternal(RELEASES_URL);
-    else autoUpdater.downloadUpdate();
+    if (response === 0) autoUpdater.downloadUpdate();
   });
   autoUpdater.on('update-downloaded', async (info) => {
     const { response } = await dialog.showMessageBox({
@@ -327,9 +324,48 @@ function checkForUpdates() {
   autoUpdater.checkForUpdates().catch(() => {});
 }
 
+// Claude Desktop needs the Event Automator extension (.mcpb) or an mcpServers entry
+// for Localization > Translate and the Art Requirement tools.
+function claudeExtensionConfigured() {
+  const root = path.join(process.env.APPDATA || '', 'Claude');
+  try {
+    const ext = fs.readdirSync(path.join(root, 'Claude Extensions')).find((d) => d.endsWith('.event-automator'));
+    if (ext) {
+      let enabled = true;
+      try {
+        enabled = JSON.parse(fs.readFileSync(path.join(root, 'Claude Extensions Settings', ext + '.json'), 'utf-8')).isEnabled !== false;
+      } catch (e) { /* no settings file = default enabled */ }
+      if (enabled) return true;
+    }
+  } catch (e) { /* no Claude Desktop extensions folder */ }
+  try {
+    const servers = JSON.parse(fs.readFileSync(path.join(root, 'claude_desktop_config.json'), 'utf-8')).mcpServers || {};
+    return Object.entries(servers).some(([k, v]) =>
+      /event.?automator/i.test(k) || /EventAutomationDesktop/i.test(JSON.stringify(v)));
+  } catch (e) { return false; }
+}
+
+async function warnIfClaudeExtensionMissing(win) {
+  if (claudeExtensionConfigured() || loadConfig().hideMcpbWarning) return;
+  const { response } = await dialog.showMessageBox(win, {
+    type: 'warning',
+    title: 'Claude Desktop extension not set up',
+    message: 'The Event Automator extension (.mcpb) is not installed in Claude Desktop.',
+    detail: 'Localization > Translate and Art Requirement writing go through Claude Desktop and will not work without it. ' +
+            'Every other tab works as normal.\n\n' +
+            'To set it up: download event-automator.mcpb, double-click it, click Install in Claude Desktop, then restart Claude Desktop. ' +
+            'It needs your SkipBo checkout at C:\\SkipBo (or set EVENT_AUTOMATOR_MCP to your mcp\\server.js).',
+    buttons: ['Download .mcpb', 'Remind me later', "Don't show again"],
+    defaultId: 0, cancelId: 1
+  });
+  if (response === 0) shell.openExternal(RELEASES_URL + '/download/event-automator.mcpb');
+  if (response === 2) saveConfig({ hideMcpbWarning: true });
+}
+
 app.whenReady().then(() => {
-  createWindow();
+  const win = createWindow();
   checkForUpdates();
+  warnIfClaudeExtensionMissing(win);
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
