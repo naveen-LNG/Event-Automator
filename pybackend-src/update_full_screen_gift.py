@@ -4,17 +4,7 @@ import json
 import copy as _copy
 from xlsx_safe import load_workbook_frozen
 from datetime import datetime, timedelta
-import openpyxl
-
-COL_ID = 1
-COL_ALIAS = 2
-COL_SWITCH = 5
-COL_SLOT = 8
-COL_START = 12
-COL_END = 13
-COL_SYNC_3P_PAYMENT = 33
-
-SLOT_FULL_SCREEN_GIFT = "16"
+from get_full_screen_gift_info import find_cols, SLOT_FULL_SCREEN_GIFT
 
 
 def copy_cell_format(src_cell, dst_cell):
@@ -69,6 +59,9 @@ def update_full_screen_gift(design_path, start_date_str, duration_days=None):
             print("Error: recommend_gift sheet not found in store.xlsx")
             return False
         ws = wb["recommend_gift"]
+        col = find_cols(ws)
+        COL_ID, COL_ALIAS, COL_SWITCH, COL_SLOT = col["id"], col["alias"], col["switch"], col["slot"]
+        COL_START, COL_END, COL_SYNC_3P_PAYMENT = col["start"], col["end"], col["sync"]
 
         all_ids = set()
         max_slot_id = 0

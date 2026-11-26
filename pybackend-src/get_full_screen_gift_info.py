@@ -4,15 +4,25 @@ import json
 from datetime import datetime, timedelta
 import openpyxl
 
-# recommend_gift column indices (1-based) — verified against real production data
-COL_ID = 1
-COL_ALIAS = 2
-COL_SWITCH = 5
-COL_SLOT = 8  # 栏位归属; '16' = 全屏礼包 (full screen gift)
-COL_START = 12
-COL_END = 13
+SLOT_FULL_SCREEN_GIFT = "16"  # 栏位归属 value for 全屏礼包
 
-SLOT_FULL_SCREEN_GIFT = "16"
+# Header (first line) per column. Positions differ per workspace
+# (WorkSpcae3/_NE carry an extra 开关$LNHC2 column), so look them up by name.
+HEADERS = {
+    "id": "礼包ID", "alias": "Alias", "switch": "开关", "slot": "栏位归属",
+    "start": "开始时间", "end": "结束时间", "sync": "是否同步三方支付",
+}
+
+
+def find_cols(ws):
+    names = {}
+    for c in range(1, ws.max_column + 1):
+        h = str(ws.cell(1, c).value or "").split("\n")[0].strip()
+        names.setdefault(h, c)
+    missing = [h for h in HEADERS.values() if h not in names]
+    if missing:
+        raise ValueError(f"recommend_gift header(s) not found: {missing}")
+    return {k: names[h] for k, h in HEADERS.items()}
 
 
 def parse_dt(v):
@@ -42,6 +52,9 @@ def main():
     try:
         wb = openpyxl.load_workbook(file_path, data_only=True)
         ws = wb["recommend_gift"]
+        col = find_cols(ws)
+        COL_ID, COL_ALIAS, COL_SLOT, COL_START, COL_END = (
+            col["id"], col["alias"], col["slot"], col["start"], col["end"])
 
         # IDs are banded per slot (184xx = 15, 185xx = 16, 186xx = 17): continue the
         # slot-16 band, skipping any ID already taken anywhere in the sheet.
