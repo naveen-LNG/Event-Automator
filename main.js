@@ -277,7 +277,7 @@ function createWindow() {
     height: 860,
     minWidth: 480,
     minHeight: 600,
-    title: 'Event Automator (Standalone)',
+    title: `Event Automator v${app.getVersion()}`,
     icon: path.join(__dirname, 'build', 'icon.png'),
     // Painted before the renderer's first frame — must match --void in
     // style.css or launch flashes the old blue theme for a beat.
@@ -288,30 +288,62 @@ function createWindow() {
       nodeIntegration: false
     }
   });
+  // Keep the version in the title; the page's <title> would replace it.
+  win.on('page-title-updated', (e) => e.preventDefault());
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   return win;
 }
 
 // Update check against GitHub releases.
 const RELEASES_URL = 'https://github.com/naveen-LNG/Event-Automator/releases/latest';
-function checkForUpdates() {
+const BASE_TITLE = () => `Event Automator v${app.getVersion()}`;
+
+// Progress goes to the in-app bar, the taskbar icon and the window title; null clears it.
+function showUpdateProgress(win, p) {
+  if (!win || win.isDestroyed()) return;
+  win.webContents.send('update:progress', p);
+  win.setProgressBar(p ? (p.percent >= 0 ? p.percent / 100 : 2) : -1);  // 2 = indeterminate
+  win.setTitle(p && p.percent >= 0 ? `${BASE_TITLE()} - downloading v${p.version}: ${Math.floor(p.percent)}%` : BASE_TITLE());
+}
+
+function checkForUpdates(win) {
   if (!app.isPackaged) return;
   const { autoUpdater } = require('electron-updater');
   autoUpdater.autoDownload = false;
-  autoUpdater.on('error', (e) => console.warn('Update check failed:', e && e.message));
+  let downloading = null;  // version being downloaded
+  autoUpdater.on('error', (e) => {
+    console.warn('Update check failed:', e && e.message);
+    if (!downloading) return;  // a failed background check stays silent
+    const version = downloading;
+    downloading = null;
+    showUpdateProgress(win, null);
+    dialog.showMessageBox(win, {
+      type: 'error', title: 'Update failed',
+      message: `Downloading v${version} failed.`,
+      detail: `${(e && e.message) || e}\n\nCheck your connection and restart the tool to try again, or download the installer from ${RELEASES_URL}`
+    });
+  });
+  autoUpdater.on('download-progress', (p) => {
+    if (downloading) showUpdateProgress(win, { version: downloading, percent: p.percent, transferred: p.transferred, total: p.total, speed: p.bytesPerSecond });
+  });
   autoUpdater.on('update-available', async (info) => {
-    const { response } = await dialog.showMessageBox({
+    const { response } = await dialog.showMessageBox(win, {
       type: 'info',
       title: 'Update available',
       message: `Event Automator v${info.version} is available (you have v${app.getVersion()}).`,
-      detail: 'Download it now? It installs when you restart the tool.',
+      detail: 'Download it now? It downloads in the background (about 1 GB, progress shows at the top of the window) and installs when you restart the tool.',
       buttons: ['Download', 'Later'],
       defaultId: 0, cancelId: 1
     });
-    if (response === 0) autoUpdater.downloadUpdate();
+    if (response !== 0) return;
+    downloading = info.version;
+    showUpdateProgress(win, { version: info.version, percent: 0, transferred: 0, total: 0, speed: 0 });
+    autoUpdater.downloadUpdate().catch(() => {});  // failures arrive via 'error'
   });
   autoUpdater.on('update-downloaded', async (info) => {
-    const { response } = await dialog.showMessageBox({
+    downloading = null;
+    showUpdateProgress(win, null);
+    const { response } = await dialog.showMessageBox(win, {
       type: 'info',
       title: 'Update ready',
       message: `v${info.version} is downloaded.`,
@@ -364,7 +396,7 @@ async function warnIfClaudeExtensionMissing(win) {
 
 app.whenReady().then(() => {
   const win = createWindow();
-  checkForUpdates();
+  checkForUpdates(win);
   warnIfClaudeExtensionMissing(win);
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

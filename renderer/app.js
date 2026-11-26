@@ -66,6 +66,27 @@
     setTimeout(() => { el.style.opacity = '0'; el.style.transition = 'opacity 200ms'; setTimeout(() => el.remove(), 220); }, 4500);
   }
 
+  // ---------------- Update download bar (fed by main's auto-updater) ----------------
+  window.api.onUpdateProgress((p) => {
+    let bar = document.getElementById('update-bar');
+    if (!p) { if (bar) bar.remove(); return; }
+    if (!bar) {
+      bar = document.createElement('div');
+      bar.id = 'update-bar';
+      bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;padding:6px 14px;background:var(--card);' +
+        'border-bottom:1px solid var(--line);color:var(--fg);font:12px var(--font-sans);display:flex;align-items:center;gap:12px;';
+      bar.innerHTML = '<span id="update-bar-text"></span><div style="flex:1;height:6px;background:var(--line);border-radius:3px;overflow:hidden;">' +
+        '<div id="update-bar-fill" style="height:100%;width:0;background:var(--good);transition:width 300ms;"></div></div>';
+      document.body.appendChild(bar);
+    }
+    const mb = (b) => (b / 1048576).toFixed(0);
+    const pct = Math.floor(p.percent || 0);
+    bar.querySelector('#update-bar-text').textContent = p.total
+      ? `Downloading update v${p.version}: ${pct}% (${mb(p.transferred)} / ${mb(p.total)} MB, ${(p.speed / 1048576).toFixed(1)} MB/s)`
+      : `Downloading update v${p.version}: starting...`;
+    bar.querySelector('#update-bar-fill').style.width = `${pct}%`;
+  });
+
   // ---------------- Navigation ----------------
   let currentView = 'sprint-view';
 

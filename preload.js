@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('api', {
 
   runStep: (params) => ipcRenderer.invoke('pipeline:runStep', params),
   onLogLine: (cb) => ipcRenderer.on('pipeline:log-line', (evt, line) => cb(line)),
+  onUpdateProgress: (cb) => ipcRenderer.on('update:progress', (evt, p) => cb(p)),
 
   minigamesGet: (params) => ipcRenderer.invoke('minigames:get', params),
   minigamesCommit: (params) => ipcRenderer.invoke('minigames:commit', params),
