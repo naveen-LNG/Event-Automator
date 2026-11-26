@@ -291,8 +291,45 @@ function createWindow() {
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 }
 
+// Update check against GitHub releases; the portable exe can't self-install, so it gets a download link.
+const RELEASES_URL = 'https://github.com/naveen-LNG/Event-Automator/releases/latest';
+function checkForUpdates() {
+  if (!app.isPackaged) return;
+  const { autoUpdater } = require('electron-updater');
+  const portable = !!process.env.PORTABLE_EXECUTABLE_DIR;
+  autoUpdater.autoDownload = false;
+  autoUpdater.on('error', (e) => console.warn('Update check failed:', e && e.message));
+  autoUpdater.on('update-available', async (info) => {
+    const { response } = await dialog.showMessageBox({
+      type: 'info',
+      title: 'Update available',
+      message: `Event Automator v${info.version} is available (you have v${app.getVersion()}).`,
+      detail: portable ? 'This is the portable version: download the new exe from GitHub.'
+                       : 'Download it now? It installs when you restart the tool.',
+      buttons: [portable ? 'Open download page' : 'Download', 'Later'],
+      defaultId: 0, cancelId: 1
+    });
+    if (response !== 0) return;
+    if (portable) shell.openExternal(RELEASES_URL);
+    else autoUpdater.downloadUpdate();
+  });
+  autoUpdater.on('update-downloaded', async (info) => {
+    const { response } = await dialog.showMessageBox({
+      type: 'info',
+      title: 'Update ready',
+      message: `v${info.version} is downloaded.`,
+      detail: 'Restart now to install it, or it installs the next time you close the tool.',
+      buttons: ['Restart now', 'Later'],
+      defaultId: 0, cancelId: 1
+    });
+    if (response === 0) autoUpdater.quitAndInstall();
+  });
+  autoUpdater.checkForUpdates().catch(() => {});
+}
+
 app.whenReady().then(() => {
   createWindow();
+  checkForUpdates();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });

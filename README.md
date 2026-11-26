@@ -6,14 +6,28 @@ convert.json/convert_layout.lua registration, and more. No Unity Editor required
 
 ## For everyone — just run it
 
-1. Go to [Releases](../../releases/latest) and download **`Event Automator Setup.exe`**
-   (installer, adds a Start Menu shortcut) or **`Event Automator.exe`** (portable, no
-   install — just run it from wherever you put it).
+1. Go to [Releases](../../releases/latest) and download **`Event-Automator-Setup-X.exe`**
+   (installer, adds a Start Menu shortcut, updates itself) or **`Event-Automator-X.exe`**
+   (portable, no install — just run it from wherever you put it).
 2. Double-click it. That's it — no terminal, no Python install, nothing else needed.
    The Python backend is bundled inside the app.
 3. First launch: open **Settings** and point the three branch paths (trunk / Misc /
    Feature) at your local checkout, if the auto-detected defaults aren't right for
    your machine.
+
+## Updates
+
+From v1.31.0, the tool checks this repo's latest release on every launch. When a newer
+version exists it asks to download it; once downloaded, **Restart now** installs it
+(or it installs the next time the tool closes). The portable exe can't replace itself,
+so it opens the release page instead. Copies older than v1.31.0 have no checker:
+install v1.31.0 by hand once.
+
+To publish an update, the release must carry **all three** of these files from
+`release/`, under these exact names, or installed copies won't see it:
+`latest.yml`, `Event-Automator-Setup-X.exe`, `Event-Automator-Setup-X.exe.blockmap`
+(plus the portable `Event-Automator-X.exe` for people who use it). Bump `version` in
+`package.json` first; the checker compares that number.
 
 ## What it does
 
