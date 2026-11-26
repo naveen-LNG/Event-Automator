@@ -340,6 +340,28 @@ function checkForUpdates(win) {
     showUpdateProgress(win, { version: info.version, percent: 0, transferred: 0, total: 0, speed: 0 });
     autoUpdater.downloadUpdate().catch(() => {});  // failures arrive via 'error'
   });
+  // Run the installer only after every process of this exe has exited (max 60 s), so it never has to
+  // kill the app ("cannot be closed"). wscript: detached PowerShell does nothing; attached children die with us.
+  function installAfterExit(installerPath, reopen) {
+    const vbsStr = (s) => '"' + s.replace(/"/g, '""') + '"';
+    const exeName = path.basename(process.execPath).replace(/'/g, "''");
+    const vbs = path.join(app.getPath('temp'), 'event-automator-update.vbs');
+    fs.writeFileSync(vbs, [
+      'Set wmi = GetObject("winmgmts:\\\\.\\root\\cimv2")',
+      `exe = LCase(${vbsStr(process.execPath)})`,
+      'For i = 1 To 120',
+      '  n = 0',
+      `  For Each p In wmi.ExecQuery("SELECT ExecutablePath FROM Win32_Process WHERE Name = '${exeName}'")`,
+      '    If LCase(p.ExecutablePath & "") = exe Then n = n + 1',
+      '  Next',
+      '  If n = 0 Then Exit For',
+      '  WScript.Sleep 500',
+      'Next',
+      `CreateObject("WScript.Shell").Run ${vbsStr(`"${installerPath}" --updated${reopen ? ' --force-run' : ''}`)}, 1, False`
+    ].join('\r\n'));
+    spawn('wscript.exe', [vbs], { detached: true, stdio: 'ignore' }).unref();
+  }
+
   autoUpdater.on('update-downloaded', async (info) => {
     downloading = null;
     showUpdateProgress(win, null);
@@ -351,7 +373,19 @@ function checkForUpdates(win) {
       buttons: ['Restart now', 'Later'],
       defaultId: 0, cancelId: 1
     });
-    if (response === 0) autoUpdater.quitAndInstall();
+    const file = info.downloadedFile;
+    if (!file || !fs.existsSync(file)) {  // unexpected: fall back to the updater's own install
+      if (response === 0) autoUpdater.quitAndInstall();
+      return;
+    }
+    autoUpdater.autoInstallOnAppQuit = false;  // we run the installer ourselves, after exit
+    if (response === 0) {
+      installAfterExit(file, true);
+      BrowserWindow.getAllWindows().forEach((w) => w.destroy());
+      app.quit();
+    } else {
+      app.once('will-quit', () => installAfterExit(file, false));  // Later = install when the tool closes
+    }
   });
   autoUpdater.checkForUpdates().catch(() => {});
 }
