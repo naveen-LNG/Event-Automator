@@ -72,7 +72,8 @@ def get_active_card_collection_info(card_collection_path, evt_start_date):
         wb.close()
 
 
-def update_resident_task(design_path, event_id, event_name, start_time, end_time):
+def update_resident_task(design_path, event_id, event_name, start_time, end_time,
+                         preview=False, overrides=None):
     """Append a new streak-challenge cycle to resident_task.xlsx.
 
     Unlike the main event pipeline, this doesn't clone a source event's block:
@@ -89,7 +90,11 @@ def update_resident_task(design_path, event_id, event_name, start_time, end_time
     reference, swapping it to whichever card_collection.xlsx cycle covers this
     event's dates (a separate, independently-versioned lookup — not derived
     from the event name). New 任务链 rows then reference the same task-ID list
-    the chain already uses, unchanged."""
+    the chain already uses, unchanged.
+
+    preview=True: compute and print the plan as one "PREVIEW_JSON:" line, write nothing.
+    overrides: user edits to that plan {rows, token_name, pack_prefix} applied on commit."""
+    overrides = overrides or {}
     file_path = os.path.join(design_path, "resident_task.xlsx")
     card_collection_path = os.path.join(design_path, "card_collection.xlsx")
 
@@ -129,6 +134,11 @@ def update_resident_task(design_path, event_id, event_name, start_time, end_time
     tgt_family_match = re.match(r'^([A-Za-z]+)', event_name)
     tgt_family = tgt_family_match.group(1) if tgt_family_match else event_name
     tgt_suffix = "能量" if tgt_family.lower() == "merge" else "代币"
+    tok = str(overrides.get("token_name") or "").strip()
+    if tok:
+        m_tok = re.match(r'^(.*?)(能量|代币)?$', tok)
+        tgt_pascal, tgt_suffix = m_tok.group(1), (m_tok.group(2) or tgt_suffix)
+        tgt_upper = tgt_pascal.upper()
 
     os.chmod(file_path, 0o666)
 
@@ -190,6 +200,10 @@ def update_resident_task(design_path, event_id, event_name, start_time, end_time
             return False
 
         cycle_id, card_pack_prefix = get_active_card_collection_info(card_collection_path, evt_start.date())
+        if str(overrides.get("pack_prefix") or "").strip():
+            card_pack_prefix = str(overrides["pack_prefix"]).strip()
+        if overrides.get("cycle_id") not in (None, ""):
+            cycle_id = overrides["cycle_id"]
         if not cycle_id:
             print("Warning: could not determine the active card_collection.xlsx cycle for this event's "
                   "dates — 任务链 col J (集卡活动ID) will be left blank; set it manually.")
@@ -250,52 +264,59 @@ def update_resident_task(design_path, event_id, event_name, start_time, end_time
             print(f"Warning: Start Date ({evt_start.date()}) does not match where the 任务链 chain "
                   f"actually continues from ({cursor_date}) — using {cursor_date} to keep the chain gapless.")
         remaining_days = duration_days
-        chain_insert_at = last_row + 1
         cur_type = next_type
+        planned = []
         for i in range(num_new_rows):
             days_this_row = min(7, remaining_days)
-            row_start = datetime.combine(cursor_date, dt_time(6, 0, 0))
             row_end_date = cursor_date + timedelta(days=days_this_row - 1)
-            row_end = datetime.combine(row_end_date, dt_time(23, 59, 59))
+            planned.append({
+                "id": last_id_num + 1 + i, "type": cur_type,
+                "start": datetime.combine(cursor_date, dt_time(6, 0, 0)).strftime("%Y-%m-%d %H:%M:%S"),
+                "end": datetime.combine(row_end_date, dt_time(23, 59, 59)).strftime("%Y-%m-%d %H:%M:%S"),
+                "tasks": last_task_list_raw,
+                "activity_id": int(event_id) if event_id.isdigit() else event_id,
+                "card_id": cycle_id,
+            })
+            cursor_date = row_end_date + timedelta(days=1)
+            remaining_days -= days_this_row
+            cur_type = 2 if cur_type == 1 else 1
+        if overrides.get("rows"):
+            planned = overrides["rows"]
 
+        if preview:
+            print("PREVIEW_JSON:" + json.dumps({
+                "rows": planned, "token_name": tgt_pascal + tgt_suffix,
+                "pack_prefix": card_pack_prefix, "cycle_id": cycle_id,
+                "token_rows": token_updates, "pack_rows": pack_updates,
+                "last_row": last_row, "last_end": last_end.strftime("%Y-%m-%d"),
+            }, ensure_ascii=False))
+            return True
+
+        chain_insert_at = last_row + 1
+        for i, pr in enumerate(planned):
             dst_r = chain_insert_at + i
             src_r = last_row  # copy formatting/constants from the last real row
             for c in range(1, ws_chain.max_column + 1):
                 src_c = ws_chain.cell(src_r, c)
                 val = src_c.value
-                if c == 1:
-                    val = last_id_num + 1 + i
-                elif c == 2:
-                    val = cur_type
-                elif c == 3:
-                    val = row_start.strftime("%Y-%m-%d %H:%M:%S")
-                elif c == 4:
-                    val = row_end.strftime("%Y-%m-%d %H:%M:%S")
-                elif c == 5:
-                    val = last_task_list_raw  # reuse the chain's existing (evergreen) task list
-                elif c == 6:
-                    val = None
-                elif c == 7:
-                    val = last_condition
-                elif c == 8:
-                    val = last_pack_id
-                elif c == 9:
-                    val = int(event_id) if event_id.isdigit() else event_id
-                elif c == 10:
-                    val = cycle_id
+                if c == 1: val = pr["id"]
+                elif c == 2: val = pr["type"]
+                elif c == 3: val = pr["start"]
+                elif c == 4: val = pr["end"]
+                elif c == 5: val = pr["tasks"]
+                elif c == 6: val = None
+                elif c == 7: val = last_condition
+                elif c == 8: val = last_pack_id
+                elif c == 9: val = pr["activity_id"]
+                elif c == 10: val = pr["card_id"]
                 dst_c = ws_chain.cell(dst_r, c)
                 dst_c.value = val
                 copy_cell_format(src_c, dst_c)
-
-            print(f"resident_task [任务链]: Added row {dst_r} (ID {last_id_num + 1 + i}, type {cur_type}, "
-                  f"{row_start.strftime('%Y-%m-%d')} -> {row_end.strftime('%Y-%m-%d')}, "
-                  f"activity ID {event_id}, 集卡活动ID {cycle_id}).")
-            cursor_date = row_end_date + timedelta(days=1)
-            remaining_days -= days_this_row
-            cur_type = 2 if cur_type == 1 else 1
+            print(f"resident_task [任务链]: Added row {dst_r} (ID {pr['id']}, type {pr['type']}, "
+                  f"{pr['start']} -> {pr['end']}, activity ID {pr['activity_id']}, 集卡活动ID {pr['card_id']}).")
 
         wb.save(file_path)
-        print(f"resident_task.xlsx successfully updated for event ID {event_id} ({num_new_rows} row(s), "
+        print(f"resident_task.xlsx successfully updated for event ID {event_id} ({len(planned)} row(s), "
               f"{duration_days} days).")
         return True
 
@@ -332,6 +353,8 @@ def main():
         payload.get("event_name", ""),
         payload.get("start_time", ""),
         payload.get("end_time", ""),
+        preview=bool(payload.get("preview")),
+        overrides=payload.get("overrides"),
     )
     sys.exit(0 if success else 1)
 

@@ -1436,48 +1436,169 @@
     });
   });
 
-  $('#streak-execute-btn').addEventListener('click', async () => {
+  // Preview = read-only run of the script (PREVIEW_JSON line); the user edits the plan, and Commit
+  // sends those edits back as overrides. Any change to the inputs drops the preview.
+  let streakPlan = null;
+  const STREAK_COLS = [['id', 'ID', 'number'], ['type', 'Type', 'number'], ['start', 'Start', 'text'], ['end', 'End', 'text'],
+    ['tasks', '固定任务列表', 'text'], ['activity_id', '活动ID', 'text'], ['card_id', '集卡活动ID', 'text']];
+
+  function streakInvalidate() {
+    streakPlan = null;
+    $('#streak-plan-card').style.display = 'none';
+    $('#streak-execute-btn').disabled = true;
+  }
+  ['#event-id-input', '#start-date-input', '#duration-days-input', '#streak-event-name'].forEach(sel =>
+    $(sel).addEventListener('input', streakInvalidate));
+
+  function renderStreakPlan() {
+    const wrap = $('#streak-plan-rows');
+    wrap.textContent = '';
+    const table = document.createElement('table');
+    table.className = 'mg-preview-table mg-edit-table';
+    const head = table.createTHead().insertRow();
+    for (const [, h] of STREAK_COLS) head.appendChild(Object.assign(document.createElement('th'), { textContent: h }));
+    head.appendChild(document.createElement('th'));
+    const body = table.createTBody();
+    streakPlan.rows.forEach((r, i) => {
+      const tr = body.insertRow();
+      for (const [f, , type] of STREAK_COLS) {
+        const el = Object.assign(document.createElement('input'), { className: 'text-input mono mg-cell', type, value: r[f] ?? '' });
+        el.dataset.i = i; el.dataset.f = f;
+        if (f === 'tasks') el.style.minWidth = '260px'; else if (f === 'start' || f === 'end') el.style.minWidth = '152px';
+        tr.insertCell().appendChild(el);
+      }
+      const del = Object.assign(document.createElement('button'), { className: 'secondary-btn small mg-del', textContent: '✕', title: 'Delete row' });
+      del.dataset.f = 'delete'; del.dataset.i = i;
+      tr.insertCell().appendChild(del);
+    });
+    const box = document.createElement('div');
+    box.className = 'mg-edit-wrap';
+    box.appendChild(table);
+    wrap.appendChild(box);
+    const add = Object.assign(document.createElement('button'), { className: 'secondary-btn small', textContent: '+ Add row' });
+    add.dataset.f = 'add'; add.style.marginTop = '10px';
+    wrap.appendChild(add);
+  }
+
+  $('#streak-plan-rows').addEventListener('input', (e) => {
+    const f = e.target.dataset.f;
+    if (!streakPlan || !f || f === 'add' || f === 'delete') return;
+    e.target.classList.remove('mg-invalid');
+    streakPlan.rows[Number(e.target.dataset.i)][f] = e.target.value;
+  });
+  $('#streak-plan-rows').addEventListener('click', (e) => {
+    const f = e.target.dataset.f;
+    if (!streakPlan) return;
+    if (f === 'delete') streakPlan.rows.splice(Number(e.target.dataset.i), 1);
+    else if (f === 'add') {
+      const last = streakPlan.rows[streakPlan.rows.length - 1] || {};
+      // Next weekly slot: day after the last End at 06:00, running 7 days
+      const pad = (n) => String(n).padStart(2, '0');
+      const fmt = (d, t) => `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${t}`;
+      const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(last.end || ''));
+      const next = m ? new Date(Date.UTC(+m[1], +m[2] - 1, +m[3] + 1)) : null;
+      const endD = next ? new Date(next.getTime() + 6 * 86400000) : null;
+      streakPlan.rows.push({ ...last, id: Number(last.id) + 1, type: Number(last.type) === 1 ? 2 : 1,
+        start: next ? fmt(next, '06:00:00') : last.start, end: endD ? fmt(endD, '23:59:59') : last.end });
+    } else return;
+    renderStreakPlan();
+  });
+
+  // Normalises + validates the edited rows; returns { rows, problems }.
+  function streakCollectRows() {
+    const DT = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
+    const problems = [];
+    const rows = streakPlan.rows.map((r, i) => {
+      const n = i + 1;
+      const id = Number(r.id), type = Number(r.type);
+      const start = String(r.start).trim(), end = String(r.end).trim(), tasks = String(r.tasks).trim();
+      if (!Number.isInteger(id) || id <= 0) problems.push(`Row ${n}: ID must be a whole number`);
+      if (type !== 1 && type !== 2) problems.push(`Row ${n}: Type must be 1 or 2`);
+      if (!DT.test(start) || !DT.test(end)) problems.push(`Row ${n}: Start/End must look like 2026-09-17 06:00:00`);
+      else if (start >= end) problems.push(`Row ${n}: Start must be before End`);
+      if (!/^\d+(,\d+)*$/.test(tasks)) problems.push(`Row ${n}: 固定任务列表 must be comma-separated task IDs`);
+      const act = String(r.activity_id).trim();
+      const card = String(r.card_id ?? '').trim();
+      return { id, type, start, end, tasks,
+        activity_id: /^\d+$/.test(act) ? Number(act) : act,
+        card_id: /^\d+$/.test(card) ? Number(card) : (card || null) };
+    });
+    if (!rows.length) problems.push('Add at least one 任务链 row');
+    return { rows, problems };
+  }
+
+  function streakBasePayload() {
     const eventId = ($('#event-id-input').value || '').trim();
     const eventName = ($('#streak-event-name').value || '').trim();
-    const startDateStr = $('#start-date-input').value;
-    const duration = parseInt($('#duration-days-input').value, 10);
-    const times = computeEventTimes(startDateStr, duration);
+    const times = computeEventTimes($('#start-date-input').value, parseInt($('#duration-days-input').value, 10));
+    if (!eventId || eventId.length < 4) { toast('Please fill in a valid Event ID on the Main Events tab first.', 'error'); return null; }
+    if (!eventName) { toast('Please fill in Event Name.', 'error'); return null; }
+    if (!times) { toast('Please fill in Start Date and Duration (days) on the Main Events tab first.', 'error'); return null; }
+    return { event_id: eventId, event_name: eventName, start_time: times.startTime, end_time: times.endTime };
+  }
 
-    if (!eventId || eventId.length < 4) { toast('Please fill in a valid Event ID on the Main Events tab first.', 'error'); return; }
-    if (!eventName) { toast('Please fill in Event Name.', 'error'); return; }
-    if (!times) { toast('Please fill in Start Date and Duration (days) on the Main Events tab first.', 'error'); return; }
+  $('#streak-preview-btn').addEventListener('click', async () => {
+    const base = streakBasePayload();
+    if (!base) return;
+    const designPath = await window.api.resolveDesignPath(activeBranchRoot(), cfg.activeWorkspace);
+    const btn = $('#streak-preview-btn');
+    btn.disabled = true;
+    const res = await window.api.residentTaskCommit({ designPath, payload: { ...base, preview: true } });
+    btn.disabled = false;
+    streakInvalidate();
+    const out = res.output || '';
+    if (out) log(out.replace(/PREVIEW_JSON:.*/g, 'PREVIEW_JSON: (plan shown below)'), res.success ? 'console-log-line' : 'console-log-error');
+    if (!res.success) { toast('Preview failed: ' + out, 'error'); return; }
+    if (/already present/i.test(out)) { toast('That Event ID already has a cycle in resident_task.xlsx — nothing to add.', 'error'); return; }
+    const line = out.split('\n').find(l => l.startsWith('PREVIEW_JSON:'));
+    if (!line) { toast('Preview returned no plan — see the console.', 'error'); return; }
+    streakPlan = JSON.parse(line.slice('PREVIEW_JSON:'.length));
+    $('#streak-plan-token').value = streakPlan.token_name || '';
+    $('#streak-plan-pack').value = streakPlan.pack_prefix || '';
+    $('#streak-plan-summary').textContent =
+      `Chain continues after row ${streakPlan.last_row} (ends ${streakPlan.last_end}). ` +
+      `Token will be updated on ${streakPlan.token_rows} 任务列表 row(s), card-pack prefix on ${streakPlan.pack_rows} row(s).`;
+    renderStreakPlan();
+    $('#streak-plan-card').style.display = '';
+    $('#streak-execute-btn').disabled = false;
+  });
 
-    const root = activeBranchRoot();
-    const designPath = await window.api.resolveDesignPath(root, cfg.activeWorkspace);
+  $('#streak-execute-btn').addEventListener('click', async () => {
+    if (!streakPlan) { toast('Preview the changes first.', 'error'); return; }
+    const base = streakBasePayload();
+    if (!base) return;
+    const { rows, problems } = streakCollectRows();
+    if (problems.length) { toast(problems.join(' · '), 'error'); return; }
+
+    const designPath = await window.api.resolveDesignPath(activeBranchRoot(), cfg.activeWorkspace);
     const btn = $('#streak-execute-btn');
     btn.disabled = true;
     const res = await window.api.residentTaskCommit({
       designPath,
-      payload: {
-        event_id: eventId,
-        event_name: eventName,
-        start_time: times.startTime,
-        end_time: times.endTime
-      }
+      payload: { ...base, overrides: {
+        rows,
+        token_name: $('#streak-plan-token').value.trim(),
+        pack_prefix: $('#streak-plan-pack').value.trim(),
+      } }
     });
-    btn.disabled = false;
 
-    // Always show the Python script's own log output — "success" can also mean an
-    // idempotent no-op (activity ID already present, nothing written), which the
-    // script reports as success too; without this the console stayed silent either way.
+    // Always show the script's own output — "success" can also be an idempotent no-op.
     if (res.output) log(res.output, res.success ? 'console-log-line' : 'console-log-error');
 
     if (res.success) {
       if (/already present/i.test(res.output || '')) {
         log('Streak Challenge Commit: no changes made (activity ID already present).', 'console-log-line');
         toast('No changes made — that Event ID already has a cycle in resident_task.xlsx.', 'error');
+        btn.disabled = false;
       } else {
         log('Streak Challenge Commit Successful!', 'console-log-success');
         toast('resident_task.xlsx updated with the new cycle.', 'success');
+        streakInvalidate();
       }
     } else {
       log(`Streak Challenge Commit Failed: ${res.output}`, 'console-log-error');
       toast('Commit failed: ' + res.output, 'error');
+      btn.disabled = false;
     }
   });
 
@@ -1568,6 +1689,7 @@
       if (!$('#fsg-start-date').value && cachedFSG.suggested_next_start) {
         $('#fsg-start-date').value = cachedFSG.suggested_next_start;
       }
+      if (!$('#fsg-duration-days').value) $('#fsg-duration-days').value = cachedFSG.window_days;
       updateFSGPreview();
     } catch (e) {
       log(`Error parsing Full Screen Gift JSON: ${e.message}`, 'console-log-error');
@@ -1579,8 +1701,9 @@
     $('#fsg-preview-id').textContent = cachedFSG.next_id;
     const startDateStr = $('#fsg-start-date').value.trim();
     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(startDateStr);
-    if (!m) {
-      $('#fsg-preview-alias').textContent = '...';
+    const days = parseInt($('#fsg-duration-days').value, 10);
+    if (!m || !(days >= 1)) {
+      $('#fsg-preview-alias').textContent = m ? `全屏礼包${m[1].slice(2)}${m[2]}${m[3]}` : '...';
       $('#fsg-preview-start').textContent = '...';
       $('#fsg-preview-end').textContent = '...';
       return;
@@ -1589,22 +1712,25 @@
     const yy = y.slice(2);
     $('#fsg-preview-alias').textContent = `全屏礼包${yy}${mo}${d}`;
     const startMs = Date.UTC(Number(y), Number(mo) - 1, Number(d));
-    const endMs = startMs + (cachedFSG.window_days - 1) * 86400000;
+    const endMs = startMs + (days - 1) * 86400000;
     $('#fsg-preview-start').textContent = `${startDateStr} 00:00:00`;
     $('#fsg-preview-end').textContent = `${fmtDate(endMs)} 23:59:59`;
   }
   $('#fsg-start-date').addEventListener('input', updateFSGPreview);
+  $('#fsg-duration-days').addEventListener('input', updateFSGPreview);
 
   $('#fsg-execute-btn').addEventListener('click', async () => {
     if (!cachedFSG) { toast('Full Screen Gift metadata still loading...', 'error'); return; }
     const startDateStr = $('#fsg-start-date').value.trim();
     if (!/^\d{4}-\d{2}-\d{2}$/.test(startDateStr)) { toast('Please enter a valid Start Date (yyyy-mm-dd).', 'error'); return; }
+    const durationDays = parseInt($('#fsg-duration-days').value, 10);
+    if (!(durationDays >= 1)) { toast('Please enter a Duration of at least 1 day.', 'error'); return; }
 
     const root = activeBranchRoot();
     const designPath = await window.api.resolveDesignPath(root, cfg.activeWorkspace);
     const btn = $('#fsg-execute-btn');
     btn.disabled = true; btn.textContent = 'Committing...';
-    const res = await window.api.fullScreenGiftCommit({ designPath, payload: { start_date: startDateStr } });
+    const res = await window.api.fullScreenGiftCommit({ designPath, payload: { start_date: startDateStr, duration_days: durationDays } });
     btn.disabled = false; btn.textContent = 'Commit Full Screen Gift';
 
     if (res.output) log(res.output, res.success ? 'console-log-line' : 'console-log-error');

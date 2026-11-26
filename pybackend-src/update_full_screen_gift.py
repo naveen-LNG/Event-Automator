@@ -38,7 +38,7 @@ def parse_dt(v):
     return None
 
 
-def update_full_screen_gift(design_path, start_date_str):
+def update_full_screen_gift(design_path, start_date_str, duration_days=None):
     """Append a new recommend_gift 'Full Screen Gift' (栏位归属=16) instance.
 
     Clones the most recent slot-16 row's format/config verbatim (recharge list,
@@ -70,7 +70,8 @@ def update_full_screen_gift(design_path, start_date_str):
             return False
         ws = wb["recommend_gift"]
 
-        max_id_overall = 0
+        all_ids = set()
+        max_slot_id = 0
         last_row = None
         last_start = None
         for r in range(2, ws.max_row + 1):
@@ -79,9 +80,9 @@ def update_full_screen_gift(design_path, start_date_str):
                 idv_int = int(str(idv).lstrip("/"))
             except (TypeError, ValueError):
                 continue
-            if idv_int > max_id_overall:
-                max_id_overall = idv_int
+            all_ids.add(idv_int)
             if str(ws.cell(r, COL_SLOT).value or "").strip() == SLOT_FULL_SCREEN_GIFT:
+                max_slot_id = max(max_slot_id, idv_int)
                 s = parse_dt(ws.cell(r, COL_START).value)
                 if s and (last_start is None or s > last_start):
                     last_start = s
@@ -93,6 +94,11 @@ def update_full_screen_gift(design_path, start_date_str):
 
         last_end = parse_dt(ws.cell(last_row, COL_END).value)
         window_days = (last_end - last_start).days + 1 if last_end else 6
+        if duration_days:  # UI override; default = previous instance's length
+            window_days = int(duration_days)
+            if window_days < 1:
+                print(f"Error: Duration must be at least 1 day (got {window_days}).")
+                return False
 
         new_alias = f"全屏礼包{start_date.strftime('%y%m%d')}"
 
@@ -106,7 +112,10 @@ def update_full_screen_gift(design_path, start_date_str):
                       f"(ID {ws.cell(r, COL_ID).value}, row {r}). Skipping.")
                 return True
 
-        new_id = max_id_overall + 1
+        # IDs are banded per slot (185xx = slot 16): continue this band, skip any taken ID.
+        new_id = max_slot_id + 1
+        while new_id in all_ids:
+            new_id += 1
         new_start = start_date
         new_end = new_start + timedelta(days=window_days - 1, hours=23, minutes=59, seconds=59)
 
@@ -183,6 +192,7 @@ def main():
     success = update_full_screen_gift(
         design_path,
         payload.get("start_date", ""),
+        payload.get("duration_days"),
     )
     sys.exit(0 if success else 1)
 

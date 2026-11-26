@@ -43,9 +43,10 @@ def main():
         wb = openpyxl.load_workbook(file_path, data_only=True)
         ws = wb["recommend_gift"]
 
-        # Highest existing ID in the whole sheet (not just slot 16) — new IDs must
-        # never collide with any other gift type sharing the same ID space.
-        max_id_overall = 0
+        # IDs are banded per slot (184xx = 15, 185xx = 16, 186xx = 17): continue the
+        # slot-16 band, skipping any ID already taken anywhere in the sheet.
+        all_ids = set()
+        max_slot_id = 0
         # Last full-screen-gift row by start date (the clone template + cadence anchor).
         last_row = None
         last_start = None
@@ -55,9 +56,9 @@ def main():
                 idv_int = int(str(idv).lstrip("/"))
             except (TypeError, ValueError):
                 continue
-            if idv_int > max_id_overall:
-                max_id_overall = idv_int
+            all_ids.add(idv_int)
             if str(ws.cell(r, COL_SLOT).value or "").strip() == SLOT_FULL_SCREEN_GIFT:
+                max_slot_id = max(max_slot_id, idv_int)
                 s = parse_dt(ws.cell(r, COL_START).value)
                 if s and (last_start is None or s > last_start):
                     last_start = s
@@ -67,11 +68,15 @@ def main():
             print(json.dumps({"error": "No existing slot-16 (Full Screen Gift) rows found in recommend_gift to use as a template."}))
             sys.exit(1)
 
+        next_id = max_slot_id + 1
+        while next_id in all_ids:
+            next_id += 1
+
         last_end = parse_dt(ws.cell(last_row, COL_END).value)
         window_days = (last_end - last_start).days + 1 if last_end else 6
 
         result = {
-            "next_id": max_id_overall + 1,
+            "next_id": next_id,
             "last_row_alias": str(ws.cell(last_row, COL_ALIAS).value or ""),
             "last_start": last_start.strftime("%Y-%m-%d %H:%M:%S") if last_start else None,
             "last_end": last_end.strftime("%Y-%m-%d %H:%M:%S") if last_end else None,

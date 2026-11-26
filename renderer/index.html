@@ -395,7 +395,18 @@
         </details>
         <div class="board-divider"></div>
         <div class="execution-footer" style="justify-content:flex-end;">
-          <button id="streak-execute-btn" class="primary-btn">Commit Streak Challenge Config</button>
+          <button id="streak-preview-btn" class="secondary-btn">Preview changes</button>
+        </div>
+      </div>
+      <div class="stacked-card" id="streak-plan-card" style="display:none;">
+        <h2 class="card-title">Planned changes — edit anything before committing</h2>
+        <div class="form-row"><label class="form-label" for="streak-plan-token">Extra-reward token (任务列表 I/J)</label><input type="text" id="streak-plan-token" class="text-input mono" title="Col I shows this; col J shows it upper-cased. 能量 only for Merge events, 代币 otherwise." /></div>
+        <div class="form-row"><label class="form-label" for="streak-plan-pack">Card-pack prefix (任务列表 K)</label><input type="text" id="streak-plan-pack" class="text-input mono" title="From the card_collection.xlsx cycle covering the event dates" /></div>
+        <p class="settings-hint" id="streak-plan-summary" style="margin:6px 0 10px;"></p>
+        <div id="streak-plan-rows"></div>
+        <div class="board-divider"></div>
+        <div class="execution-footer" style="justify-content:flex-end;">
+          <button id="streak-execute-btn" class="primary-btn" disabled>Commit Streak Challenge Config</button>
         </div>
       </div>
     </section>
@@ -457,6 +468,7 @@
       <div class="stacked-card">
         <h2 class="card-title">Schedule</h2>
         <div class="form-row"><label class="form-label" for="fsg-start-date">Start Date</label><input type="text" id="fsg-start-date" class="text-input mono" placeholder="yyyy-mm-dd" /></div>
+        <div class="form-row"><label class="form-label" for="fsg-duration-days">Duration (days)</label><input type="number" id="fsg-duration-days" class="text-input mono" min="1" step="1" title="Defaults to the previous Full Screen Gift's length" /></div>
       </div>
       <div class="stacked-card">
         <h2 class="card-title">Preview</h2>

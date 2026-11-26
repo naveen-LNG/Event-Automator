@@ -326,11 +326,18 @@ def main():
         # base 10000 uses the generic asset except that kind of one-off — so walk
         # backward to the nearest base whose col7 is generic before using it as the
         # content template. ID numbering (new_base) still continues from last_base.
+        # Event-special decks (e.g. Merge2612KnitWoodland, base 690000) also break the
+        # shape: 14 rows, descending, no Wild rows. So a template must have exactly the
+        # standard offsets in sheet order, not just a generic col7.
+        def is_standard(base):
+            rows = rows_for_base(base)
+            offs = [int(ws_style.cell(r, 1).value) - base for r in rows]
+            return offs == template_offsets and str(ws_style.cell(rows[0], 7).value or "").startswith("皮肤配置")
+
         template_base = last_base
-        template_rows = rows_for_base(template_base)
-        while template_rows and not str(ws_style.cell(template_rows[0], 7).value or "").startswith("皮肤配置"):
+        while template_base > 0 and not is_standard(template_base):
             template_base -= 10000
-            template_rows = rows_for_base(template_base)
+        template_rows = rows_for_base(template_base)
 
         if len(template_rows) != len(template_offsets):
             raise ValueError(
